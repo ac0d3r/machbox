@@ -25,7 +25,7 @@ Only needs to be done once. After setup, you can run sample analysis repeatedly.
 
 Use [VirtualBuddy](https://github.com/insidegui/VirtualBuddy) to create a new macOS virtual machine:
 
-1. When creating the VM, **uncheck "Install VirtualBuddy Guest App"**;
+1. When creating the VM, **uncheck "Enable VirtualBuddy Guest App"**;
 
     <img src="docs/imgs/Disabled_VirtualBuddy_Guest_App.png" alt="Uncheck Guest App" width="350" />
 
