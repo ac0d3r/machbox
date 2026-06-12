@@ -8,11 +8,9 @@ English | [中文](./docs/README_CN.md)
 
 ## Supported Formats
 
-| Format | Description |
-|--------|-------------|
-| **Mach-O** | Single binary executable |
-| **App Bundle** | `.app` directory bundle; automatically parses `Contents/Info.plist` and the main executable |
-| **ZIP Archive** | Supports password extraction (ZipCrypto); automatically extracts and identifies the main file for analysis |
+- mach-o
+- .app bundle
+- zip archive(supports password extraction
 
 ## System Requirements
 
