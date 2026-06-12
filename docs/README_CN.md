@@ -2,6 +2,8 @@
 
 专为 macOS 设计的单二进制恶意软件分析沙盒工具，集成动静态分析能力，基于 Apple 原生框架构建（`Virtualization.framework`、`EndpointSecurity.framework`、`DTrace` 等）。
 
+[English](../README.md) | 中文
+
 <img src="imgs/machbox-reports.png" alt="关闭 SIP" width="680" />
 
 ## 支持格式

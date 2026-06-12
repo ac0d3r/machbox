@@ -2,6 +2,8 @@
 
 A single-binary macOS malware analysis sandbox with integrated static and dynamic analysis, built on Apple native frameworks (`Virtualization.framework`, `EndpointSecurity.framework`, `DTrace`, etc.).
 
+English | [中文](./docs/README_CN.md)
+
 <img src="docs/imgs/machbox-reports.png" alt="Analysis Reports" width="680" />
 
 ## Supported Formats
