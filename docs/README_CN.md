@@ -8,11 +8,9 @@
 
 ## 支持格式
 
-| 格式 | 说明 |
-|------|------|
-| **Mach-O** | 单二进制可执行文件 |
-| **App Bundle** | `.app` 目录包，自动解析 `Contents/Info.plist` 及主可执行文件 |
-| **ZIP 压缩包** | 支持密码解压（ZipCrypto），自动提取并识别包内主文件进行分析 |
+- mach-o
+- .app bundle
+- zip archive(支持密码解压
 
 ## 系统要求
 
