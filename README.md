@@ -12,35 +12,6 @@ English | [中文](./docs/README_CN.md)
 - .app bundle
 - zip archive (supports password extraction)
 
-
-## Architecture
-
-```mermaid
-flowchart TB
-    User(["User: machbox analyze sample"])
-
-    subgraph Host["Host macOS"]
-        Machbox["machbox"]
-        Snapshot["Snapshot"]
-        ShareDir["SharedDir<br>(tools|sample)"]
-        Report["Report(Web UI)"]
-    end
-
-    subgraph Guest["Guest VM"]
-        Agent["Guest Agent"]
-        Analysis["static and dynamic<br>analysis"]
-        Sample["malware sample"]
-    end
-
-    User --> Machbox
-    Machbox --> |read-only|ShareDir
-    ShareDir --> |APFS clone|Snapshot
-    Snapshot --> Agent
-    Agent <--> Analysis
-    Analysis --> Sample
-    Machbox <--> Report
-```
-
 ## System Requirements
 
 - **Apple Silicon Mac**
@@ -126,6 +97,34 @@ Open your browser and visit `http://127.0.0.1:8080` to browse the complete analy
 |:--|:--|
 | <img src="docs/imgs/demo/static_1.png" width="400" /> | <img src="docs/imgs/demo/dynamic_1.png" width="400" /> |
 | <img src="docs/imgs/demo/static_2.png" width="400" /> | <img src="docs/imgs/demo/dynamic_2.png" width="400" /> |
+
+## Architecture
+
+```mermaid
+flowchart TB
+    User(["User: machbox analyze sample"])
+
+    subgraph Host["Host"]
+        Machbox["machbox"]
+        Snapshot["Snapshot"]
+        ShareDir["SharedDir<br>(tools|sample)"]
+        Report["Report(Web UI)"]
+    end
+
+    subgraph Guest["Guest VM"]
+        Agent["Guest Agent"]
+        Analysis["static and dynamic<br>analysis"]
+        Sample["malware sample"]
+    end
+
+    User --> Machbox
+    Machbox --> |read-only|ShareDir
+    ShareDir --> |APFS clone|Snapshot
+    Snapshot --> Agent
+    Agent <--> Analysis
+    Analysis --> Sample
+    Machbox <--> Report
+```
 
 ## Acknowledgments
 
