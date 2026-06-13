@@ -1,8 +1,9 @@
 # MachBox
 
-专为 macOS 设计的单二进制恶意软件分析沙盒工具，集成动静态分析能力，基于 Apple 原生框架构建（`Virtualization.framework`、`EndpointSecurity.framework`、`DTrace` 等）。
+Machbox 是一款面向 macOS 的原生、轻量、单二进制恶意软件分析沙盒，集成动静态分析能力，基于 Apple 原生框架构建（`Virtualization.framework`、`EndpointSecurity.framework`、`DTrace` 等）。
 
 [English](../README.md) | 中文
+
 
 <img src="imgs/machbox-reports.png" alt="关闭 SIP" width="680" />
 
@@ -10,7 +11,35 @@
 
 - mach-o
 - .app bundle
-- zip archive(支持密码解压
+- zip archive（支持密码解压）
+
+## 架构
+
+```mermaid
+flowchart TB
+    User(["User: machbox analyze sample"])
+
+    subgraph Host["Host macOS"]
+        Machbox["machbox"]
+        Snapshot["Snapshot"]
+        ShareDir["SharedDir<br>(tools|sample)"]
+        Report["Report(Web UI)"]
+    end
+
+    subgraph Guest["Guest VM"]
+        Agent["Guest Agent"]
+        Analysis["static and dynamic<br>analysis"]
+        Sample["malware sample"]
+    end
+
+    User --> Machbox
+    Machbox --> |read-only|ShareDir
+    ShareDir --> |APFS clone|Snapshot
+    Snapshot --> Agent
+    Agent <--> Analysis
+    Analysis --> Sample
+    Machbox <--> Report
+```
 
 ## 系统要求
 
@@ -21,34 +50,48 @@
 
 只需执行一次，准备好后即可反复运行样本分析。
 
-### 1. 准备虚拟机
+> **提示：** 为了提高效率，完成以下步骤后可以创建一个 [VM 模板](./vm-template.md) 作为干净的“黄金镜像”，每次分析前复制一份使用。
 
-使用 [VirtualBuddy](https://github.com/insidegui/VirtualBuddy) 创建一个新的 macOS 虚拟机：
+### 1. 使用 VirtualBuddy 创建基础虚拟机
 
-1. 创建虚拟机时 **取消勾选 VirtualBuddy Guest App**；
+1. 打开 [VirtualBuddy](https://github.com/insidegui/VirtualBuddy) 并创建一个新的 macOS 虚拟机。
+
+2. 创建过程中 **取消勾选 "Enable VirtualBuddy Guest App"**。
     
     <img src="imgs/Disabled_VirtualBuddy_Guest_App.png" alt="取消 Guest App" width="350" />
 
-2. 虚拟机创建且完成初始化后，再关闭虚拟机SIP；  
-    - 开启 **Boot in recovery mode** 运行进入恢复模式：
+3. 在虚拟机内完成 macOS 初始化设置（地区、账户等）。
+
+### 2. 在虚拟机中关闭 SIP
+
+1. 在 VirtualBuddy 中，为虚拟机启用 **Boot in recovery mode**。
 
     <img src="imgs/enable_Boot_in_recovery_mode.png" alt="关闭 SIP" width="300" />
 
-    - 顶部菜单栏选择 Utilities → Terminal
-    - 输入 `csrutil disable` 回车，重启虚拟机即可。
+2. 启动虚拟机，从顶部菜单栏选择 **Utilities → Terminal**。
 
-### 2. 安装 Machbox Guest Agent
+3. 运行：
 
-在虚拟机中首次运行 MachBox 环境前，需要先安装 Guest Agent：
+   ```bash
+   csrutil disable
+   ```
+
+4. 正常重启虚拟机。
+
+### 3. 安装 Machbox Guest Agent
+
+在宿主机上运行：
 
 ```bash
 machbox setup -m /path/to/your_Machbox.vbvm
 ```
 
-- 打开 Finder; 选择左侧 `MachboxGuest`; 安装 `machbox-guest.pkg`
-  - 将静默安装 Xcode Command Line Tools（`clang`）；这是启用 DTrace 探针的必需依赖。
+在虚拟机中：
 
-- 安装完成，关闭虚拟机即可。
+1. 打开 Finder，从侧边栏选择 `MachboxGuest`。
+2. 安装 `machbox-guest.pkg`。
+3. 等待安装完成（Xcode Command Line Tools 会被静默安装）。
+4. 关闭虚拟机。
 
 ---
 
@@ -78,6 +121,14 @@ machbox report-view
 ```
 
 打开浏览器访问 `http://127.0.0.1:8080` 即可浏览完整的分析报告。
+
+### 分析报告示例
+
+| Static Analysis | Dynamic Analysis |
+|:--|:--|
+| <img src="imgs/demo/static_1.png" width="400" /> | <img src="imgs/demo/dynamic_1.png" width="400" /> |
+| <img src="imgs/demo/static_2.png" width="400" /> | <img src="imgs/demo/dynamic_2.png" width="400" /> |
+
 
 ## 致谢
 

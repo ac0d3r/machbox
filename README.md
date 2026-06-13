@@ -1,6 +1,6 @@
 # MachBox
 
-A single-binary macOS malware analysis sandbox with integrated static and dynamic analysis, built on Apple native frameworks (`Virtualization.framework`, `EndpointSecurity.framework`, `DTrace`, etc.).
+Machbox is a native, lightweight, single-binary malware analysis sandbox for macOS that combines static and dynamic analysis, built on Apple native frameworks (`Virtualization.framework`, `EndpointSecurity.framework`, `DTrace`, etc.).
 
 English | [中文](./docs/README_CN.md)
 
@@ -10,7 +10,36 @@ English | [中文](./docs/README_CN.md)
 
 - mach-o
 - .app bundle
-- zip archive(supports password extraction
+- zip archive (supports password extraction)
+
+
+## Architecture
+
+```mermaid
+flowchart TB
+    User(["User: machbox analyze sample"])
+
+    subgraph Host["Host macOS"]
+        Machbox["machbox"]
+        Snapshot["Snapshot"]
+        ShareDir["SharedDir<br>(tools|sample)"]
+        Report["Report(Web UI)"]
+    end
+
+    subgraph Guest["Guest VM"]
+        Agent["Guest Agent"]
+        Analysis["static and dynamic<br>analysis"]
+        Sample["malware sample"]
+    end
+
+    User --> Machbox
+    Machbox --> |read-only|ShareDir
+    ShareDir --> |APFS clone|Snapshot
+    Snapshot --> Agent
+    Agent <--> Analysis
+    Analysis --> Sample
+    Machbox <--> Report
+```
 
 ## System Requirements
 
@@ -21,35 +50,46 @@ English | [中文](./docs/README_CN.md)
 
 Only needs to be done once. After setup, you can run sample analysis repeatedly.
 
-### 1. Prepare the Virtual Machine
+### 1. Create a Base VM with VirtualBuddy
 
-Use [VirtualBuddy](https://github.com/insidegui/VirtualBuddy) to create a new macOS virtual machine:
+1. Open [VirtualBuddy](https://github.com/insidegui/VirtualBuddy) and create a new macOS VM.
 
-1. When creating the VM, **uncheck "Enable VirtualBuddy Guest App"**;
+2. **Uncheck "Enable VirtualBuddy Guest App"** during creation.
+    
+<img src="docs/imgs/Disabled_VirtualBuddy_Guest_App.png" alt="Uncheck Guest App" width="350" />
 
-    <img src="docs/imgs/Disabled_VirtualBuddy_Guest_App.png" alt="Uncheck Guest App" width="350" />
+3. Complete the macOS setup inside the VM (region, account, etc.).
 
-2. After the VM is created and initial setup is complete, turn off VM SIP;
-    - Enable **Boot in recovery mode** to enter recovery mode:
+### 2. Disable SIP in the Guest VM
 
-    <img src="docs/imgs/enable_Boot_in_recovery_mode.png" alt="Disable SIP" width="300" />
+1. In VirtualBuddy, enable **Boot in recovery mode** for the VM.
 
-    - From the top menu bar, select Utilities → Terminal
-    - Type `csrutil disable` and press Enter, then restart the VM.
+<img src="docs/imgs/enable_Boot_in_recovery_mode.png" alt="Disable SIP" width="300" />
 
+2. Start the VM and open **Utilities → Terminal** from the menu bar.
 
-### 2. Install Machbox Guest Agent
+3. Run:
 
-Before running MachBox in the VM for the first time, you need to install the Guest Agent:
+   ```bash
+   csrutil disable
+   ```
+
+4. Restart the VM normally.
+
+### 3. Install the Machbox Guest Agent
+
+On your host machine, run:
 
 ```bash
 machbox setup -m /path/to/your_Machbox.vbvm
 ```
 
-- Open Finder; select `MachboxGuest` from the sidebar; install `machbox-guest.pkg`
-  - Xcode Command Line Tools (`clang`) will be installed silently; they are required to enable DTrace probes.
+Inside the VM:
 
-- Once installation is complete, shut down the VM.
+1. Open Finder and select `MachboxGuest` from the sidebar.
+2. Install `machbox-guest.pkg`.
+3. Wait for the installation to finish (Xcode Command Line Tools will be installed silently).
+4. Shut down the VM.
 
 ---
 
@@ -79,6 +119,13 @@ machbox report-view
 ```
 
 Open your browser and visit `http://127.0.0.1:8080` to browse the complete analysis reports.
+
+### Report Preview
+
+| Static Analysis | Dynamic Analysis |
+|:--|:--|
+| <img src="docs/imgs/demo/static_1.png" width="400" /> | <img src="docs/imgs/demo/dynamic_1.png" width="400" /> |
+| <img src="docs/imgs/demo/static_2.png" width="400" /> | <img src="docs/imgs/demo/dynamic_2.png" width="400" /> |
 
 ## Acknowledgments
 
