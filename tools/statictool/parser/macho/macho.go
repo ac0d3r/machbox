@@ -3,13 +3,14 @@ package macho
 import (
 	"bytes"
 	"fmt"
-	"sort"
 	"strings"
 
 	gomacho "github.com/blacktop/go-macho"
 	"github.com/blacktop/go-macho/types"
 	"github.com/smallstep/pkcs7"
 	"howett.net/plist"
+
+	"statictool/ioc"
 )
 
 type MachoFile map[string]MachoInfo
@@ -61,6 +62,7 @@ type Symbol struct {
 
 type Strings struct {
 	CStrings []string `json:"cstrings,omitempty"`
+	IOCs     []string `json:"iocs,omitempty"`
 }
 
 type CodeSignature struct {
@@ -397,14 +399,13 @@ func parseStrings(f *gomacho.File) Strings {
 	}
 
 	stringsInfo := Strings{CStrings: make([]string, 0, total)}
+	iocs := &ioc.IOCExtractor{}
 	for _, strs := range cstrs {
 		for str := range strs {
+			iocs.Extract(str)
 			stringsInfo.CStrings = append(stringsInfo.CStrings, str)
 		}
 	}
-
-	// Sort for deterministic output.
-	sort.Strings(stringsInfo.CStrings)
-
+	stringsInfo.IOCs = iocs.Export()
 	return stringsInfo
 }
