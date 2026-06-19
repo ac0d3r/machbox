@@ -11,6 +11,7 @@ Machbox 是一款面向 macOS 的原生、轻量、单二进制恶意软件分�
 
 - mach-o
 - .app bundle
+- .dmg Disk Image
 - zip archive（支持密码解压）
 
 ## 系统要求

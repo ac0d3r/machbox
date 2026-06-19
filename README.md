@@ -10,6 +10,7 @@ English | [中文](./docs/README_CN.md)
 
 - mach-o
 - .app bundle
+- .dmg Disk Image
 - zip archive (supports password extraction)
 
 ## System Requirements
