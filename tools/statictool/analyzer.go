@@ -56,7 +56,7 @@ func (a *Analyzer) analyzePath(path string) (report Report, err error) {
 		report.Data, err = macho.Parse(path)
 	case filebase.TypeAppBundle:
 		report.Data, err = appbundle.Parse(path)
-	case filebase.TypeZIP:
+	case filebase.TypeZIP, filebase.TypeDMG:
 		report.Children, err = a.analyzeArchive(path, report.Base.Type)
 		if err != nil {
 			return report, err
@@ -104,6 +104,10 @@ func (a *Analyzer) scanDirectory(root string) (children []Report, err error) {
 	}
 
 	for _, entry := range entries {
+		if entry.Name() == "Applications" {
+			continue
+		}
+
 		childPath := filepath.Join(root, entry.Name())
 
 		report, err := a.analyzePath(childPath)
