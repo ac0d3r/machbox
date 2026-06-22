@@ -1,22 +1,59 @@
-# MachBox
+# Machbox
 
-Machbox is a native, lightweight, single-binary malware analysis sandbox for macOS that combines static and dynamic analysis, built on Apple native frameworks (`Virtualization.framework`, `EndpointSecurity.framework`, `DTrace`, etc.).
+Machbox is a native, lightweight malware analysis sandbox for macOS that combines static and dynamic analysis, built on Apple native frameworks (`Virtualization.framework`, `EndpointSecurity.framework`, `DTrace`, etc.).
 
 English | [中文](./docs/README_CN.md)
 
 <img src="docs/imgs/machbox-reports.png" alt="Analysis Reports" width="680" />
 
-## Supported Formats
+## Features
+
+### Supported Formats
 
 - mach-o
 - .app bundle
 - .dmg Disk Image
 - zip archive (supports password extraction)
 
+### Analysis Capabilities
+
+- **Static Analysis**: Mach-O parsing, code signing & entitlements, strings extraction, and recursive scanning of directories, archives and app bundles.
+- **Dynamic Analysis**: Process execution, file-system activity, network connections, persistence attempts, privilege escalation, and code injection detection.
+- **Behavioral Summarization**: Risk scoring, verdict generation, and a built-in Web UI to browse full analysis reports.
+
+### Technical Highlights
+
+- Native macOS sandbox built on Apple `Virtualization.framework`
+- Lightweight single-binary deployment
+- VM snapshot / APFS clone for fast, clean rollback
+- Integrated with `EndpointSecurity.framework` and `DTrace`
+- Optional network isolation or NAT mode
+
 ## System Requirements
 
 - **Apple Silicon Mac**
 - **macOS 13+**
+
+## Download
+
+Prebuilt Apple Silicon binaries are available on the [GitHub Releases](https://github.com/ac0d3r/machbox/releases) page.
+
+```bash
+curl -L -o machbox https://github.com/ac0d3r/machbox/releases/latest/download/machbox-darwin-arm64
+chmod +x machbox
+```
+
+> The release binary is ad-hoc signed, macOS Gatekeeper will block it until you remove the quarantine attribute with `xattr -d com.apple.quarantine`.
+
+## Build from Source
+
+```bash
+git clone https://github.com/ac0d3r/machbox.git
+cd machbox
+make build
+```
+
+The compiled binary will be at `bin/machbox`.
 
 ## Environment Setup
 

@@ -1,0 +1,51 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - gocritic
+    - revive
+    - gosec
+    - bodyclose
+    - misspell
+    - errorlint
+
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+    gocritic:
+      enabled-tags:
+        - performance
+        - style
+        - diagnostic
+    errcheck:
+      exclude-functions:
+        - (net.Conn).Close
+        - (io.Closer).Close
+        - (io/fs.File).Close
+        - (*os.File).Close
+        - (*io.PipeWriter).Close
+        - syscall.Close
+        - os.Remove
+        - os.RemoveAll
+        - (*os.Process).Kill
+        - (*github.com/Code-Hex/vz/v3.VirtioSocketListener).Close
+        - (*github.com/ac0d3r/machbox/core/vm/vsock/protocol.Conn).Close
+        - (*github.com/ac0d3r/machbox/core/vsock.HostConn).Close
+        - (*github.com/ac0d3r/machbox/core/vsock.GuestConn).Close
+        - (*github.com/ac0d3r/machbox/core/vm.VMInstance).Shutdown
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+          - gocyclo
+          - funlen
+          - gocritic
+

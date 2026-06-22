@@ -1,23 +1,60 @@
-# MachBox
+# Machbox
 
-Machbox 是一款面向 macOS 的原生、轻量、单二进制恶意软件分析沙盒，集成动静态分析能力，基于 Apple 原生框架构建（`Virtualization.framework`、`EndpointSecurity.framework`、`DTrace` 等）。
+Machbox 是一款面向 macOS 的原生、轻量的恶意软件分析沙盒，集成动静态分析能力，基于 Apple 原生框架构建（`Virtualization.framework`、`EndpointSecurity.framework`、`DTrace` 等）。
 
 [English](../README.md) | 中文
 
 
 <img src="imgs/machbox-reports.png" alt="关闭 SIP" width="680" />
 
-## 支持格式
+## 功能特性
+
+### 支持格式
 
 - mach-o
 - .app bundle
 - .dmg Disk Image
 - zip archive（支持密码解压）
 
+### 分析能力
+
+- **静态分析**：Mach-O 解析、代码签名与权限、字符串提取，并支持目录、压缩包与 .app 包的递归扫描。
+- **动态分析**：进程执行、文件系统活动、网络连接、持久化尝试、权限提升与代码注入检测。
+- **行为汇总**：风险评分、判定结果，以及内置 Web UI 浏览完整分析报告。
+
+### 技术亮点
+
+- 单二进制文件，轻量部署
+- 基于 Apple `Virtualization.framework` 的原生 macOS 沙盒
+- VM 快照 / APFS 克隆实现快速干净的回滚
+- 集成 `EndpointSecurity.framework` 与 `DTrace`
+- 可选网络隔离或 NAT 模式
+
 ## 系统要求
 
 - **Apple Silicon Mac**
 - **macOS 13+**
+
+## 下载
+
+Apple Silicon 预编译二进制可在 [GitHub Releases](https://github.com/ac0d3r/machbox/releases) 页面下载。
+
+```bash
+curl -L -o machbox https://github.com/ac0d3r/machbox/releases/latest/download/machbox-darwin-arm64
+chmod +x machbox
+```
+
+> Release 二进制仅使用 ad-hoc 签名，macOS Gatekeeper 会阻止其运行，需先执行 `xattr -d com.apple.quarantine` 移除隔离属性。
+
+## 源码构建
+
+```bash
+git clone https://github.com/ac0d3r/machbox.git
+cd machbox
+make build
+```
+
+编译后的二进制位于 `bin/machbox`。
 
 ## 环境准备
 

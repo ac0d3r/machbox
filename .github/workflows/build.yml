@@ -1,0 +1,79 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: report/web/package-lock.json
+
+      - name: Build machbox
+        env:
+          SIGN_IDENTITY: '-'
+        run: make build
+
+      - name: Package binary
+        run: |
+          mkdir -p dist
+          cp bin/machbox "dist/machbox-darwin-arm64"
+          chmod +x "dist/machbox-darwin-arm64"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: machbox-darwin-arm64
+          path: dist/machbox-darwin-arm64
+
+  release:
+    name: Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: machbox-darwin-*
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release
+          find dist -type f -name 'machbox-darwin-*' -exec cp {} release/ \;
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/machbox-darwin-*
+          generate_release_notes: true

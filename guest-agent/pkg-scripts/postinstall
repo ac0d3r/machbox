@@ -1,0 +1,40 @@
+#!/bin/bash
+set -e
+
+PLIST_PATH="/Library/LaunchDaemons/dev.machbox.guest.plist"
+LABEL="dev.machbox.guest"
+SERVICE="system/${LABEL}"
+AGENT="/usr/local/libexec/machbox-guest"
+
+if launchctl print "${SERVICE}" >/dev/null 2>&1; then
+    launchctl bootout system "${PLIST_PATH}" || true
+fi
+
+chown root:wheel "${PLIST_PATH}"
+chmod 644 "${PLIST_PATH}"
+
+chown root:wheel "${AGENT}"
+chmod 755 "${AGENT}"
+
+launchctl bootstrap system "${PLIST_PATH}"
+launchctl kickstart -k "${SERVICE}"
+
+# Install Rosetta 2 on Apple Silicon if not already present.
+if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ] && \
+   ! pkgutil --pkg-info com.apple.pkg.RosettaUpdateAuto >/dev/null 2>&1; then
+    /usr/sbin/softwareupdate --install-rosetta --agree-to-license
+fi
+
+# Install Xcode Command Line Tools silently if not already present.
+if ! /usr/bin/xcode-select -p >/dev/null 2>&1; then
+    touch /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
+    CLT_LABEL=$(/usr/sbin/softwareupdate --list 2>/dev/null | \
+        awk -F': ' '/\*.*Command Line Tools for Xcode/{print $2}' | \
+        sort -V | tail -n 1 || true)
+    if [ -n "${CLT_LABEL}" ]; then
+        /usr/sbin/softwareupdate --install "${CLT_LABEL}" --agree-to-license
+    fi
+    rm -f /tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress
+fi
+
+exit 0

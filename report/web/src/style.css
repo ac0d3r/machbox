@@ -1,0 +1,13 @@
+/* Global reusable styles */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.badge-clean    { background: #e6f7e6; color: #2e7d32; }
+.badge-suspicious { background: #fff3e0; color: #ef6c00; }
+.badge-malicious { background: #ffebee; color: #c62828; }
+.badge-unknown  { background: #f5f5f5; color: #616161; }
