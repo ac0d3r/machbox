@@ -2,7 +2,7 @@
   <div class="app">
     <header class="top-header">
       <div class="brand">
-        <svg class="logo" width="28" height="28" viewBox="0 0 48 48" fill="none"><rect width="48" height="48" rx="10" fill="url(#orangeGradient)"/><path d="M14 34V18l6 8 6-8v16" stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/><rect x="14" y="14" width="20" height="20" rx="3" stroke="white" stroke-width="2.5" fill="none" opacity="0.35"/><defs><linearGradient id="orangeGradient" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse"><stop stop-color="#FF8C42"/><stop offset="1" stop-color="#E85D04"/></linearGradient></defs></svg>
+        <img class="logo" src="/favicon.svg" width="28" height="28" alt="Machbox" />
         <span class="title">Machbox</span>
       </div>
       <span class="subtitle">macOS Malware Analysis Sandbox</span>
