@@ -24,11 +24,11 @@ Machbox 是一款面向 macOS 的原生、轻量的恶意软件分析沙盒，�
 
 ### 技术亮点
 
-- 单二进制文件，轻量部署
-- 基于 Apple `Virtualization.framework` 的原生 macOS 沙盒
-- VM 快照 / APFS 克隆实现快速干净的回滚
-- 集成 `EndpointSecurity.framework` 与 `DTrace`
-- 可选网络隔离或 NAT 模式
+- **原生 Apple Silicon 沙盒**：`Virtualization.framework` + `APFS Clone` 快照&回滚。
+- **原生 vsock 控制通道**：Host+Guest通信使用自定义协议（`AF_VSOCK` + TLV）。
+- **双源动态采集**：`EndpointSecurity` 40+ 事件 + `DTrace` 网络事件；统一 JSONL 日志。
+- **macOS 语义化分析**：Mach-O/签名/entitlements 深度解析，静动态组合评分。
+- **轻量部署**：单二进制，兼容 `VirtualBuddy(.vbvm)`，默认断网、可选 NAT。
 
 ## 系统要求
 
@@ -60,22 +60,19 @@ make build
 
 只需执行一次，准备好后即可反复运行样本分析。
 
-> **提示：** 为了提高效率，完成以下步骤后可以创建一个 [VM 模板](./vm-template.md) 作为干净的“黄金镜像”，每次分析前复制一份使用。
+### 使用 VirtualBuddy 创建基础虚拟机
+- 打开 [VirtualBuddy](https://github.com/insidegui/VirtualBuddy) 并创建一个新的 macOS 虚拟机。
 
-### 1. 使用 VirtualBuddy 创建基础虚拟机
+    - 可选（创建过程中，取消勾选 "Enable VirtualBuddy Guest App"）
 
-1. 打开 [VirtualBuddy](https://github.com/insidegui/VirtualBuddy) 并创建一个新的 macOS 虚拟机。
+      <img src="imgs/Disabled_VirtualBuddy_Guest_App.png" alt="取消 Guest App" width="350" />
 
-2. 创建过程中 **取消勾选 "Enable VirtualBuddy Guest App"**。
-    
-    <img src="imgs/Disabled_VirtualBuddy_Guest_App.png" alt="取消 Guest App" width="350" />
+- 在虚拟机内完成 macOS 初始化设置。
 
-3. 在虚拟机内完成 macOS 初始化设置（地区、账户等）。
-
-### 2. 在虚拟机中关闭 SIP
+### 在虚拟机中关闭 SIP
 
 1. 在 VirtualBuddy 中，为虚拟机启用 **Boot in recovery mode**。
-
+    
     <img src="imgs/enable_Boot_in_recovery_mode.png" alt="关闭 SIP" width="300" />
 
 2. 启动虚拟机，从顶部菜单栏选择 **Utilities → Terminal**。
@@ -88,7 +85,7 @@ make build
 
 4. 正常重启虚拟机。
 
-### 3. 安装 Machbox Guest Agent
+### 安装 Machbox Guest Agent
 
 在宿主机上运行：
 
@@ -121,6 +118,12 @@ machbox analyze -m /path/to/your_Machbox.vbvm /path/to/sample
 | `--headless` | 无 GUI 模式运行（分析完成后自动关机） | `true` |
 | `--display` | 分辨率设置 | `1920x1200` |
 | `--network-mode` | 网络模式（如 `NAT`） | 禁用 |
+
+支持向样本传递命令行参数：
+
+```bash
+machbox analyze [flags] <sample> [--] [sample-args...]
+```
 
 ## 查看分析报告
 

@@ -23,11 +23,11 @@ English | [中文](./docs/README_CN.md)
 
 ### Technical Highlights
 
-- Native macOS sandbox built on Apple `Virtualization.framework`
-- Lightweight single-binary deployment
-- VM snapshot / APFS clone for fast, clean rollback
-- Integrated with `EndpointSecurity.framework` and `DTrace`
-- Optional network isolation or NAT mode
+- **Native Apple Silicon Sandbox**: `Virtualization.framework` + `APFS Clone` snapshot & rollback.
+- **Native vsock Control Channel**: Host-guest communication uses a custom protocol (`AF_VSOCK` + TLV).
+- **Dual-source Dynamic Collection**: `EndpointSecurity` 40+ events + `DTrace` for network events; unified JSONL logs.
+- **macOS Semantic Analysis**: Deep parsing of Mach-O, code signing, and entitlements, with combined static and dynamic scoring.
+- **Lightweight Deployment**: Single binary, compatible with `VirtualBuddy(.vbvm)`; disabled network by default with optional NAT.
 
 ## System Requirements
 
@@ -59,17 +59,16 @@ The compiled binary will be at `bin/machbox`.
 
 Only needs to be done once. After setup, you can run sample analysis repeatedly.
 
-### 1. Create a Base VM with VirtualBuddy
+### Create a Base VM with VirtualBuddy
+- Open [VirtualBuddy](https://github.com/insidegui/VirtualBuddy) and create a new macOS VM.
 
-1. Open [VirtualBuddy](https://github.com/insidegui/VirtualBuddy) and create a new macOS VM.
+    - Optional (during creation, uncheck "Enable VirtualBuddy Guest App")
 
-2. **Uncheck "Enable VirtualBuddy Guest App"** during creation.
-    
-<img src="docs/imgs/Disabled_VirtualBuddy_Guest_App.png" alt="Uncheck Guest App" width="350" />
+      <img src="docs/imgs/Disabled_VirtualBuddy_Guest_App.png" alt="Uncheck Guest App" width="350" />
 
 3. Complete the macOS setup inside the VM (region, account, etc.).
 
-### 2. Disable SIP in the Guest VM
+### Disable SIP in the Guest VM
 
 1. In VirtualBuddy, enable **Boot in recovery mode** for the VM.
 
@@ -85,7 +84,7 @@ Only needs to be done once. After setup, you can run sample analysis repeatedly.
 
 4. Restart the VM normally.
 
-### 3. Install the Machbox Guest Agent
+### Install the Machbox Guest Agent
 
 On your host machine, run:
 
@@ -118,6 +117,12 @@ Common options:
 | `--headless` | Run without a GUI window (auto-shutdown after analysis) | `true` |
 | `--display` | Display resolution | `1920x1200` |
 | `--network-mode` | Network mode (e.g., `NAT`) | Disabled |
+
+Supports passing command-line arguments to the sample:
+
+```bash
+machbox analyze [flags] <sample> [--] [sample-args...]
+```
 
 ## View Analysis Reports
 
