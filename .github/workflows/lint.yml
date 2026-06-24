@@ -36,11 +36,8 @@ jobs:
 
       - name: Prepare embed
         run: |
-          mkdir -p core/assets/data/
-          touch core/assets/data/placeholder
-
-          mkdir -p report/web/dist
-          touch report/web/dist/placeholder
+          mkdir -p core/assets/data/ && touch core/assets/data/placeholder
+          mkdir -p report/web/dist && touch report/web/dist/placeholder
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
