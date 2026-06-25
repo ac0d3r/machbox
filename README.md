@@ -1,38 +1,30 @@
 # Machbox
 
-Machbox is a native, lightweight malware analysis sandbox for macOS that combines static and dynamic analysis, built on Apple native frameworks (`Virtualization.framework`, `EndpointSecurity.framework`, `DTrace`, etc.).
-
 English | [中文](./docs/README_CN.md)
+
+`Machbox` is a lightweight, native macOS sandbox for malware analysis, built on Apple native frameworks (`Virtualization.framework`, `EndpointSecurity.framework`, `DTrace`, etc.).
 
 <img src="docs/imgs/machbox-reports.png" alt="Analysis Reports" width="680" />
 
-## Features
-
-### Supported Formats
+## Supported Formats
 
 - mach-o
-- .app bundle
-- .dmg Disk Image
+- Application Bundle
+- Disk Image(.dmg)
 - zip archive (supports password extraction)
-
-### Analysis Capabilities
-
-- **Static Analysis**: Mach-O parsing, code signing & entitlements, strings extraction, and recursive scanning of directories, archives and app bundles.
-- **Dynamic Analysis**: Process execution, file-system activity, network connections, persistence attempts, privilege escalation, and code injection detection.
-- **Behavioral Summarization**: Risk scoring, verdict generation, and a built-in Web UI to browse full analysis reports.
-
-### Technical Highlights
-
-- **Native Apple Silicon Sandbox**: `Virtualization.framework` + `APFS Clone` snapshot & rollback.
-- **Native vsock Control Channel**: Host-guest communication uses a custom protocol (`AF_VSOCK` + TLV).
-- **Dual-source Dynamic Collection**: `EndpointSecurity` 40+ events + `DTrace` for network events; unified JSONL logs.
-- **macOS Semantic Analysis**: Deep parsing of Mach-O, code signing, and entitlements, with combined static and dynamic scoring.
-- **Lightweight Deployment**: Single binary, compatible with `VirtualBuddy(.vbvm)`; disabled network by default with optional NAT.
 
 ## System Requirements
 
 - **Apple Silicon Mac**
 - **macOS 13+**
+
+## Technical Highlights
+
+- **Lightweight Deployment**: Single binary, compatible with `VirtualBuddy(.vbvm)`.
+- **Native Sandbox**: `Virtualization.framework` + `APFS Clone` snapshot & rollback.
+- **Static Analysis**: Mach-O parsing, code signing & entitlements, strings (IOC) extraction, and recursive scanning of directories, archives and app bundles.
+- **Dynamic Analysis**: `EndpointSecurity` + `DTrace` for process execution, file-system activity, network connections, persistence attempts, privilege escalation, and code injection detection.
+- **Behavioral Summarization**: Risk scoring, verdict generation, and a built-in Web UI to browse full analysis reports.
 
 ## Download
 
