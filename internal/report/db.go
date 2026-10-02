@@ -3,8 +3,8 @@ package report
 import (
 	"time"
 
-	"github.com/ac0d3r/machbox/core/assets"
-	"github.com/ac0d3r/machbox/core/vsock/protocol"
+	"github.com/ac0d3r/machbox/internal/assets"
+	"github.com/ac0d3r/machbox/pkg/vsock/protocol"
 
 	sqlite "gorm.io/driver/sqlite"
 	"gorm.io/gorm"

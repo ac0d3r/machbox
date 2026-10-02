@@ -10,10 +10,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/ac0d3r/machbox/core/assets"
-	"github.com/ac0d3r/machbox/core/logger"
-	"github.com/ac0d3r/machbox/core/vm"
-	"github.com/ac0d3r/machbox/core/vm/config"
+	"github.com/ac0d3r/machbox/internal/assets"
+	"github.com/ac0d3r/machbox/internal/logger"
+	"github.com/ac0d3r/machbox/pkg/vm"
+	"github.com/ac0d3r/machbox/pkg/vm/config"
 
 	vz "github.com/Code-Hex/vz/v3"
 	"github.com/sirupsen/logrus"

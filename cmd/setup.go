@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/ac0d3r/machbox/core/assets"
-	"github.com/ac0d3r/machbox/core/vm"
-	"github.com/ac0d3r/machbox/core/vm/config"
-	"github.com/ac0d3r/machbox/core/vsock"
+	"github.com/ac0d3r/machbox/internal/assets"
+	"github.com/ac0d3r/machbox/pkg/vm"
+	"github.com/ac0d3r/machbox/pkg/vm/config"
+	"github.com/ac0d3r/machbox/pkg/vsock"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"

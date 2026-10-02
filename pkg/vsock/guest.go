@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ac0d3r/machbox/core/vsock/protocol"
+	"github.com/ac0d3r/machbox/pkg/vsock/protocol"
 )
 
 type GuestConn struct {

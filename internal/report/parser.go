@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ac0d3r/machbox/core/vsock/protocol"
+	"github.com/ac0d3r/machbox/pkg/vsock/protocol"
 
 	"github.com/tidwall/gjson"
 )

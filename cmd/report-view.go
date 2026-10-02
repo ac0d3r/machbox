@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"github.com/ac0d3r/machbox/report"
+	"github.com/ac0d3r/machbox/internal/report"
 
 	"github.com/spf13/cobra"
 )
