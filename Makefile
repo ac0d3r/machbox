@@ -13,17 +13,17 @@ GUEST_PKG     := guest-agent/build/machbox-guest.pkg
 GUEST_DMG     := guest.dmg
 
 # machbox assets
-EMBED_DIR     := core/assets/data
+EMBED_DIR     := internal/assets/data
 
 # Report web view
-REPORT_WEB_DIR := report/web
+REPORT_WEB_DIR := internal/report/web
 
 .PHONY: all build build-guest-agent prepare-assets clean
 
 all: build
 
 build: prepare-assets
-	CGO_ENABLED=1 GOOS=darwin go build -ldflags "-s -w -X github.com/ac0d3r/machbox/cmd.version=$(VERSION)" -trimpath -o "$(BINFILE)" main.go
+	CGO_ENABLED=1 GOOS=darwin go build -ldflags "-s -w -X github.com/ac0d3r/machbox/internal/version.Version=$(VERSION)" -trimpath -o "$(BINFILE)" main.go
 
 	@test -f ${ENTITLEMENTS} || { echo "error: missing entitlements file: $@" >&2; exit 1; }
 
@@ -46,7 +46,7 @@ prepare-assets: build-guest-agent build-tools build-report-web
 
 build-guest-agent:
 	rm -f $(GUEST_DMG)
-	$(MAKE) -C guest-agent package
+	$(MAKE) -C guest-agent package VERSION=$(VERSION)
 	@if [ ! -f "$(GUEST_DMG)" ]; then \
 		hdiutil create \
 			-srcfolder "$(GUEST_PKG)" \

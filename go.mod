@@ -6,6 +6,7 @@ require (
 	github.com/Code-Hex/vz/v3 v3.7.1
 	github.com/antonfisher/nested-logrus-formatter v1.3.1
 	github.com/gin-gonic/gin v1.12.0
+	github.com/google/uuid v1.6.0
 	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/cobra v1.8.1
 	github.com/tidwall/gjson v1.19.0

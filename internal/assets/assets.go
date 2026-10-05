@@ -18,6 +18,7 @@ const (
 
 	dbName = "machbox.sqlite"
 
+	vmsDirName      = "vms"
 	dataDirName     = "data"
 	guestDMGName    = "guest.dmg"
 	guestDMGSum     = guestDMGName + ".sha256"
@@ -28,14 +29,20 @@ const (
 var (
 	appDir  string
 	dataDir string
+	vmsDir  string
 
 	initOnce sync.Once
 )
 
 func init() {
-	home, _ := os.UserHomeDir()
-	appDir = filepath.Join(home, appDirName)
+	appDir = resolveAppDir()
 	dataDir = filepath.Join(appDir, dataDirName)
+	vmsDir = filepath.Join(appDir, vmsDirName)
+}
+
+func resolveAppDir() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, appDirName)
 }
 
 func Init() (err error) {
@@ -46,7 +53,7 @@ func Init() (err error) {
 }
 
 func doInit() error {
-	for _, dir := range []string{appDir, dataDir} {
+	for _, dir := range []string{appDir, dataDir, vmsDir} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return fmt.Errorf("create dir %s: %w", dir, err)
 		}
@@ -103,6 +110,14 @@ func AppDir() string { return appDir }
 
 // DBPath returns the SQLite database path (~/.machbox/machbox.db).
 func DBPath() string { return filepath.Join(appDir, dbName) }
+
+// VMsDir returns the directory that holds imported VM baselines
+// (~/.machbox/vms). Each baseline lives in its own UUID-named subdirectory.
+func VMsDir() string { return vmsDir }
+
+// VMPath returns the baseline directory for the given VM UUID
+// (~/.machbox/vms/<uuid>).
+func VMPath(uuid string) string { return filepath.Join(VMsDir(), uuid) }
 
 func GuestDMGPath() string { return filepath.Join(dataDir, guestDMGName) }
 

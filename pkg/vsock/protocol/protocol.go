@@ -150,8 +150,10 @@ type StreamTaskEnd struct {
 type GuestInfo struct {
 	Hostname     string `json:"hostname"`
 	Username     string `json:"username"`
+	OSName       string `json:"os_name"`
 	OSVersion    string `json:"os_version"`
 	BuildVersion string `json:"build_version"`
+	AgentVersion string `json:"agent_version"`
 	SIPDisabled  bool   `json:"sip_disabled"`
 }
 

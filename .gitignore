@@ -40,7 +40,7 @@ runs_*
 *.sha256
 
 # go embed folder
-core/assets/data/
+internal/assets/data/
 
 # macos
 .DS_Store

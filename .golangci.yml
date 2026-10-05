@@ -35,10 +35,10 @@ linters:
         - os.RemoveAll
         - (*os.Process).Kill
         - (*github.com/Code-Hex/vz/v3.VirtioSocketListener).Close
-        - (*github.com/ac0d3r/machbox/core/vm/vsock/protocol.Conn).Close
-        - (*github.com/ac0d3r/machbox/core/vsock.HostConn).Close
-        - (*github.com/ac0d3r/machbox/core/vsock.GuestConn).Close
-        - (*github.com/ac0d3r/machbox/core/vm.VMInstance).Shutdown
+        - (*github.com/ac0d3r/machbox/pkg/vsock/protocol.Conn).Close
+        - (*github.com/ac0d3r/machbox/pkg/vsock.HostConn).Close
+        - (*github.com/ac0d3r/machbox/pkg/vsock.GuestConn).Close
+        - (*github.com/ac0d3r/machbox/pkg/vm.VMInstance).Shutdown
   exclusions:
     rules:
       - path: _test\.go

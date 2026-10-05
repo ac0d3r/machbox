@@ -12,6 +12,7 @@ import (
 
 	"github.com/ac0d3r/machbox/internal/assets"
 	"github.com/ac0d3r/machbox/internal/logger"
+	"github.com/ac0d3r/machbox/internal/version"
 	"github.com/ac0d3r/machbox/pkg/vm"
 	"github.com/ac0d3r/machbox/pkg/vm/config"
 
@@ -35,8 +36,6 @@ type vmOptions struct {
 	networkMode string
 }
 
-var version = "dev"
-
 type rootOptions struct {
 	log logOptions
 }
@@ -47,7 +46,7 @@ func NewRootCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "machbox",
 		Short:         "macOS malware analysis sandbox",
-		Version:       version,
+		Version:       version.Version,
 		SilenceErrors: true,
 		CompletionOptions: cobra.CompletionOptions{
 			DisableDefaultCmd: true,
@@ -74,9 +73,9 @@ func NewRootCommand() *cobra.Command {
 		false, "enable JSON log output")
 
 	cmd.AddCommand(
-		newSetuptCommand(),
 		newAnalyzeCommand(),
 		newReportViewCommand(),
+		newVMCommand(),
 	)
 
 	return cmd

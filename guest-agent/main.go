@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ac0d3r/machbox/internal/version"
 	"github.com/ac0d3r/machbox/pkg/vsock"
 	"github.com/ac0d3r/machbox/pkg/vsock/protocol"
 )
@@ -23,6 +24,12 @@ func CollectGuestInfo() (*protocol.GuestInfo, error) {
 		return nil, err
 	}
 	hostname := strings.TrimSpace(string(out))
+
+	out, err = exec.Command("sw_vers", "-productName").Output()
+	if err != nil {
+		return nil, err
+	}
+	osName := strings.TrimSpace(string(out))
 
 	out, err = exec.Command("sw_vers", "-productVersion").Output()
 	if err != nil {
@@ -50,8 +57,10 @@ func CollectGuestInfo() (*protocol.GuestInfo, error) {
 	return &protocol.GuestInfo{
 		Hostname:     hostname,
 		Username:     u.Username,
+		OSName:       osName,
 		OSVersion:    osVersion,
 		BuildVersion: buildVersion,
+		AgentVersion: version.Version,
 		SIPDisabled:  sipDisabled,
 	}, nil
 }
