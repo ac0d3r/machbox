@@ -139,7 +139,9 @@ func (c *Client) RunStreamTask(_ context.Context, task *Task) (io.ReadCloser, er
 					_ = w.CloseWithError(err)
 					return
 				}
-				if end.Error != "" && end.Error != context.DeadlineExceeded.Error() {
+				// Timeout is the normal end of a dynamic run; keep collected
+				// stdout and close the pipe cleanly so the host can parse it.
+				if end.Error != "" && !end.TimedOut && !isDeadlineExceededMsg(end.Error) {
 					_ = w.CloseWithError(errors.New(end.Error))
 				}
 				return
@@ -150,6 +152,11 @@ func (c *Client) RunStreamTask(_ context.Context, task *Task) (io.ReadCloser, er
 		}
 	}()
 	return r, nil
+}
+
+func isDeadlineExceededMsg(s string) bool {
+	d := context.DeadlineExceeded.Error()
+	return s == d || strings.HasPrefix(s, d+" ") || strings.HasPrefix(s, d+" (")
 }
 
 // LogGuest logs a successful guest handshake.

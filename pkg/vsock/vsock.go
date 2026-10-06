@@ -1,8 +1,12 @@
-// Package vsock provides a macOS guest-side AF_VSOCK listener.
-// The host dials via Virtualization.framework (pkg/vm.ConnectVsock).
+// Package vsock is the guest-side AF_VSOCK listener used by machbox-guest.
+//
+// The host cannot dial AF_VSOCK directly; it uses Virtualization.framework
+// via pkg/vm.VMInstance.ConnectVsock instead. Port number lives in
+// internal/agent.DefaultVsockPort.
 package vsock
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -12,8 +16,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// DefaultPort is the well-known virtio-vsock port for machbox guest-agent.
-const DefaultPort uint32 = 12345
+var errNoDeadline = errors.New("vsock: deadlines not supported")
 
 type addr struct{ port uint32 }
 
@@ -50,13 +53,11 @@ func (c *conn) Close() error {
 	return err
 }
 
-func (c *conn) LocalAddr() net.Addr             { return addr{c.localPort} }
-func (c *conn) RemoteAddr() net.Addr            { return addr{c.remotePort} }
-func (c *conn) SetDeadline(time.Time) error     { return nil }
-func (c *conn) SetReadDeadline(time.Time) error { return nil }
-func (c *conn) SetWriteDeadline(time.Time) error {
-	return nil
-}
+func (c *conn) LocalAddr() net.Addr                { return addr{c.localPort} }
+func (c *conn) RemoteAddr() net.Addr               { return addr{c.remotePort} }
+func (c *conn) SetDeadline(time.Time) error        { return errNoDeadline }
+func (c *conn) SetReadDeadline(time.Time) error    { return errNoDeadline }
+func (c *conn) SetWriteDeadline(time.Time) error   { return errNoDeadline }
 
 type listener struct {
 	fd   int
@@ -77,9 +78,8 @@ func Listen(port uint32) (net.Listener, error) {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("listen: %w", err)
 	}
-	// Nonblocking listen fd so Accept can Poll without holding ForkLock.
-	// Holding ForkLock across a blocking Accept deadlocks later exec/fork
-	// (e.g. scutil from collectGuestInfo).
+	// Nonblocking listen fd: Accept polls without holding ForkLock.
+	// A blocking Accept that held ForkLock deadlocked later exec/fork.
 	if err := unix.SetNonblock(fd, true); err != nil {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("set nonblock: %w", err)
@@ -93,7 +93,7 @@ func (l *listener) Accept() (net.Conn, error) {
 		return nil, err
 	}
 	// Darwin inherits O_NONBLOCK from the listen socket; clear it so
-	// handshake reads block until the peer sends.
+	// subsequent reads block until the peer sends data.
 	if err := unix.SetNonblock(nfd, false); err != nil {
 		_ = unix.Close(nfd)
 		return nil, err
@@ -116,8 +116,6 @@ func (l *listener) Accept() (net.Conn, error) {
 	}, nil
 }
 
-// accept waits until fd is readable, then accepts. ForkLock is held only
-// around Accept+CloseOnExec, never across the wait.
 func accept(fd int) (int, error) {
 	for {
 		if err := waitReadable(fd); err != nil {

@@ -126,7 +126,7 @@ func setup(ctx context.Context, dir string) (*agent.GuestInfo, error) {
 
 func waitGuest(ctx context.Context, inst *boxvm.VMInstance) (*agent.GuestInfo, error) {
 	dial := func(ctx context.Context) (net.Conn, error) {
-		return inst.ConnectVsock(ctx, boxvm.DefaultVsockPort)
+		return inst.ConnectVsock(ctx, agent.DefaultVsockPort)
 	}
 
 	for {

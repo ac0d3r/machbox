@@ -1,5 +1,9 @@
 package agent
 
+// DefaultVsockPort is the virtio-vsock port the guest agent listens on.
+// Host dials the same port via Virtualization.framework.
+const DefaultVsockPort uint32 = 12345
+
 // GuestInfo is sent by the guest during handshake.
 type GuestInfo struct {
 	Hostname     string `json:"hostname"`

@@ -183,7 +183,7 @@ func executeStreamTask(ctx context.Context, c *conn, cmd *exec.Cmd) error {
 			}
 			if err != nil {
 				if err != io.EOF {
-					if ctx.Err() == context.DeadlineExceeded {
+					if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 						ferr = context.DeadlineExceeded
 					} else {
 						ferr = err
@@ -196,6 +196,10 @@ func executeStreamTask(ctx context.Context, c *conn, cmd *exec.Cmd) error {
 
 	waitErr := cmd.Wait()
 	wg.Wait()
+
+	timedOut := errors.Is(ferr, context.DeadlineExceeded) ||
+		errors.Is(waitErr, context.DeadlineExceeded) ||
+		errors.Is(ctx.Err(), context.DeadlineExceeded)
 
 	var errStr string
 	switch {
@@ -211,7 +215,7 @@ func executeStreamTask(ctx context.Context, c *conn, cmd *exec.Cmd) error {
 			errStr = fmt.Sprintf("%s (stderr: %s)", errStr, s)
 		}
 	}
-	return c.sendJSON(msgStreamTaskEnd, streamTaskEnd{Error: errStr})
+	return c.sendJSON(msgStreamTaskEnd, streamTaskEnd{Error: errStr, TimedOut: timedOut})
 }
 
 func execErr(err error) string {

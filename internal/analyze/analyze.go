@@ -34,10 +34,10 @@ type Options struct {
 	// only imported baseline; if several exist, VM is required.
 	VM string
 
-	SamplePath string
-	SampleArgs []string
-	Password   string
-	Timeout    int // seconds for guest tasks; default 60
+	SamplePath     string
+	SampleArgs     []string
+	SamplePassword string
+	Timeout        int // seconds for guest tasks; default 60
 
 	DisplayWidth  int64
 	DisplayHeight int64
@@ -112,7 +112,7 @@ func Run(ctx context.Context, opts Options) error {
 	sess := &session{
 		sampleName: sampleName,
 		sampleArgs: opts.SampleArgs,
-		password:   opts.Password,
+		password:   opts.SamplePassword,
 		timeout:    opts.Timeout,
 	}
 	return runVM(ctx, opts, vmcfg, sess.run)
@@ -253,7 +253,7 @@ func (s *session) run(ctx context.Context, vmi *boxvm.VMInstance) (err error) {
 	defer waitCancel()
 
 	dial := func(ctx context.Context) (net.Conn, error) {
-		return vmi.ConnectVsock(ctx, boxvm.DefaultVsockPort)
+		return vmi.ConnectVsock(ctx, agent.DefaultVsockPort)
 	}
 
 	client, info, err := agent.WaitReady(waitCtx, dial, time.Second)

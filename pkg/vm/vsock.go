@@ -4,17 +4,11 @@ import (
 	"context"
 	"fmt"
 	"net"
-
-	"github.com/ac0d3r/machbox/pkg/vsock"
 )
 
-// DefaultVsockPort is the guest-agent listen port.
-const DefaultVsockPort = vsock.DefaultPort
-
-// ConnectVsock dials the guest AF_VSOCK listener (host → guest).
-// Calls are serialized for the lifetime of each Connect: releasing the mutex
-// while a Connect is still in flight (e.g. on ctx cancel) has SIGTRAPed when
-// the next Dial starts another Connect during ShowGraphic.
+// ConnectVsock dials the guest agent AF_VSOCK listener (host → guest) via
+// Virtualization.framework. Calls are serialized for the lifetime of each
+// Connect: overlapping Connects during ShowGraphic have SIGTRAPed.
 func (i *VMInstance) ConnectVsock(ctx context.Context, port uint32) (net.Conn, error) {
 	i.vsockMu.Lock()
 	defer i.vsockMu.Unlock()

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"os/user"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -19,7 +20,9 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	ln, err := vsock.Listen(vsock.DefaultPort)
+	info := collectGuestInfo()
+
+	ln, err := vsock.Listen(agent.DefaultVsockPort)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "vsock listen: %v\n", err)
 		os.Exit(1)
@@ -27,17 +30,17 @@ func main() {
 	defer ln.Close()
 
 	srv := &agent.Server{
-		Info:       collectGuestInfo,
+		Info:       func() (agent.GuestInfo, error) { return info, nil },
 		MountShare: mountVirtioFS,
 	}
-	fmt.Printf("[agent] listening on vsock %d\n", vsock.DefaultPort)
+	fmt.Printf("[agent] listening on vsock %d\n", agent.DefaultVsockPort)
 	if err := srv.Serve(ctx, ln); err != nil {
 		fmt.Fprintf(os.Stderr, "agent serve: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func collectGuestInfo() (agent.GuestInfo, error) {
+func collectGuestInfo() agent.GuestInfo {
 	info := agent.GuestInfo{
 		OSName:       "macOS",
 		AgentVersion: version.Version,
@@ -65,19 +68,45 @@ func collectGuestInfo() (agent.GuestInfo, error) {
 	if csr, err := runTrim("csrutil", "status"); err == nil {
 		info.SIPDisabled = strings.Contains(strings.ToLower(csr), "disabled")
 	}
-	return info, nil
+	return info
 }
 
 func mountVirtioFS(mountpoint string) error {
+	mountpoint = filepath.Clean(mountpoint)
 	if err := os.MkdirAll(mountpoint, 0o750); err != nil {
 		return fmt.Errorf("mkdir %s: %w", mountpoint, err)
 	}
+	if mounted, err := isMounted(mountpoint); err != nil {
+		return err
+	} else if mounted {
+		return nil
+	}
+
 	// #nosec G204 -- tag is fixed; mountpoint comes from the trusted host.
 	out, err := exec.Command("mount_virtiofs", "machbox", mountpoint).CombinedOutput()
 	if err != nil {
+		// Another session may have won the race.
+		if mounted, _ := isMounted(mountpoint); mounted {
+			return nil
+		}
 		return fmt.Errorf("mount_virtiofs: %w (%s)", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func isMounted(mountpoint string) (bool, error) {
+	out, err := exec.Command("mount").Output()
+	if err != nil {
+		return false, fmt.Errorf("mount: %w", err)
+	}
+	// mount(8) lines look like: "machbox on /tmp/machbox_s (virtiofs, ...)"
+	needle := " on " + mountpoint + " "
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.Contains(line, needle) || strings.HasSuffix(line, " on "+mountpoint) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func runTrim(name string, args ...string) (string, error) {

@@ -13,9 +13,9 @@ import (
 func newAnalyzeCommand() *cobra.Command {
 	opts := &vmOptions{}
 	var (
-		vmID     string
-		password string
-		timeout  int
+		vmID           string
+		samplePassword string
+		timeout        int
 	)
 
 	cmd := &cobra.Command{
@@ -42,22 +42,22 @@ func newAnalyzeCommand() *cobra.Command {
 			}
 
 			return analyze.Run(cmd.Context(), analyze.Options{
-				VM:            vmID,
-				SamplePath:    filepath.Clean(args[0]),
-				SampleArgs:    sampleArgs,
-				Password:      password,
-				Timeout:       timeout,
-				DisplayWidth:  opts.width,
-				DisplayHeight: opts.height,
-				Headless:      opts.headless,
-				Network:       opts.parseNetwork(),
+				VM:             vmID,
+				SamplePath:     filepath.Clean(args[0]),
+				SampleArgs:     sampleArgs,
+				SamplePassword: samplePassword,
+				Timeout:        timeout,
+				DisplayWidth:   opts.width,
+				DisplayHeight:  opts.height,
+				Headless:       opts.headless,
+				Network:        opts.parseNetwork(),
 			})
 		},
 	}
 
 	bindVMFlags(cmd, opts)
 	cmd.Flags().StringVarP(&vmID, "vm", "m", "", "baseline UUID or unique name")
-	cmd.Flags().StringVar(&password, "password", "", "password for encrypted archives")
+	cmd.Flags().StringVar(&samplePassword, "password", "", "password for encrypted archives")
 	cmd.Flags().IntVar(&timeout, "timeout", 60, "")
 	cmd.Flags().SetInterspersed(false)
 	return cmd

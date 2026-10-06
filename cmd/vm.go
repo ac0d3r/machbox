@@ -20,6 +20,7 @@ func newVMCommand() *cobra.Command {
 		newVMImportCommand(),
 		newVMListCommand(),
 		newVMRenameCommand(),
+		newVMRemoveCommand(),
 	)
 	return cmd
 }
@@ -97,6 +98,24 @@ func newVMRenameCommand() *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "new baseline name")
 	_ = cmd.MarkFlagRequired("name")
 	return cmd
+}
+
+func newVMRemoveCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:          "remove <uuid-or-name>",
+		Short:        "Remove an imported baseline",
+		Aliases:      []string{"rm"},
+		Args:         cobra.ExactArgs(1),
+		SilenceUsage: true,
+		RunE: withVMDB(func(cmd *cobra.Command, args []string) error {
+			rec, err := vm.Remove(args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", rec.UUID, rec.Name)
+			return nil
+		}),
+	}
 }
 
 func formatOS(name, version, build string) string {

@@ -30,6 +30,10 @@ func CreateVM(vm *VM) error {
 	return _db.Create(vm).Error
 }
 
+func DeleteVM(uuid string) error {
+	return _db.Delete(&VM{}, "uuid = ?", uuid).Error
+}
+
 func GetVMByUUID(uuid string) (*VM, error) {
 	var vm VM
 	if err := _db.First(&vm, "uuid = ?", uuid).Error; err != nil {

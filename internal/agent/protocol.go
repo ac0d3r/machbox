@@ -10,14 +10,13 @@ import (
 type msgType uint8
 
 const (
-	msgGuestInfo msgType = iota + 1 // 1
-	msgTask                          // 2
-	msgACK                           // 3
-	msgTaskResult                    // 4
-	msgSetWorkDir                    // 5
-	_                                // 6 reserved
-	msgStreamTaskData                // 7
-	msgStreamTaskEnd                 // 8
+	msgGuestInfo msgType = iota + 1
+	msgTask
+	msgACK
+	msgTaskResult
+	msgSetWorkDir
+	msgStreamTaskData
+	msgStreamTaskEnd
 )
 
 type message struct {
@@ -106,5 +105,6 @@ type ack struct {
 }
 
 type streamTaskEnd struct {
-	Error string `json:"error,omitempty"`
+	Error    string `json:"error,omitempty"`
+	TimedOut bool   `json:"timed_out,omitempty"`
 }

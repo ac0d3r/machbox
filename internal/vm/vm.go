@@ -119,6 +119,25 @@ func Rename(identifier, newName string) (*db.VM, error) {
 	return vm, nil
 }
 
+// Remove deletes a baseline record and its on-disk bundle.
+func Remove(identifier string) (*db.VM, error) {
+	vm, err := Resolve(identifier)
+	if err != nil {
+		return nil, err
+	}
+
+	dir := assets.VMPath(vm.UUID)
+	if err := os.RemoveAll(dir); err != nil {
+		return nil, fmt.Errorf("remove baseline files %s: %w", dir, err)
+	}
+	if err := db.DeleteVM(vm.UUID); err != nil {
+		return nil, fmt.Errorf("remove baseline record: %w", err)
+	}
+
+	logrus.Infof("removed baseline %s (%s)", vm.Name, vm.UUID)
+	return vm, nil
+}
+
 // Resolve looks up a baseline by UUID or unique name.
 func Resolve(identifier string) (*db.VM, error) {
 	identifier = strings.TrimSpace(identifier)
