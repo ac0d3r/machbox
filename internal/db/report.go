@@ -1,15 +1,15 @@
-package report
+package db
 
 import (
 	"time"
 
 	"github.com/ac0d3r/machbox/internal/agent"
-	"github.com/ac0d3r/machbox/internal/assets"
 
-	sqlite "gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
+// Report is a persisted analysis result.
+// DynamicResult is JSON (typically report.DynamicReport when written).
 type Report struct {
 	ID        uint           `gorm:"primarykey" json:"id"`
 	CreatedAt time.Time      `json:"created_at"`
@@ -23,29 +23,12 @@ type Report struct {
 
 	AnalysisEnv   agent.GuestInfo `gorm:"serializer:json" json:"analysis_env"`
 	StaticResult  map[string]any  `gorm:"serializer:json" json:"static_result"`
-	DynamicResult *DynamicReport  `gorm:"serializer:json" json:"dynamic_result,omitempty"`
-	Verdict       string          `json:"verdict"` // basic verdict: clean, suspicious, malicious, unknown
+	DynamicResult any             `gorm:"serializer:json" json:"dynamic_result,omitempty"`
+	Verdict       string          `json:"verdict"` // clean, suspicious, malicious, unknown
 	Error         string          `json:"error"`
 }
 
-var _db *gorm.DB
-
-func InitDB() (err error) {
-	_db, err = gorm.Open(sqlite.Open(assets.DBPath()))
-	if err != nil {
-		return err
-	}
-
-	return _db.AutoMigrate(&Report{})
-}
-
-func CloseDB() error {
-	sqldb, err := _db.DB()
-	if err != nil {
-		return err
-	}
-	return sqldb.Close()
-}
+func (Report) TableName() string { return "reports" }
 
 func CreateReport(r *Report) error {
 	return _db.Create(r).Error
@@ -59,8 +42,7 @@ func ListReports() ([]Report, error) {
 
 func GetReport(id uint) (*Report, error) {
 	var r Report
-	err := _db.First(&r, id).Error
-	if err != nil {
+	if err := _db.First(&r, id).Error; err != nil {
 		return nil, err
 	}
 	return &r, nil

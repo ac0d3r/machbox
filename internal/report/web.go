@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/ac0d3r/machbox/internal/db"
+
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 )
@@ -49,7 +51,7 @@ func StartWebServer(addr string) error {
 }
 
 func handleListReports(c *gin.Context) {
-	reports, err := ListReports()
+	reports, err := db.ListReports()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -78,11 +80,11 @@ func handleReportDetail(c *gin.Context) {
 		return
 	}
 
-	report, err := GetReport(uint(id))
+	rec, err := db.GetReport(uint(id))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "report not found"})
 		return
 	}
 
-	c.JSON(http.StatusOK, report)
+	c.JSON(http.StatusOK, rec)
 }

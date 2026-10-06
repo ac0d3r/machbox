@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/ac0d3r/machbox/internal/agent"
+	"github.com/ac0d3r/machbox/internal/db"
 
 	"github.com/tidwall/gjson"
 )
@@ -19,7 +20,7 @@ const sanitizedPath = "$$WORKDIR"
 var workdirRegex = regexp.MustCompile(`(?:/private)?/tmp/machbox_[^/"]+`)
 
 type Parser struct {
-	data *Report
+	data *db.Report
 
 	pickTyp       string
 	pickeFile     string
@@ -27,11 +28,18 @@ type Parser struct {
 }
 
 func New(env agent.GuestInfo) *Parser {
-	return &Parser{data: &Report{AnalysisEnv: env}}
+	return &Parser{data: &db.Report{AnalysisEnv: env}}
 }
 
-func (p *Parser) GetPickeFile() (path, typ string) {
-	return p.pickeFile, p.pickTyp
+// GetPickFile returns the guest path of the primary executable for dynamic
+// analysis, and its type (mach-o, appbundle, dylib, …).
+func (p *Parser) GetPickFile() (path, typ string) {
+	return p.pickeFilePath, p.pickTyp
+}
+
+// SetPickFile updates the guest path used for dynamic analysis / report parsing.
+func (p *Parser) SetPickFile(path string) {
+	p.pickeFilePath = path
 }
 
 func (p *Parser) StaticResult(data, originSample, workpath string) error {
@@ -82,7 +90,7 @@ func (p *Parser) ParseDynamicResult(reader io.Reader) error {
 }
 
 func (p *Parser) Save() error {
-	return CreateReport(p.data)
+	return db.CreateReport(p.data)
 }
 
 func pickMainFile(gjret *gjson.Result) (path, typ string) {
