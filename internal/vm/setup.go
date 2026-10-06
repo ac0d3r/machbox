@@ -106,10 +106,20 @@ func setup(ctx context.Context, dir string) (*agent.GuestInfo, error) {
 	if err := inst.Shutdown(); err != nil {
 		logrus.Warnf("failed to stop baseline vm: %v", err)
 	}
+	// Wait for the VM to fully release disk files before Import's cleanup
+	// RemoveAll runs; otherwise an aborted import can leave ~/.machbox/vms/<uuid>.
+	select {
+	case <-inst.AlreadyShutdown():
+	case <-time.After(30 * time.Second):
+		logrus.Warn("timed out waiting for baseline VM to stop")
+	}
 
 	r := <-done
 	if graphicErr != nil && r.err == nil {
 		return nil, fmt.Errorf("show graphic: %w", graphicErr)
+	}
+	if r.info == nil && r.err == nil {
+		return nil, context.Canceled
 	}
 	return r.info, r.err
 }

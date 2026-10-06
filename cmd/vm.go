@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"io"
 	"text/tabwriter"
 	"time"
 
@@ -20,7 +19,6 @@ func newVMCommand() *cobra.Command {
 	cmd.AddCommand(
 		newVMImportCommand(),
 		newVMListCommand(),
-		newVMDoctorCommand(),
 		newVMRenameCommand(),
 	)
 	return cmd
@@ -37,16 +35,15 @@ func withVMDB(run func(*cobra.Command, []string) error) func(*cobra.Command, []s
 }
 
 func newVMImportCommand() *cobra.Command {
-	var name string
-	cmd := &cobra.Command{
-		Use:          "import <path.vbvm>",
+	return &cobra.Command{
+		Use:          "import <path.vbvm> <name>",
 		Short:        "Import a VirtualBuddy VM as a ready baseline",
-		Args:         cobra.ExactArgs(1),
+		Args:         cobra.ExactArgs(2),
 		SilenceUsage: true,
 		RunE: withVMDB(func(cmd *cobra.Command, args []string) error {
 			rec, err := vm.Import(cmd.Context(), vm.ImportOptions{
 				VbvmPath: args[0],
-				Name:     name,
+				Name:     args[1],
 			})
 			if err != nil {
 				return err
@@ -55,9 +52,6 @@ func newVMImportCommand() *cobra.Command {
 			return nil
 		}),
 	}
-	cmd.Flags().StringVar(&name, "name", "", "baseline name")
-	_ = cmd.MarkFlagRequired("name")
-	return cmd
 }
 
 func newVMListCommand() *cobra.Command {
@@ -80,26 +74,6 @@ func newVMListCommand() *cobra.Command {
 					v.AgentVersion, v.CreatedAt.Format(time.RFC3339))
 			}
 			return w.Flush()
-		}),
-	}
-}
-
-func newVMDoctorCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:          "doctor <uuid-or-name>",
-		Short:        "Inspect a baseline",
-		Args:         cobra.ExactArgs(1),
-		SilenceUsage: true,
-		RunE: withVMDB(func(cmd *cobra.Command, args []string) error {
-			res, err := vm.Doctor(args[0])
-			if err != nil {
-				return err
-			}
-			printDoctor(cmd.OutOrStdout(), res)
-			if !res.Healthy() {
-				return fmt.Errorf("baseline %s is not healthy", res.VM.UUID)
-			}
-			return nil
 		}),
 	}
 }
@@ -133,27 +107,5 @@ func formatOS(name, version, build string) string {
 		return name + " " + version
 	default:
 		return name
-	}
-}
-
-func printDoctor(w io.Writer, res *vm.DoctorResult) {
-	v := res.VM
-	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintf(tw, "UUID:\t%s\n", v.UUID)
-	fmt.Fprintf(tw, "Name:\t%s\n", v.Name)
-	fmt.Fprintf(tw, "OS:\t%s\n", formatOS(v.OSName, v.OSVersion, v.OSBuild))
-	fmt.Fprintf(tw, "Agent:\t%s\n", v.AgentVersion)
-	fmt.Fprintf(tw, "Path:\t%s\n", res.Path)
-	fmt.Fprintf(tw, "Created:\t%s\n", v.CreatedAt.Format(time.RFC3339))
-	fmt.Fprintf(tw, "Updated:\t%s\n", v.UpdatedAt.Format(time.RFC3339))
-	_ = tw.Flush()
-
-	if res.Healthy() {
-		fmt.Fprintln(w, "Status:\tok")
-		return
-	}
-	fmt.Fprintln(w, "Problems:")
-	for _, p := range res.Problems {
-		fmt.Fprintf(w, "  - %s\n", p)
 	}
 }

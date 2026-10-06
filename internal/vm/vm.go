@@ -10,7 +10,6 @@ import (
 
 	"github.com/ac0d3r/machbox/internal/assets"
 	"github.com/ac0d3r/machbox/internal/db"
-	"github.com/ac0d3r/machbox/internal/version"
 	"github.com/ac0d3r/machbox/pkg/vm/config"
 
 	"github.com/google/uuid"
@@ -28,7 +27,7 @@ type ImportOptions struct {
 // Import APFS-clones a VBVM into the managed baseline directory, runs setup
 // (GUI + guest agent handshake), and records the baseline. On failure the
 // clone is removed and the database is left unchanged.
-func Import(ctx context.Context, opts ImportOptions) (*db.VM, error) {
+func Import(ctx context.Context, opts ImportOptions) (vm *db.VM, err error) {
 	name := strings.TrimSpace(opts.Name)
 	if name == "" {
 		return nil, errors.New("name is required")
@@ -56,15 +55,19 @@ func Import(ctx context.Context, opts ImportOptions) (*db.VM, error) {
 		return nil, fmt.Errorf("create baseline directory: %w", err)
 	}
 
-	ok := false
 	defer func() {
-		if !ok {
-			_ = os.RemoveAll(dir)
+		if err == nil {
+			return
+		}
+		if rmErr := os.RemoveAll(dir); rmErr != nil {
+			logrus.Warnf("failed to remove incomplete baseline %s: %v", dir, rmErr)
+		} else {
+			logrus.Infof("removed incomplete baseline %s", id)
 		}
 	}()
 
 	logrus.Infof("importing baseline %q from %s", name, src)
-	if err := cloneFile(src, dir); err != nil {
+	if err = cloneFile(src, dir); err != nil {
 		return nil, fmt.Errorf("clone vm bundle: %w", err)
 	}
 
@@ -72,8 +75,11 @@ func Import(ctx context.Context, opts ImportOptions) (*db.VM, error) {
 	if err != nil {
 		return nil, fmt.Errorf("import %s failed: %w", id, err)
 	}
+	if info == nil {
+		return nil, fmt.Errorf("import %s failed: setup returned no guest info (aborted?)", id)
+	}
 
-	vm := &db.VM{
+	vm = &db.VM{
 		UUID:         id,
 		Name:         name,
 		OSName:       info.OSName,
@@ -81,11 +87,10 @@ func Import(ctx context.Context, opts ImportOptions) (*db.VM, error) {
 		OSBuild:      info.BuildVersion,
 		AgentVersion: info.AgentVersion,
 	}
-	if err := db.CreateVM(vm); err != nil {
+	if err = db.CreateVM(vm); err != nil {
 		return nil, fmt.Errorf("save baseline: %w", err)
 	}
 
-	ok = true
 	logrus.Infof("baseline %s is ready", id)
 	return vm, nil
 }
@@ -102,7 +107,7 @@ func Rename(identifier, newName string) (*db.VM, error) {
 		return nil, errors.New("name is required")
 	}
 
-	vm, err := resolve(identifier)
+	vm, err := Resolve(identifier)
 	if err != nil {
 		return nil, err
 	}
@@ -114,43 +119,8 @@ func Rename(identifier, newName string) (*db.VM, error) {
 	return vm, nil
 }
 
-// DoctorResult is the health check for one baseline.
-type DoctorResult struct {
-	VM       *db.VM
-	Path     string
-	Problems []string
-}
-
-// Healthy reports whether the baseline has no recorded problems.
-func (r *DoctorResult) Healthy() bool { return len(r.Problems) == 0 }
-
-// Doctor inspects a baseline identified by UUID or unique name.
-func Doctor(identifier string) (*DoctorResult, error) {
-	vm, err := resolve(identifier)
-	if err != nil {
-		return nil, err
-	}
-
-	res := &DoctorResult{VM: vm, Path: assets.VMPath(vm.UUID)}
-
-	if stat, err := os.Stat(res.Path); err != nil {
-		res.Problems = append(res.Problems, "baseline directory is missing: "+res.Path)
-	} else if !stat.IsDir() {
-		res.Problems = append(res.Problems, "baseline path is not a directory: "+res.Path)
-	} else if _, err := config.DecodeVBVMPath(res.Path); err != nil {
-		res.Problems = append(res.Problems, "baseline files invalid: "+err.Error())
-	}
-
-	if vm.AgentVersion != version.Version {
-		res.Problems = append(res.Problems, fmt.Sprintf(
-			"guest agent version %q does not match expected %q",
-			vm.AgentVersion, version.Version))
-	}
-
-	return res, nil
-}
-
-func resolve(identifier string) (*db.VM, error) {
+// Resolve looks up a baseline by UUID or unique name.
+func Resolve(identifier string) (*db.VM, error) {
 	identifier = strings.TrimSpace(identifier)
 	if identifier == "" {
 		return nil, &ErrBaselineNotFound{Identifier: identifier}

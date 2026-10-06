@@ -1,65 +1,26 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
-	"time"
 
-	"github.com/ac0d3r/machbox/internal/agent"
-	"github.com/ac0d3r/machbox/internal/assets"
-	"github.com/ac0d3r/machbox/internal/report"
-	"github.com/ac0d3r/machbox/pkg/vm"
-	"github.com/ac0d3r/machbox/pkg/vm/config"
+	"github.com/ac0d3r/machbox/internal/analyze"
 
-	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 
-type analyzeOption struct {
-	vmOptions
-
-	samplePath string
-	sampleName string
-	sampleArgs []string
-
-	timeout  int
-	password string
-
-	workpath  string
-	sharepath string
-}
-
-func (opts *analyzeOption) parseArgs(args []string) (err error) {
-	samplePath := args[0]
-	if !filepath.IsAbs(samplePath) {
-		samplePath, err = filepath.Abs(samplePath)
-		if err != nil {
-			return err
-		}
-	}
-	opts.samplePath = filepath.Clean(string(os.PathSeparator) + samplePath)
-	opts.sampleName = filepath.Base(opts.samplePath)
-
-	opts.sampleArgs = args[1:]
-	if len(opts.sampleArgs) > 0 && opts.sampleArgs[0] == "--" {
-		opts.sampleArgs = opts.sampleArgs[1:]
-	}
-	return nil
-}
-
-func (opts *analyzeOption) vmSamplePath() string {
-	return filepath.Join(opts.sharepath, opts.sampleName)
-}
-
 func newAnalyzeCommand() *cobra.Command {
-	opts := &analyzeOption{}
+	opts := &vmOptions{}
+	var (
+		vmID     string
+		password string
+		timeout  int
+	)
 
 	cmd := &cobra.Command{
 		Use:                   "analyze [flags] <sample> [--] [sample-args...]",
-		Short:                 "Run malware analysis inside the sandbox VM",
+		Short:                 "Run malware analysis inside an imported sandbox baseline",
 		DisableFlagsInUseLine: true,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) < 1 {
@@ -70,183 +31,34 @@ func newAnalyzeCommand() *cobra.Command {
 			}
 			return nil
 		},
-		PreRunE: func(cmd *cobra.Command, args []string) error {
-			return report.InitDB()
-		},
-		PostRunE: func(cmd *cobra.Command, args []string) error {
-			return report.CloseDB()
-		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := context.Background()
-
-			if err := opts.parseArgs(args); err != nil {
-				return err
-			}
-
-			shared, err := assets.NewShareDir(opts.sampleName,
-				opts.samplePath, "statictool", "dynamictool", "DTrace/network.d")
-			if err != nil {
-				return fmt.Errorf("prepare shared directory: %w", err)
-			}
-			logrus.Infof("creating shared directory at %s", shared.Path())
-			defer func() {
-				logrus.Info("cleaning up shared directory")
-				if err := shared.Clean(); err != nil {
-					logrus.Warnf("failed to remove shared directory: %v", err)
-				}
-			}()
-
-			logrus.Infof("decoding VBVM path: %s", opts.vbvmPath)
-			vbvmcfg, err := config.DecodeVBVMPath(opts.vbvmPath)
-			if err != nil {
-				return fmt.Errorf("failed to decode vbvm path: %w", err)
-			}
-
-			if err = vbvmcfg.CreateSnapshot(); err != nil {
-				return fmt.Errorf("failed to create VM snapshot: %w", err)
-			}
-			logrus.Infof("creating VM snapshot at %s", vbvmcfg.SnapshotPath)
-			defer func() {
-				logrus.Info("cleaning up VM snapshot")
-				if err := vbvmcfg.RemoveSnapshot(); err != nil {
-					logrus.Warnf("failed to remove snapshot: %v", err)
-				}
-			}()
-
 			if err := opts.parseDisplay(); err != nil {
 				return err
 			}
 
-			vmcfg, err := config.NewMacVMConf(
-				vbvmcfg,
-				&config.VMOptions{
-					DisplayWidth:  opts.width,
-					DisplayHeight: opts.height,
-					Shares:        []config.ShareDir{{Dir: shared.Path(), Tag: "machbox", ReadOnly: true}},
-					Network:       opts.parseNetwork(),
-				})
-			if err != nil {
-				return fmt.Errorf("failed to create VM config: %w", err)
+			sampleArgs := args[1:]
+			if len(sampleArgs) > 0 && sampleArgs[0] == "--" {
+				sampleArgs = sampleArgs[1:]
 			}
 
-			return safetyRunVM(ctx, &opts.vmOptions, vmcfg,
-				func(vmi *vm.VMInstance) {
-					go runAnalyze(ctx, vmi, opts)
-				})
+			return analyze.Run(cmd.Context(), analyze.Options{
+				VM:            vmID,
+				SamplePath:    filepath.Clean(args[0]),
+				SampleArgs:    sampleArgs,
+				Password:      password,
+				Timeout:       timeout,
+				DisplayWidth:  opts.width,
+				DisplayHeight: opts.height,
+				Headless:      opts.headless,
+				Network:       opts.parseNetwork(),
+			})
 		},
 	}
 
-	bindVMFlags(cmd, &opts.vmOptions)
-
-	cmd.Flags().StringVar(&opts.password, "password", "", "password for encrypted archives")
-	cmd.Flags().IntVar(&opts.timeout, "timeout", 60, "")
+	bindVMFlags(cmd, opts)
+	cmd.Flags().StringVarP(&vmID, "vm", "m", "", "baseline UUID or unique name")
+	cmd.Flags().StringVar(&password, "password", "", "password for encrypted archives")
+	cmd.Flags().IntVar(&timeout, "timeout", 60, "")
 	cmd.Flags().SetInterspersed(false)
 	return cmd
-}
-
-func runAnalyze(ctx context.Context, vmi *vm.VMInstance, opts *analyzeOption) {
-	defer func() {
-		logrus.Info("analysis complete, shutting down VM")
-		_ = vmi.Shutdown()
-	}()
-
-	select {
-	case <-ctx.Done():
-		return
-	case <-time.After(2 * time.Second):
-	}
-
-	dial := func(ctx context.Context) (net.Conn, error) {
-		return vmi.ConnectVsock(ctx, vm.DefaultVsockPort)
-	}
-
-	client, info, err := agent.WaitReady(ctx, dial, time.Second)
-	if err != nil {
-		logrus.Errorf("wait for guest agent: %v", err)
-		return
-	}
-	defer client.Close()
-
-	opts.workpath, opts.sharepath, err = client.SetWorkdir(ctx)
-	if err != nil {
-		logrus.Errorf("%v", err)
-		return
-	}
-	logrus.Infof("set WorkDir: %s, ShareDir: %s", opts.workpath, opts.sharepath)
-
-	retp := report.New(info)
-	if err := runStaticTask(ctx, client, opts, retp); err != nil {
-		logrus.Errorf("%v", err)
-		return
-	}
-	if err := runDynamicTask(ctx, client, opts, retp); err != nil {
-		logrus.Errorf("%v", err)
-	}
-	if err := retp.Save(); err != nil {
-		logrus.Errorf("failed to save report to db: %v", err)
-	}
-}
-
-func runDynamicTask(ctx context.Context, client *agent.Client,
-	opts *analyzeOption, retp *report.Parser) error {
-
-	logrus.Infoln("run dynamic analysis task")
-
-	pcikSample, pickTyp := retp.GetPickeFile()
-	if pcikSample != opts.vmSamplePath() {
-		logrus.Infof("archive main sample resolved to: %s", pcikSample)
-	}
-	if pcikSample == "" {
-		logrus.Warnf("no executable found, skipping dynamic analysis")
-		return nil
-	}
-
-	if pickTyp == "mach-o" {
-		if _, err := client.RunTask(ctx, &agent.Task{
-			Command: "chmod",
-			Args:    []string{"+x", pcikSample},
-			WorkDir: opts.workpath,
-		}); err != nil {
-			return err
-		}
-	}
-
-	dynamicArgs := []string{"run", "-ds",
-		filepath.Join(opts.sharepath, "DTrace", "network.d"), "-o", "-", pcikSample}
-	dynamicArgs = append(dynamicArgs, opts.sampleArgs...)
-
-	reader, err := client.RunStreamTask(ctx, &agent.Task{
-		Command: filepath.Join(opts.sharepath, "dynamictool"),
-		Args:    dynamicArgs,
-		WorkDir: opts.workpath,
-		Timeout: opts.timeout,
-	})
-	if err != nil {
-		return err
-	}
-	defer reader.Close()
-	return retp.ParseDynamicResult(reader)
-}
-
-func runStaticTask(ctx context.Context, client *agent.Client,
-	opts *analyzeOption, retp *report.Parser) error {
-
-	logrus.Infoln("run static analysis task")
-
-	args := []string{}
-	if opts.password != "" {
-		args = append(args, "--password", opts.password)
-	}
-	args = append(args, opts.vmSamplePath())
-
-	output, err := client.RunTask(ctx, &agent.Task{
-		Command: filepath.Join(opts.sharepath, "statictool"),
-		Args:    args,
-		WorkDir: opts.workpath,
-		Timeout: opts.timeout,
-	})
-	if err != nil {
-		return err
-	}
-	return retp.StaticResult(output, opts.vmSamplePath(), opts.workpath)
 }
