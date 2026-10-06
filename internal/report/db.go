@@ -3,8 +3,8 @@ package report
 import (
 	"time"
 
+	"github.com/ac0d3r/machbox/internal/agent"
 	"github.com/ac0d3r/machbox/internal/assets"
-	"github.com/ac0d3r/machbox/pkg/vsock/protocol"
 
 	sqlite "gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -21,11 +21,11 @@ type Report struct {
 	FileSize   int64  `json:"file_size"`
 	FileType   string `json:"file_type"`
 
-	AnalysisEnv   protocol.GuestInfo `gorm:"serializer:json" json:"analysis_env"`
-	StaticResult  map[string]any     `gorm:"serializer:json" json:"static_result"`
-	DynamicResult *DynamicReport     `gorm:"serializer:json" json:"dynamic_result,omitempty"`
-	Verdict       string             `json:"verdict"` // basic verdict: clean, suspicious, malicious, unknown
-	Error         string             `json:"error"`
+	AnalysisEnv   agent.GuestInfo `gorm:"serializer:json" json:"analysis_env"`
+	StaticResult  map[string]any  `gorm:"serializer:json" json:"static_result"`
+	DynamicResult *DynamicReport  `gorm:"serializer:json" json:"dynamic_result,omitempty"`
+	Verdict       string          `json:"verdict"` // basic verdict: clean, suspicious, malicious, unknown
+	Error         string          `json:"error"`
 }
 
 var _db *gorm.DB

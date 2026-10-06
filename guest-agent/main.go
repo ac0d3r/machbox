@@ -2,173 +2,88 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"os/user"
 	"strings"
-	"time"
+	"syscall"
 
+	"github.com/ac0d3r/machbox/internal/agent"
 	"github.com/ac0d3r/machbox/internal/version"
 	"github.com/ac0d3r/machbox/pkg/vsock"
-	"github.com/ac0d3r/machbox/pkg/vsock/protocol"
 )
 
-func CollectGuestInfo() (*protocol.GuestInfo, error) {
-	out, err := exec.Command("scutil", "--get", "ComputerName").Output()
-	if err != nil {
-		return nil, err
-	}
-	hostname := strings.TrimSpace(string(out))
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	out, err = exec.Command("sw_vers", "-productName").Output()
+	ln, err := vsock.Listen(vsock.DefaultPort)
 	if err != nil {
-		return nil, err
+		fmt.Fprintf(os.Stderr, "vsock listen: %v\n", err)
+		os.Exit(1)
 	}
-	osName := strings.TrimSpace(string(out))
+	defer ln.Close()
 
-	out, err = exec.Command("sw_vers", "-productVersion").Output()
-	if err != nil {
-		return nil, err
+	srv := &agent.Server{
+		Info:       collectGuestInfo,
+		MountShare: mountVirtioFS,
 	}
-	osVersion := strings.TrimSpace(string(out))
-
-	out, err = exec.Command("sw_vers", "-buildVersion").Output()
-	if err != nil {
-		return nil, err
+	fmt.Printf("[agent] listening on vsock %d\n", vsock.DefaultPort)
+	if err := srv.Serve(ctx, ln); err != nil {
+		fmt.Fprintf(os.Stderr, "agent serve: %v\n", err)
+		os.Exit(1)
 	}
-	buildVersion := strings.TrimSpace(string(out))
-
-	out, err = exec.Command("csrutil", "status").Output()
-	if err != nil {
-		return nil, err
-	}
-	sipDisabled := strings.Contains(strings.ToLower(string(out)), "disabled")
-
-	u, err := user.Current()
-	if err != nil {
-		return nil, err
-	}
-
-	return &protocol.GuestInfo{
-		Hostname:     hostname,
-		Username:     u.Username,
-		OSName:       osName,
-		OSVersion:    osVersion,
-		BuildVersion: buildVersion,
-		AgentVersion: version.Version,
-		SIPDisabled:  sipDisabled,
-	}, nil
 }
 
-func MountVirtioFS(tag, mountpoint string) error {
+func collectGuestInfo() (agent.GuestInfo, error) {
+	info := agent.GuestInfo{
+		OSName:       "macOS",
+		AgentVersion: version.Version,
+		Username:     "root",
+	}
+	if h, err := os.Hostname(); err == nil {
+		info.Hostname = h
+	}
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		info.Username = u.Username
+	}
+
+	if v, err := runTrim("scutil", "--get", "ComputerName"); err == nil {
+		info.Hostname = v
+	}
+	if v, err := runTrim("sw_vers", "-productName"); err == nil {
+		info.OSName = v
+	}
+	if v, err := runTrim("sw_vers", "-productVersion"); err == nil {
+		info.OSVersion = v
+	}
+	if v, err := runTrim("sw_vers", "-buildVersion"); err == nil {
+		info.BuildVersion = v
+	}
+	if csr, err := runTrim("csrutil", "status"); err == nil {
+		info.SIPDisabled = strings.Contains(strings.ToLower(csr), "disabled")
+	}
+	return info, nil
+}
+
+func mountVirtioFS(mountpoint string) error {
 	if err := os.MkdirAll(mountpoint, 0o750); err != nil {
 		return fmt.Errorf("mkdir %s: %w", mountpoint, err)
 	}
-
-	// #nosec G204 -- tag is a hardcoded virtiofs tag, mountpoint is the workdir set by the trusted host.
-	cmd := exec.Command("mount_virtiofs", tag, mountpoint)
-	out, err := cmd.CombinedOutput()
+	// #nosec G204 -- tag is fixed; mountpoint comes from the trusted host.
+	out, err := exec.Command("mount_virtiofs", "machbox", mountpoint).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("mount_virtiofs %s %s: %w (%s)", tag, mountpoint, err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("mount_virtiofs: %w (%s)", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
 
-var errKeepRunning = errors.New("keep running")
-
-func runAgent(ctx context.Context, nc net.Conn) error {
-	pc := vsock.GuestConnWrap(nc)
-	defer pc.Close()
-
-	info, err := CollectGuestInfo()
+func runTrim(name string, args ...string) (string, error) {
+	out, err := exec.Command(name, args...).Output()
 	if err != nil {
-		return fmt.Errorf("collect guest info: %w", err)
+		return "", err
 	}
-
-	if err := pc.Handshake(info); err != nil {
-		return fmt.Errorf("guest handshake failed: %w", err)
-	}
-
-	for {
-		msg, err := pc.Recv()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
-			return fmt.Errorf("recv: %w", err)
-		}
-
-		switch msg.Type {
-		case protocol.MsgSetWorkDir:
-			var wd protocol.WorkDir
-			if err := json.Unmarshal(msg.Payload, &wd); err != nil {
-				return fmt.Errorf("decode workdir: %w", err)
-			}
-
-			if wd.SharePath != "" {
-				if err := MountVirtioFS("machbox", wd.SharePath); err != nil {
-					return fmt.Errorf("mount virtiofs: %w", err)
-				}
-			}
-
-			if wd.WorkPath != "" {
-				if err := os.MkdirAll(wd.WorkPath, 0o750); err != nil {
-					return fmt.Errorf("create workdir %s: %w", wd.WorkPath, err)
-				}
-			}
-		case protocol.MsgTask:
-			task := &protocol.Task{}
-			if err := json.Unmarshal(msg.Payload, task); err != nil {
-				return fmt.Errorf("decode task: %w", err)
-			}
-
-			if err := pc.ExecuteTask(ctx, task); err != nil {
-				return fmt.Errorf("execute task: %w", err)
-			}
-		case protocol.MsgSessionEnd:
-			var se protocol.SessionEnd
-			if err := json.Unmarshal(msg.Payload, &se); err != nil {
-				return fmt.Errorf("decode session end: %w", err)
-			}
-			if se.KeepRunning {
-				return errKeepRunning
-			}
-			return nil
-		default:
-			return fmt.Errorf("unexpected message type: %d", msg.Type)
-		}
-	}
-}
-
-func main() {
-	var conn net.Conn
-	var err error
-
-	ctx := context.Background()
-
-	for range 120 {
-		conn, err = vsock.Dial()
-		if err == nil {
-			break
-		}
-		time.Sleep(time.Second)
-	}
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to connect to host vsock: %v\n", err)
-		os.Exit(1)
-	}
-
-	if err := runAgent(ctx, conn); err != nil {
-		if errors.Is(err, errKeepRunning) {
-			fmt.Println("[agent] analysis complete, entering keep-running mode")
-			select {}
-		}
-		fmt.Fprintf(os.Stderr, "agent error: %v\n", err)
-		os.Exit(1)
-	}
+	return strings.TrimSpace(string(out)), nil
 }

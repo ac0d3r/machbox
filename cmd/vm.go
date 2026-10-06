@@ -72,11 +72,11 @@ func newVMListCommand() *cobra.Command {
 				return err
 			}
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "UUID\tNAME\tOS\tVERSION\tBUILD\tAGENT\tCREATED")
+			fmt.Fprintln(w, "UUID\tNAME\tOS\tAGENT\tCREATED")
 			for i := range vms {
 				v := &vms[i]
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-					v.UUID, v.Name, v.OSName, v.OSVersion, v.OSBuild,
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+					v.UUID, v.Name, formatOS(v.OSName, v.OSVersion, v.OSBuild),
 					v.AgentVersion, v.CreatedAt.Format(time.RFC3339))
 			}
 			return w.Flush()
@@ -125,12 +125,23 @@ func newVMRenameCommand() *cobra.Command {
 	return cmd
 }
 
+func formatOS(name, version, build string) string {
+	switch {
+	case name != "" && version != "" && build != "":
+		return fmt.Sprintf("%s %s (%s)", name, version, build)
+	case name != "" && version != "":
+		return name + " " + version
+	default:
+		return name
+	}
+}
+
 func printDoctor(w io.Writer, res *vm.DoctorResult) {
 	v := res.VM
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	fmt.Fprintf(tw, "UUID:\t%s\n", v.UUID)
 	fmt.Fprintf(tw, "Name:\t%s\n", v.Name)
-	fmt.Fprintf(tw, "OS:\t%s %s (%s)\n", v.OSName, v.OSVersion, v.OSBuild)
+	fmt.Fprintf(tw, "OS:\t%s\n", formatOS(v.OSName, v.OSVersion, v.OSBuild))
 	fmt.Fprintf(tw, "Agent:\t%s\n", v.AgentVersion)
 	fmt.Fprintf(tw, "Path:\t%s\n", res.Path)
 	fmt.Fprintf(tw, "Created:\t%s\n", v.CreatedAt.Format(time.RFC3339))

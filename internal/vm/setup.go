@@ -7,17 +7,14 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/ac0d3r/machbox/internal/agent"
 	"github.com/ac0d3r/machbox/internal/assets"
 	"github.com/ac0d3r/machbox/internal/version"
 	boxvm "github.com/ac0d3r/machbox/pkg/vm"
 	"github.com/ac0d3r/machbox/pkg/vm/config"
-	"github.com/ac0d3r/machbox/pkg/vsock"
-	"github.com/ac0d3r/machbox/pkg/vsock/protocol"
 
 	"github.com/sirupsen/logrus"
 )
@@ -31,18 +28,10 @@ var ErrSIPEnabled = errors.New(
 		"boot the guest into Recovery Mode, open Utilities → Terminal, run " +
 		"`csrutil disable`, then reboot the guest and import again")
 
-// setup boots the cloned VBVM with the guest DMG attached and a GUI (same
-// lifecycle as safetyRunVM: Start → vsock → ShowGraphic on the main thread).
-// The guest handshake must run inside the vsock accept handler — returning
-// early closes the connection (see VsockServer.untrackConn).
-//
-// An outdated agent already on the source VBVM may connect first with an empty
-// or mismatched version; those attempts are ignored until a matching agent
-// connects (or SIP fails / timeout).
-func setup(ctx context.Context, dir string) (*protocol.GuestInfo, error) {
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-
+// setup boots the cloned VBVM with the guest DMG attached and a GUI, then
+// dials the guest agent until a matching version reports in (or SIP/timeout).
+func setup(ctx context.Context, dir string) (*agent.GuestInfo, error) {
+	// Main thread is pinned in main(); do not UnlockOSThread.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -71,57 +60,46 @@ func setup(ctx context.Context, dir string) (*protocol.GuestInfo, error) {
 	logrus.Info("VM started successfully")
 
 	type outcome struct {
-		info *protocol.GuestInfo
+		info *agent.GuestInfo
 		err  error
 	}
 	done := make(chan outcome, 1)
-	var once sync.Once
-	complete := func(info *protocol.GuestInfo, err error) {
-		once.Do(func() {
-			done <- outcome{info: info, err: err}
-			if err != nil {
-				logrus.Errorf("setup checks failed: %v — close the VM window to abort", err)
-				return
-			}
-			logrus.Info("setup checks passed — close the VM window to finish import")
-		})
-	}
 
 	waitCtx, waitCancel := context.WithTimeout(ctx, bootTimeout)
 	defer waitCancel()
-	go func() {
-		<-waitCtx.Done()
-		err := waitCtx.Err()
-		if errors.Is(err, context.DeadlineExceeded) {
-			err = fmt.Errorf(
-				"timed out after %s waiting for guest agent %q; "+
-					"install machbox-guest.pkg from the MachboxGuest volume in the GUI",
-				bootTimeout, version.Version)
-		}
-		complete(nil, err)
-	}()
 
-	logrus.Infof("waiting for guest agent %q…", version.Version)
-	if err := inst.StartVsockServer(func(nc net.Conn) {
-		// Handshake must finish before this handler returns; otherwise
-		// VsockServer closes the connection and the guest sees broken pipe.
-		info, err := acceptGuest(dir, nc)
+	go func() {
+		// Let StartGraphicApplication settle before the first Connect.
+		select {
+		case <-waitCtx.Done():
+			done <- outcome{err: waitCtx.Err()}
+			return
+		case <-time.After(2 * time.Second):
+		}
+
+		info, err := waitGuest(waitCtx, inst)
 		if err != nil {
-			if errors.Is(err, ErrSIPEnabled) {
-				complete(nil, err)
-				return
+			if errors.Is(err, context.DeadlineExceeded) {
+				err = fmt.Errorf(
+					"timed out after %s waiting for guest agent %q; "+
+						"install machbox-guest.pkg from the MachboxGuest volume in the GUI",
+					bootTimeout, version.Version)
 			}
-			logrus.Warnf("guest not ready: %v — install/reinstall machbox-guest.pkg from MachboxGuest", err)
+			logrus.Errorf("setup checks failed: %v — close the VM window to abort", err)
+			done <- outcome{err: err}
 			return
 		}
-		complete(info, nil)
-	}); err != nil {
-		_ = inst.Shutdown()
-		return nil, fmt.Errorf("start vsock server: %w", err)
-	}
+		if err := finalizeBaseline(dir); err != nil {
+			done <- outcome{err: err}
+			return
+		}
+		logrus.Info("setup checks passed — close the VM window to finish import")
+		done <- outcome{info: info}
+	}()
 
 	logrus.Infof("showing GUI (%dx%d); install machbox-guest.pkg from MachboxGuest if needed",
 		config.DefaultDisplayWidth, config.DefaultDisplayHeight)
+	logrus.Infof("waiting for guest agent %q…", version.Version)
 	graphicErr := inst.ShowGraphic(config.DefaultDisplayWidth, config.DefaultDisplayHeight)
 	cancel()
 
@@ -136,37 +114,45 @@ func setup(ctx context.Context, dir string) (*protocol.GuestInfo, error) {
 	return r.info, r.err
 }
 
-func acceptGuest(dir string, nc net.Conn) (*protocol.GuestInfo, error) {
-	hc := vsock.HostConnWrap(nc)
-	defer hc.Close()
-
-	info, err := hc.GuestHandshake()
-	if err != nil {
-		return nil, fmt.Errorf("guest handshake: %w", err)
+func waitGuest(ctx context.Context, inst *boxvm.VMInstance) (*agent.GuestInfo, error) {
+	dial := func(ctx context.Context) (net.Conn, error) {
+		return inst.ConnectVsock(ctx, boxvm.DefaultVsockPort)
 	}
 
-	logrus.Infof("guest connected: %s %s (%s), agent %q",
-		info.OSName, info.OSVersion, info.BuildVersion, info.AgentVersion)
+	for {
+		client, info, err := agent.Dial(ctx, dial)
+		if err != nil {
+			logrus.Debugf("guest agent not ready: %v", err)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Second):
+			}
+			continue
+		}
+		_ = client.Close()
 
-	if info.OSName == "" {
-		info.OSName = "macOS"
+		if info.OSName == "" {
+			info.OSName = "macOS"
+		}
+		if info.AgentVersion != version.Version {
+			logrus.Warnf("guest not ready: agent version %q != expected %q — install/reinstall machbox-guest.pkg",
+				info.AgentVersion, version.Version)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Second):
+			}
+			continue
+		}
+		agent.LogGuest(info)
+		if !info.SIPDisabled {
+			return nil, ErrSIPEnabled
+		}
+		return &info, nil
 	}
-	if !info.SIPDisabled {
-		return nil, ErrSIPEnabled
-	}
-	if info.AgentVersion != version.Version {
-		return nil, fmt.Errorf(
-			"agent version %q != expected %q",
-			info.AgentVersion, version.Version)
-	}
-
-	if err := finalizeBaseline(dir); err != nil {
-		return nil, err
-	}
-	return &info, nil
 }
 
-// finalizeBaseline drops transient per-run snapshot dirs left from prior boots.
 func finalizeBaseline(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {

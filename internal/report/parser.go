@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ac0d3r/machbox/pkg/vsock/protocol"
+	"github.com/ac0d3r/machbox/internal/agent"
 
 	"github.com/tidwall/gjson"
 )
@@ -26,7 +26,7 @@ type Parser struct {
 	pickeFilePath string
 }
 
-func New(env protocol.GuestInfo) *Parser {
+func New(env agent.GuestInfo) *Parser {
 	return &Parser{data: &Report{AnalysisEnv: env}}
 }
 

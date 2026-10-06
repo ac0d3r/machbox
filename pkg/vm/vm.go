@@ -3,7 +3,6 @@ package vm
 import (
 	"context"
 	"fmt"
-	"net"
 	"sync"
 
 	vz "github.com/Code-Hex/vz/v3"
@@ -12,9 +11,9 @@ import (
 
 type VMInstance struct {
 	ctx context.Context
+	vm  *vz.VirtualMachine
 
-	vm    *vz.VirtualMachine
-	vssrv *VsockServer
+	vsockMu sync.Mutex // serializes host→guest Connect
 
 	stateWatchOnce sync.Once
 	shutdownOnce   sync.Once
@@ -31,18 +30,11 @@ func New(ctx context.Context, cfg *vz.VirtualMachineConfiguration) (*VMInstance,
 		return nil, fmt.Errorf("create virtual machine: %w", err)
 	}
 
-	instance := &VMInstance{
+	return &VMInstance{
 		ctx:        ctx,
 		vm:         vm,
 		shutdownCh: make(chan struct{}),
-	}
-
-	// Initialize socket manager if a virtio socket device is configured.
-	if devices := vm.SocketDevices(); len(devices) > 0 {
-		instance.vssrv = NewVsockServer(devices[0])
-	}
-
-	return instance, nil
+	}, nil
 }
 
 func (i *VMInstance) startStateWatcher() {
@@ -51,7 +43,6 @@ func (i *VMInstance) startStateWatcher() {
 	})
 }
 
-// handleStateChanges watches the VM state and triggers shutdown when stopped.
 func (i *VMInstance) handleStateChanges() {
 	ch := i.vm.StateChangedNotify()
 
@@ -62,7 +53,6 @@ func (i *VMInstance) handleStateChanges() {
 				logrus.Debug("VM state notification channel closed")
 				return
 			}
-
 			switch state {
 			case vz.VirtualMachineStateRunning:
 				logrus.Debug("VM started")
@@ -71,7 +61,6 @@ func (i *VMInstance) handleStateChanges() {
 				i.setShutdownState()
 				return
 			}
-
 		case <-i.ctx.Done():
 			logrus.Debug("VM state watcher cancelled by context")
 			if i.vm.State() == vz.VirtualMachineStateStopped {
@@ -82,7 +71,6 @@ func (i *VMInstance) handleStateChanges() {
 	}
 }
 
-// Start starts the VM and launches the state watcher.
 func (i *VMInstance) Start(opts ...vz.VirtualMachineStartOption) error {
 	if err := i.vm.Start(opts...); err != nil {
 		return fmt.Errorf("start VM: %w", err)
@@ -91,12 +79,10 @@ func (i *VMInstance) Start(opts ...vz.VirtualMachineStartOption) error {
 	return nil
 }
 
-// ShowGraphic starts the VM's graphical application window.
 func (i *VMInstance) ShowGraphic(width, height int64) error {
 	if width <= 0 || height <= 0 {
 		return fmt.Errorf("invalid graphic size: width=%d height=%d", width, height)
 	}
-
 	if err := i.vm.StartGraphicApplication(
 		float64(width),
 		float64(height),
@@ -115,26 +101,14 @@ func (i *VMInstance) setShutdownState() {
 }
 
 func (i *VMInstance) Shutdown() error {
-	if i.vssrv != nil {
-		i.vssrv.Close()
-	}
-
 	if i.vm.State() == vz.VirtualMachineStateStopped {
 		i.setShutdownState()
 		return nil
 	}
-
 	logrus.Debug("Stopping VM")
 	return i.vm.Stop()
 }
 
 func (i *VMInstance) AlreadyShutdown() <-chan struct{} {
 	return i.shutdownCh
-}
-
-func (i *VMInstance) StartVsockServer(handler func(net.Conn)) error {
-	if i.vssrv == nil {
-		return fmt.Errorf("no virtio socket device available")
-	}
-	return i.vssrv.AcceptLoop(i.ctx, DefaultVsockPort, handler)
 }

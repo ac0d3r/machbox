@@ -122,7 +122,10 @@ func NewMacVMConf(
 	}
 
 	validated, err := vmcfg.Validate()
-	if !validated || err != nil {
+	if err != nil {
+		return nil, fmt.Errorf("invalid virtual machine configuration: %w", err)
+	}
+	if !validated {
 		return nil, errors.New("invalid virtual machine configuration")
 	}
 

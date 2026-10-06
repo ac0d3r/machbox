@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -145,9 +144,7 @@ func safetyRunVM(ctx context.Context,
 	vmcfg *vz.VirtualMachineConfiguration,
 	onVMStarted func(*vm.VMInstance)) error {
 
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-
+	// Main thread is pinned in main(); do not UnlockOSThread.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 

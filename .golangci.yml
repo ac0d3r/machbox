@@ -35,9 +35,6 @@ linters:
         - os.RemoveAll
         - (*os.Process).Kill
         - (*github.com/Code-Hex/vz/v3.VirtioSocketListener).Close
-        - (*github.com/ac0d3r/machbox/pkg/vsock/protocol.Conn).Close
-        - (*github.com/ac0d3r/machbox/pkg/vsock.HostConn).Close
-        - (*github.com/ac0d3r/machbox/pkg/vsock.GuestConn).Close
         - (*github.com/ac0d3r/machbox/pkg/vm.VMInstance).Shutdown
   exclusions:
     rules:

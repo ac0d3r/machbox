@@ -6,13 +6,13 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"time"
 
+	"github.com/ac0d3r/machbox/internal/agent"
 	"github.com/ac0d3r/machbox/internal/assets"
 	"github.com/ac0d3r/machbox/internal/report"
 	"github.com/ac0d3r/machbox/pkg/vm"
 	"github.com/ac0d3r/machbox/pkg/vm/config"
-	"github.com/ac0d3r/machbox/pkg/vsock"
-	"github.com/ac0d3r/machbox/pkg/vsock/protocol"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -83,7 +83,6 @@ func newAnalyzeCommand() *cobra.Command {
 				return err
 			}
 
-			// Create shared directory
 			shared, err := assets.NewShareDir(opts.sampleName,
 				opts.samplePath, "statictool", "dynamictool", "DTrace/network.d")
 			if err != nil {
@@ -103,7 +102,6 @@ func newAnalyzeCommand() *cobra.Command {
 				return fmt.Errorf("failed to decode vbvm path: %w", err)
 			}
 
-			// Create vm snapshot
 			if err = vbvmcfg.CreateSnapshot(); err != nil {
 				return fmt.Errorf("failed to create VM snapshot: %w", err)
 			}
@@ -133,10 +131,7 @@ func newAnalyzeCommand() *cobra.Command {
 
 			return safetyRunVM(ctx, &opts.vmOptions, vmcfg,
 				func(vmi *vm.VMInstance) {
-					if err := vmi.StartVsockServer(
-						analyzeHandler(vmi, opts)); err != nil {
-						logrus.Errorf("failed to start analyze vsock listener: %v", err)
-					}
+					go runAnalyze(ctx, vmi, opts)
 				})
 		},
 	}
@@ -149,48 +144,51 @@ func newAnalyzeCommand() *cobra.Command {
 	return cmd
 }
 
-func analyzeHandler(vmi *vm.VMInstance, opts *analyzeOption) func(net.Conn) {
-	return func(nc net.Conn) {
-		hostconn := vsock.HostConnWrap(nc)
-		defer hostconn.Close()
+func runAnalyze(ctx context.Context, vmi *vm.VMInstance, opts *analyzeOption) {
+	defer func() {
+		logrus.Info("analysis complete, shutting down VM")
+		_ = vmi.Shutdown()
+	}()
 
-		defer func() {
-			logrus.Info("analysis complete, shutting down VM")
-			_ = vmi.Shutdown()
-		}()
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(2 * time.Second):
+	}
 
-		info, err := hostconn.GuestHandshake()
-		if err != nil {
-			logrus.Errorf("guest handshake failed: %v", err)
-			return
-		}
+	dial := func(ctx context.Context) (net.Conn, error) {
+		return vmi.ConnectVsock(ctx, vm.DefaultVsockPort)
+	}
 
-		opts.workpath, opts.sharepath, err = hostconn.SetWorkdir()
-		if err != nil {
-			logrus.Errorf("%v", err)
-			return
-		}
-		logrus.Infof("set WorkDir: %s, ShareDir: %s", opts.workpath, opts.sharepath)
+	client, info, err := agent.WaitReady(ctx, dial, time.Second)
+	if err != nil {
+		logrus.Errorf("wait for guest agent: %v", err)
+		return
+	}
+	defer client.Close()
 
-		retp := report.New(info)
-		if err := runStaticTask(hostconn, opts, retp); err != nil {
-			logrus.Errorf("%v", err)
-			return
-		}
+	opts.workpath, opts.sharepath, err = client.SetWorkdir(ctx)
+	if err != nil {
+		logrus.Errorf("%v", err)
+		return
+	}
+	logrus.Infof("set WorkDir: %s, ShareDir: %s", opts.workpath, opts.sharepath)
 
-		if err := runDynamicTask(hostconn, opts, retp); err != nil {
-			logrus.Errorf("%v", err)
-		}
-
-		if err := retp.Save(); err != nil {
-			logrus.Errorf("failed to save report to db: %v", err)
-		}
+	retp := report.New(info)
+	if err := runStaticTask(ctx, client, opts, retp); err != nil {
+		logrus.Errorf("%v", err)
+		return
+	}
+	if err := runDynamicTask(ctx, client, opts, retp); err != nil {
+		logrus.Errorf("%v", err)
+	}
+	if err := retp.Save(); err != nil {
+		logrus.Errorf("failed to save report to db: %v", err)
 	}
 }
 
-func runDynamicTask(conn *vsock.HostConn,
-	opts *analyzeOption,
-	retp *report.Parser) error {
+func runDynamicTask(ctx context.Context, client *agent.Client,
+	opts *analyzeOption, retp *report.Parser) error {
 
 	logrus.Infoln("run dynamic analysis task")
 
@@ -198,14 +196,13 @@ func runDynamicTask(conn *vsock.HostConn,
 	if pcikSample != opts.vmSamplePath() {
 		logrus.Infof("archive main sample resolved to: %s", pcikSample)
 	}
-
 	if pcikSample == "" {
 		logrus.Warnf("no executable found, skipping dynamic analysis")
 		return nil
 	}
 
 	if pickTyp == "mach-o" {
-		if _, err := conn.RunTask(&protocol.Task{
+		if _, err := client.RunTask(ctx, &agent.Task{
 			Command: "chmod",
 			Args:    []string{"+x", pcikSample},
 			WorkDir: opts.workpath,
@@ -218,24 +215,21 @@ func runDynamicTask(conn *vsock.HostConn,
 		filepath.Join(opts.sharepath, "DTrace", "network.d"), "-o", "-", pcikSample}
 	dynamicArgs = append(dynamicArgs, opts.sampleArgs...)
 
-	task := &protocol.Task{
+	reader, err := client.RunStreamTask(ctx, &agent.Task{
 		Command: filepath.Join(opts.sharepath, "dynamictool"),
 		Args:    dynamicArgs,
 		WorkDir: opts.workpath,
-		Timeout: opts.timeout}
-
-	reader, err := conn.RunStreamTask(task)
+		Timeout: opts.timeout,
+	})
 	if err != nil {
 		return err
 	}
 	defer reader.Close()
-
 	return retp.ParseDynamicResult(reader)
 }
 
-func runStaticTask(conn *vsock.HostConn,
-	opts *analyzeOption,
-	retp *report.Parser) error {
+func runStaticTask(ctx context.Context, client *agent.Client,
+	opts *analyzeOption, retp *report.Parser) error {
 
 	logrus.Infoln("run static analysis task")
 
@@ -245,13 +239,12 @@ func runStaticTask(conn *vsock.HostConn,
 	}
 	args = append(args, opts.vmSamplePath())
 
-	task := &protocol.Task{
+	output, err := client.RunTask(ctx, &agent.Task{
 		Command: filepath.Join(opts.sharepath, "statictool"),
 		Args:    args,
 		WorkDir: opts.workpath,
-		Timeout: opts.timeout}
-
-	output, err := conn.RunTask(task)
+		Timeout: opts.timeout,
+	})
 	if err != nil {
 		return err
 	}
