@@ -71,26 +71,27 @@ func (c *Client) Close() error {
 }
 
 // SetWorkdir tells the guest where to store files and mount the share.
-func (c *Client) SetWorkdir(_ context.Context) (workpath, sharepath string, err error) {
+func (c *Client) SetWorkdir() (WorkDir, error) {
+	tmpID := strconv.FormatInt(time.Now().UnixNano(), 36)
 	wd := WorkDir{
-		WorkPath:  fmt.Sprintf("/tmp/machbox_w%s", strconv.FormatInt(time.Now().UnixNano(), 36)),
-		SharePath: "/tmp/machbox_s",
+		WorkPath:  fmt.Sprintf("/tmp/machbox_w%s", tmpID),
+		SharePath: fmt.Sprintf("/tmp/machbox_s%s", tmpID),
 	}
 	if err := c.conn.sendJSON(msgSetWorkDir, wd); err != nil {
-		return "", "", fmt.Errorf("set workdir: %w", err)
+		return WorkDir{}, fmt.Errorf("set workdir: %w", err)
 	}
 	var a ack
 	if err := c.conn.recvJSON(msgACK, &a); err != nil {
-		return "", "", fmt.Errorf("set workdir: %w", err)
+		return WorkDir{}, fmt.Errorf("set workdir: %w", err)
 	}
 	if !a.OK {
-		return "", "", fmt.Errorf("set workdir: %s", a.Error)
+		return WorkDir{}, fmt.Errorf("set workdir: %s", a.Error)
 	}
-	return wd.WorkPath, wd.SharePath, nil
+	return wd, nil
 }
 
 // RunTask runs a non-streaming task and returns trimmed stdout.
-func (c *Client) RunTask(_ context.Context, task *Task) (string, error) {
+func (c *Client) RunTask(task *Task) (string, error) {
 	task.Stream = false
 	if err := c.conn.sendJSON(msgTask, task); err != nil {
 		return "", err
@@ -106,7 +107,7 @@ func (c *Client) RunTask(_ context.Context, task *Task) (string, error) {
 }
 
 // RunStreamTask runs a streaming task; the reader yields stdout until EOF.
-func (c *Client) RunStreamTask(_ context.Context, task *Task) (io.ReadCloser, error) {
+func (c *Client) RunStreamTask(task *Task) (io.ReadCloser, error) {
 	task.Stream = true
 	if err := c.conn.sendJSON(msgTask, task); err != nil {
 		return nil, err

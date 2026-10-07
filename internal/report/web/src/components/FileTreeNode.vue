@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { formatSize } from '../utils.js'
 import MachoAnalysis from './MachoAnalysis.vue'
 import AppBundle from './AppBundle.vue'
+import PackageInfo from './PackageInfo.vue'
 
 defineOptions({ name: 'FileTreeNode' })
 
@@ -27,12 +28,14 @@ const isMachoData = (data) => {
 
 const isMacho = computed(() => isMachoData(nodeData.value))
 const isAppBundle = computed(() => props.node?.base?.type === 'appbundle')
+const isPkg = computed(() => props.node?.base?.type === 'pkg')
 const displayType = computed(() => {
   if (props.node?.base?.type === 'unknown' && props.node?.base?.is_dir) {
     return 'dir'
   }
   return props.node?.base?.type || 'unknown'
 })
+const canExpand = computed(() => hasChildren.value || isMacho.value || isAppBundle.value || isPkg.value || !!nodeData.value)
 </script>
 
 <template>
@@ -40,10 +43,10 @@ const displayType = computed(() => {
     <div
       class="node-header"
       :style="{ paddingLeft: depth * 16 + 12 + 'px' }"
-      :class="{ clickable: hasChildren || isMacho || isAppBundle || nodeData }"
-      @click="(hasChildren || isMacho || isAppBundle || nodeData) && (expanded = !expanded)"
+      :class="{ clickable: canExpand }"
+      @click="canExpand && (expanded = !expanded)"
     >
-      <span v-if="hasChildren || isMacho || isAppBundle || nodeData" class="arrow" :class="{ open: expanded }">▸</span>
+      <span v-if="canExpand" class="arrow" :class="{ open: expanded }">▸</span>
       <span v-else class="arrow-placeholder"></span>
       <span class="node-name">{{ node.base?.name }}</span>
       <span class="badge" :class="'badge-' + displayType">{{ displayType }}</span>
@@ -58,6 +61,9 @@ const displayType = computed(() => {
         </div>
         <div v-else-if="isAppBundle" class="data-panel">
           <AppBundle :data="nodeData" />
+        </div>
+        <div v-else-if="isPkg" class="data-panel">
+          <PackageInfo :data="nodeData" />
         </div>
         <div v-else class="data-panel json-viewer">
           <pre>{{ JSON.stringify(nodeData, null, 2) }}</pre>
@@ -137,7 +143,10 @@ const displayType = computed(() => {
 }
 .badge-unknown { background: #f0f0f0; color: #666; }
 .badge-zip { background: #fff3e0; color: #e65100; }
+.badge-dmg { background: #e0f7fa; color: #006064; }
+.badge-pkg { background: #fce4ec; color: #ad1457; }
 .badge-mach-o { background: #e3f2fd; color: #1565c0; }
+.badge-dylib { background: #e8eaf6; color: #3949ab; }
 .badge-directory,
 .badge-dir { background: #f3e5f5; color: #6a1b9a; }
 .badge-appbundle { background: #e8f5e9; color: #2e7d32; }

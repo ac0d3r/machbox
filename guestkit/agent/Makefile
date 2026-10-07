@@ -32,12 +32,12 @@ package: build-agent
 	mv $(AGENT_NAME) $(BIN_DST)/$(AGENT_NAME)
 	chmod 755 $(BIN_DST)/$(AGENT_NAME)
 
-	pkgbuild \
+	set -o pipefail; pkgbuild \
 		--root $(PAYLOAD_DIR) \
 		--scripts $(SCRIPTS_DIR) \
 		--identifier $(PKG_ID) \
 		--version $(VERSION) \
-		$(PKG_OUTPUT)
+		$(PKG_OUTPUT) 2>&1 | grep -v '^write: Permission denied$$'
 
 clean:
 	rm -rf $(BUILD_DIR)
