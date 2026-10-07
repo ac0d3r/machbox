@@ -1,7 +1,8 @@
 package cmd
 
 import (
-	"github.com/ac0d3r/machbox/report"
+	"github.com/ac0d3r/machbox/internal/db"
+	"github.com/ac0d3r/machbox/internal/report"
 
 	"github.com/spf13/cobra"
 )
@@ -13,10 +14,10 @@ func newReportViewCommand() *cobra.Command {
 		Use:   "report-view",
 		Short: "Start the web UI server to browse analysis reports",
 		PreRunE: func(cmd *cobra.Command, args []string) error {
-			return report.InitDB()
+			return db.InitDB()
 		},
 		PostRunE: func(cmd *cobra.Command, args []string) error {
-			return report.CloseDB()
+			return db.CloseDB()
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return report.StartWebServer(addr)

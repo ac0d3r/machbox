@@ -9,21 +9,21 @@ export CGO_LDFLAGS := -Wl,-no_warn_duplicate_libraries
 
 # Guest image
 VOLUME_NAME   := MachboxGuest
-GUEST_PKG     := guest-agent/build/machbox-guest.pkg
-GUEST_DMG     := guest.dmg
+GUEST_PKG     := guestkit/agent/build/machbox-guest.pkg
+GUEST_DMG     := guestkit/agent/guest.dmg
 
 # machbox assets
-EMBED_DIR     := core/assets/data
+EMBED_DIR     := internal/assets/data
 
 # Report web view
-REPORT_WEB_DIR := report/web
+REPORT_WEB_DIR := internal/report/web
 
-.PHONY: all build build-guest-agent prepare-assets clean
+.PHONY: all build build-agent prepare-assets clean
 
 all: build
 
 build: prepare-assets
-	CGO_ENABLED=1 GOOS=darwin go build -ldflags "-s -w -X github.com/ac0d3r/machbox/cmd.version=$(VERSION)" -trimpath -o "$(BINFILE)" main.go
+	CGO_ENABLED=1 GOOS=darwin go build -ldflags "-s -w -X github.com/ac0d3r/machbox/internal/version.Version=$(VERSION)" -trimpath -o "$(BINFILE)" main.go
 
 	@test -f ${ENTITLEMENTS} || { echo "error: missing entitlements file: $@" >&2; exit 1; }
 
@@ -32,21 +32,21 @@ build: prepare-assets
 		--options runtime \
 		"$(BINFILE)"
 
-prepare-assets: build-guest-agent build-tools build-report-web
+prepare-assets: build-agent build-tools build-report-web
 	@mkdir -p $(EMBED_DIR)
 	@mv "$(GUEST_DMG)" $(EMBED_DIR)/
 
-	@mv tools/statictool/bin/statictool $(EMBED_DIR)/
+	@mv guestkit/statictool/bin/statictool $(EMBED_DIR)/
 
-	@mv tools/dynamictool/bin/dynamictool $(EMBED_DIR)/
+	@mv guestkit/dynamictool/bin/dynamictool $(EMBED_DIR)/
 	@mkdir -p  $(EMBED_DIR)/DTrace
-	@cp -r tools/dynamictool/DTrace/*.d $(EMBED_DIR)/DTrace
+	@cp -r guestkit/dynamictool/DTrace/*.d $(EMBED_DIR)/DTrace
 
 	@shasum -a 256 $(EMBED_DIR)/guest.dmg | awk '{print $$1}' > $(EMBED_DIR)/guest.dmg.sha256
 
-build-guest-agent:
+build-agent:
 	rm -f $(GUEST_DMG)
-	$(MAKE) -C guest-agent package
+	$(MAKE) -C guestkit/agent package VERSION=$(VERSION)
 	@if [ ! -f "$(GUEST_DMG)" ]; then \
 		hdiutil create \
 			-srcfolder "$(GUEST_PKG)" \
@@ -56,8 +56,8 @@ build-guest-agent:
 	fi
 
 build-tools:
-	$(MAKE) -C tools/statictool build
-	$(MAKE) -C tools/dynamictool build
+	$(MAKE) -C guestkit/statictool build
+	$(MAKE) -C guestkit/dynamictool build
 
 build-report-web:
 	cd "$(REPORT_WEB_DIR)" && npm install && npm run build
@@ -69,6 +69,6 @@ clean:
 	
 	rm -rf "$(REPORT_WEB_DIR)/dist"
 
-	$(MAKE) -C guest-agent clean
-	$(MAKE) -C tools/statictool clean
-	$(MAKE) -C tools/dynamictool clean
+	$(MAKE) -C guestkit/agent clean
+	$(MAKE) -C guestkit/statictool clean
+	$(MAKE) -C guestkit/dynamictool clean
