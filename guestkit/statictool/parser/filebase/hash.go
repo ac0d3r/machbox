@@ -15,23 +15,27 @@ type Hash struct {
 	SHA256 string `json:"sha256,omitempty"`
 }
 
-func HashFile(path string) (hash Hash, err error) {
+func HashFile(path string) (Hash, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return hash, err
+		return Hash{}, err
 	}
 	defer f.Close()
+	return hashReader(f)
+}
 
+func hashReader(r io.Reader) (Hash, error) {
 	md5h := md5.New()
 	sha1h := sha1.New()
 	sha256h := sha256.New()
 
-	if _, err := io.Copy(io.MultiWriter(md5h, sha1h, sha256h), f); err != nil {
-		return hash, err
+	if _, err := io.Copy(io.MultiWriter(md5h, sha1h, sha256h), r); err != nil {
+		return Hash{}, err
 	}
 
-	hash.MD5 = hex.EncodeToString(md5h.Sum(nil))
-	hash.SHA1 = hex.EncodeToString(sha1h.Sum(nil))
-	hash.SHA256 = hex.EncodeToString(sha256h.Sum(nil))
-	return hash, nil
+	return Hash{
+		MD5:    hex.EncodeToString(md5h.Sum(nil)),
+		SHA1:   hex.EncodeToString(sha1h.Sum(nil)),
+		SHA256: hex.EncodeToString(sha256h.Sum(nil)),
+	}, nil
 }

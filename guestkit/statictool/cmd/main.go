@@ -67,7 +67,7 @@ func NewRootCommand() *cobra.Command {
 
 	cmd.Flags().StringVarP(&opts.output, "output", "o", "", "write JSON output to file")
 	cmd.Flags().StringVar(&opts.password, "password", "", "password for encrypted archives")
-	cmd.Flags().StringVar(&opts.extractDir, "extract-dir", "", "extract archive to this directory")
+	cmd.Flags().StringVar(&opts.extractDir, "extract-dir", "", "directory to unpack zip/dmg/pkg (required for those types)")
 
 	return cmd
 }

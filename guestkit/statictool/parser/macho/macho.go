@@ -2,10 +2,14 @@ package macho
 
 import (
 	"bytes"
+	"crypto/x509"
+	"encoding/hex"
 	"fmt"
 	"strings"
+	"time"
 
 	gomacho "github.com/blacktop/go-macho"
+	cstypes "github.com/blacktop/go-macho/pkg/codesign/types"
 	"github.com/blacktop/go-macho/types"
 	"github.com/smallstep/pkcs7"
 	"howett.net/plist"
@@ -67,13 +71,15 @@ type Strings struct {
 
 type CodeSignature struct {
 	Signed          bool            `json:"signed"`
-	Certificates    []Certificate   `json:"certificates"`
-	Identifier      string          `json:"identifier"`
-	TeamID          string          `json:"team_id"`
-	CDHash          string          `json:"cdhash"`
-	Entitlements    map[string]any  `json:"entitlements"`
-	Requirements    []Requirement   `json:"requirements"`
-	CodeDirectories []CodeDirectory `json:"code_directories"`
+	Adhoc           bool            `json:"adhoc,omitempty"`
+	Identifier      string          `json:"identifier,omitempty"`
+	TeamID          string          `json:"team_id,omitempty"`
+	CDHash          string          `json:"cdhash,omitempty"`
+	Signer          string          `json:"signer,omitempty"`
+	Certificates    []Certificate   `json:"certificates,omitempty"`
+	Entitlements    map[string]any  `json:"entitlements,omitempty"`
+	Requirements    []Requirement   `json:"requirements,omitempty"`
+	CodeDirectories []CodeDirectory `json:"code_directories,omitempty"`
 }
 
 type Requirement struct {
@@ -82,25 +88,26 @@ type Requirement struct {
 }
 
 type Certificate struct {
-	Index   int    `json:"index"`
-	Subject string `json:"subject"`
-	Issuer  string `json:"issuer"`
+	Index      int    `json:"index"`
+	Subject    string `json:"subject,omitempty"`
+	Issuer     string `json:"issuer,omitempty"`
+	CommonName string `json:"common_name,omitempty"`
+	Serial     string `json:"serial,omitempty"`
+	NotBefore  string `json:"not_before,omitempty"`
+	NotAfter   string `json:"not_after,omitempty"`
+	IsSigner   bool   `json:"is_signer,omitempty"`
 }
 
 type CodeDirectory struct {
 	ID               string `json:"id,omitempty"`
 	TeamID           string `json:"team_id,omitempty"`
 	CDHash           string `json:"cdhash,omitempty"`
-	Version          uint32 `json:"version,omitempty"`
-	Flags            uint32 `json:"flags,omitempty"`
-	FlagsStr         string `json:"flags_str,omitempty"`
-	HashOffset       uint32 `json:"hash_offset,omitempty"`
-	IdentifierOffset uint32 `json:"identifier_offset,omitempty"`
+	Version          string `json:"version,omitempty"`
+	Flags            string `json:"flags,omitempty"`
 	SpecialSlots     uint32 `json:"special_slots,omitempty"`
 	CodeSlots        uint32 `json:"code_slots,omitempty"`
 	HashSize         uint8  `json:"hash_size,omitempty"`
-	HashType         uint8  `json:"hash_type,omitempty"`
-	HashTypeStr      string `json:"hash_type_str,omitempty"`
+	HashType         string `json:"hash_type,omitempty"`
 	Platform         string `json:"platform,omitempty"`
 	CodeLimit        uint64 `json:"code_limit,omitempty"`
 	RuntimeVersion   string `json:"runtime_version,omitempty"`
@@ -213,28 +220,23 @@ func parseSections(f *gomacho.File) []Section {
 }
 
 func parseCodeSignature(f *gomacho.File) (*CodeSignature, error) {
-	for _, load := range f.Loads {
-		if load.Command() != types.LC_CODE_SIGNATURE {
-			continue
-		}
-
-		raw, ok := load.(*gomacho.CodeSignature)
-		if !ok || raw == nil {
-			continue
-		}
-		return normalizeCodeSignature(raw)
+	raw := f.CodeSignature()
+	if raw == nil {
+		return nil, nil
 	}
-
-	return nil, nil
+	return normalizeCodeSignature(raw), nil
 }
 
-func normalizeCodeSignature(raw *gomacho.CodeSignature) (*CodeSignature, error) {
-	cs := &CodeSignature{}
-	cs.Signed = len(raw.CodeDirectories) > 0
+func normalizeCodeSignature(raw *gomacho.CodeSignature) *CodeSignature {
+	cs := &CodeSignature{
+		Signed: len(raw.CodeDirectories) > 0 || len(raw.CMSSignature) > 0,
+	}
 
 	if raw.Entitlements != "" {
-		_ = plist.NewDecoder(bytes.NewReader([]byte(raw.Entitlements))).Decode(&cs.Entitlements)
-		// Entitlements plist may be malformed; ignore the error and leave the map empty.
+		var ents map[string]any
+		if err := plist.NewDecoder(bytes.NewReader([]byte(raw.Entitlements))).Decode(&ents); err == nil && len(ents) > 0 {
+			cs.Entitlements = ents
+		}
 	}
 
 	if len(raw.Requirements) > 0 {
@@ -247,24 +249,19 @@ func normalizeCodeSignature(raw *gomacho.CodeSignature) (*CodeSignature, error) 
 		}
 	}
 
-	if len(raw.CodeDirectories) > 0 {
-		cs.CodeDirectories = make([]CodeDirectory, 0, len(raw.CodeDirectories))
+	if n := len(raw.CodeDirectories); n > 0 {
+		cs.CodeDirectories = make([]CodeDirectory, 0, n)
+		bestIdx := bestCodeDirectoryIndex(raw.CodeDirectories)
 		for idx, cd := range raw.CodeDirectories {
 			entry := CodeDirectory{
-				ID:      cd.ID,
-				TeamID:  cd.TeamID,
-				CDHash:  cd.CDHash,
-				Version: uint32(cd.Header.Version),
-
-				Flags:    uint32(cd.Header.Flags),
-				FlagsStr: cd.Header.Flags.String(),
-
-				HashOffset:       cd.Header.HashOffset,
-				IdentifierOffset: cd.Header.IdentOffset,
+				ID:               cd.ID,
+				TeamID:           cd.TeamID,
+				CDHash:           cd.CDHash,
+				Version:          fmt.Sprintf("0x%x", uint32(cd.Header.Version)),
+				Flags:            cd.Header.Flags.String(),
 				SpecialSlots:     cd.Header.NSpecialSlots,
 				CodeSlots:        cd.Header.NCodeSlots,
-				HashType:         uint8(cd.Header.HashType),
-				HashTypeStr:      cd.Header.HashType.String(),
+				HashType:         cd.Header.HashType.String(),
 				HashSize:         cd.Header.HashSize,
 				Platform:         cd.Header.Platform.String(),
 				CodeLimit:        cd.CodeLimit,
@@ -272,62 +269,64 @@ func normalizeCodeSignature(raw *gomacho.CodeSignature) (*CodeSignature, error) 
 				ExecSegmentFlags: cd.Header.ExecSegFlags.String(),
 			}
 			cs.CodeDirectories = append(cs.CodeDirectories, entry)
-			if idx == 0 {
+			if idx == bestIdx {
 				cs.Identifier = entry.ID
 				cs.TeamID = entry.TeamID
 				cs.CDHash = entry.CDHash
+				cs.Adhoc = cd.Header.Flags&cstypes.ADHOC != 0
 			}
 		}
 	}
 
-	// parse CMSSignature (best-effort)
-	if p7, err := pkcs7.Parse(raw.CMSSignature); err == nil {
-		cs.Certificates = make([]Certificate, 0, len(p7.Certificates))
-		for i, cert := range p7.Certificates {
-			cs.Certificates = append(cs.Certificates, Certificate{
-				Index:   i,
-				Subject: cert.Subject.String(),
-				Issuer:  cert.Issuer.String(),
-			})
+	if len(raw.CMSSignature) > 0 {
+		if p7, err := pkcs7.Parse(raw.CMSSignature); err == nil {
+			signer := p7.GetOnlySigner()
+			cs.Certificates = make([]Certificate, 0, len(p7.Certificates))
+			for i, cert := range p7.Certificates {
+				entry := certificateInfo(i, cert, signer)
+				cs.Certificates = append(cs.Certificates, entry)
+				if entry.IsSigner && cs.Signer == "" {
+					cs.Signer = entry.CommonName
+					if cs.Signer == "" {
+						cs.Signer = entry.Subject
+					}
+				}
+			}
 		}
 	}
 
-	return cs, nil
+	return cs
+}
+
+// bestCodeDirectoryIndex picks the CD with the strongest hash (e.g. Sha256 over Sha1).
+func bestCodeDirectoryIndex(cds []cstypes.CodeDirectory) int {
+	best := 0
+	for i := 1; i < len(cds); i++ {
+		if cds[i].Header.HashType > cds[best].Header.HashType {
+			best = i
+		}
+	}
+	return best
+}
+
+func certificateInfo(index int, cert, signer *x509.Certificate) Certificate {
+	entry := Certificate{
+		Index:      index,
+		Subject:    cert.Subject.String(),
+		Issuer:     cert.Issuer.String(),
+		CommonName: cert.Subject.CommonName,
+		Serial:     hex.EncodeToString(cert.SerialNumber.Bytes()),
+		NotBefore:  cert.NotBefore.UTC().Format(time.RFC3339),
+		NotAfter:   cert.NotAfter.UTC().Format(time.RFC3339),
+	}
+	if signer != nil && cert.Equal(signer) {
+		entry.IsSigner = true
+	}
+	return entry
 }
 
 func parseSymbols(f *gomacho.File, table *SymbolTable) error {
-	if f.Symtab == nil {
-		return nil
-	}
-
-	importSymbols, err := f.ImportedSymbols()
-	if err != nil {
-		return err
-	}
-	importLibs := f.ImportedLibraries()
-	if len(importSymbols) > 0 {
-		table.Imports = make(map[string][]string)
-	}
-
-	for _, sym := range importSymbols {
-		lib := "unknown"
-		libord := int(sym.Desc.GetLibraryOrdinal())
-		switch libord {
-		case 0:
-			lib = "self"
-		case 0xfe:
-			lib = "dynamic_lookup"
-		case 0xff:
-			lib = "main_executable"
-		default:
-			if libord > 0 && libord <= len(importLibs) {
-				lib = importLibs[libord-1]
-			}
-		}
-
-		table.Imports[lib] = append(table.Imports[lib], sym.Name)
-	}
-
+	// Exports come from the dyld export trie and do not require a Symtab.
 	exports, err := f.GetExports()
 	if err == nil && len(exports) > 0 {
 		table.Exports = make([]Symbol, 0, len(exports))
@@ -338,30 +337,36 @@ func parseSymbols(f *gomacho.File, table *SymbolTable) error {
 				Type:    export.Type(),
 			})
 		}
-	} else {
-		// Fallback: extract exports from symtab external symbols
-		// (for older or stripped binaries without dyld export trie).
+	} else if f.Symtab != nil {
+		// Fallback for older/stripped binaries without a usable export trie.
 		for _, sym := range f.Symtab.Syms {
-			if sym.Type.IsUndefinedSym() {
-				continue
-			}
-			if !sym.Type.IsExternalSym() {
+			if sym.Type.IsDebugSym() || sym.Type.IsUndefinedSym() || !sym.Type.IsExternalSym() {
 				continue
 			}
 			table.Exports = append(table.Exports, Symbol{
 				Name:    sym.Name,
 				Address: fmt.Sprintf("0x%x", sym.Value),
-				Type:    sym.GetType(f),
+				Type:    "external",
 			})
 		}
 	}
 
-	for _, sym := range f.Symtab.Syms {
-		if sym.Type.IsUndefinedSym() {
-			continue
-		}
+	if f.Symtab == nil {
+		return nil
+	}
 
-		if sym.Type.IsExternalSym() {
+	// Imports need Dysymtab; missing it is fine — skip rather than fail parse.
+	if importSymbols, impErr := f.ImportedSymbols(); impErr == nil && len(importSymbols) > 0 {
+		importLibs := f.ImportedLibraries()
+		table.Imports = make(map[string][]string, len(importLibs))
+		for _, sym := range importSymbols {
+			lib := importLibraryName(sym.Desc.GetLibraryOrdinal(), importLibs)
+			table.Imports[lib] = append(table.Imports[lib], sym.Name)
+		}
+	}
+
+	for _, sym := range f.Symtab.Syms {
+		if sym.Type.IsDebugSym() || sym.Type.IsUndefinedSym() || sym.Type.IsExternalSym() {
 			continue
 		}
 
@@ -385,6 +390,22 @@ func parseSymbols(f *gomacho.File, table *SymbolTable) error {
 	}
 
 	return nil
+}
+
+func importLibraryName(ordinal uint16, importLibs []string) string {
+	switch ordinal {
+	case types.SELF_LIBRARY_ORDINAL:
+		return "self"
+	case types.DYNAMIC_LOOKUP_ORDINAL:
+		return "dynamic_lookup"
+	case types.EXECUTABLE_ORDINAL:
+		return "main_executable"
+	default:
+		if ordinal > 0 && int(ordinal) <= len(importLibs) {
+			return importLibs[ordinal-1]
+		}
+		return "unknown"
+	}
 }
 
 func parseStrings(f *gomacho.File) Strings {

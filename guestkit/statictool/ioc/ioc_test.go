@@ -1,7 +1,7 @@
 package ioc
 
 import (
-	"sort"
+	"reflect"
 	"testing"
 )
 
@@ -28,13 +28,38 @@ func TestIOCExtractor(t *testing.T) {
 		},
 		{
 			name:     "file extensions are not domains",
-			input:    "PropertyList-1.0.dtd config.plist lib.rs main.pl run.sh README.md script.fm file.st Makefile.am",
+			input:    "PropertyList-1.0.dtd config.plist lib.rs main.pl run.sh README.md script.fm file.st Makefile.am Foo.app archive.zip",
 			expected: nil,
 		},
 		{
 			name:     "rs tld in url is still kept",
 			input:    "https://example.rs/path",
 			expected: []string{"https://example.rs/path"},
+		},
+		{
+			name:     "url trailing punctuation is stripped",
+			input:    "see https://evil.com/path).",
+			expected: []string{"evil.com", "https://evil.com/path"},
+		},
+		{
+			name:     "fake email with file extension rejected",
+			input:    "admin@foo.dtd",
+			expected: nil,
+		},
+		{
+			name:     "email local part is not a domain",
+			input:    "user.name+tag@sub.domain.io",
+			expected: []string{"sub.domain.io", "user.name+tag@sub.domain.io"},
+		},
+		{
+			name:     "bundle ids are not domains",
+			input:    "CFBundle.com.apple.ls com.apple.Safari",
+			expected: nil,
+		},
+		{
+			name:     "edu and gov domains are extracted",
+			input:    "goto university.edu and host.gov.uk",
+			expected: []string{"host.gov.uk", "university.edu"},
 		},
 	}
 
@@ -43,16 +68,8 @@ func TestIOCExtractor(t *testing.T) {
 			e := &IOCExtractor{}
 			e.Extract(tc.input)
 			got := e.Export()
-			sort.Strings(got)
-			sort.Strings(tc.expected)
-
-			if len(got) != len(tc.expected) {
+			if !reflect.DeepEqual(got, tc.expected) {
 				t.Fatalf("expected %v, got %v", tc.expected, got)
-			}
-			for i := range got {
-				if got[i] != tc.expected[i] {
-					t.Fatalf("expected %v, got %v", tc.expected, got)
-				}
 			}
 		})
 	}
