@@ -8,14 +8,14 @@ on:
       - ".github/**"
       - "docs/**"
       - "**.md"
-      - "report/web/**"
+      - "internal/report/web/**"
       - "testdata/**"
   pull_request:
     paths-ignore:
       - ".github/**"
       - "docs/**"
       - "**.md"
-      - "report/web/**"
+      - "internal/report/web/**"
       - "testdata/**"
   workflow_dispatch:
 
@@ -36,8 +36,8 @@ jobs:
 
       - name: Prepare embed
         run: |
-          mkdir -p core/assets/data/ && touch core/assets/data/placeholder
-          mkdir -p report/web/dist && touch report/web/dist/placeholder
+          mkdir -p internal/assets/data/ && touch internal/assets/data/placeholder
+          mkdir -p internal/report/web/dist && touch internal/report/web/dist/placeholder
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9

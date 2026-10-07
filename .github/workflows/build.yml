@@ -30,7 +30,7 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-          cache-dependency-path: report/web/package-lock.json
+          cache-dependency-path: internal/report/web/package-lock.json
 
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@v1
