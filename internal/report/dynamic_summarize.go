@@ -367,12 +367,12 @@ func (r *dynamicRisk) noteFactor(factor string) {
 	r.factors = append(r.factors, factor)
 }
 
-func (r *dynamicRisk) addCategory(points, cap int, factors ...string) {
+func (r *dynamicRisk) addCategory(points, maxPoints int, factors ...string) {
 	if points <= 0 {
 		return
 	}
-	if points > cap {
-		points = cap
+	if points > maxPoints {
+		points = maxPoints
 	}
 	r.score += points
 	if r.score > 100 {
