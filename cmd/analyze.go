@@ -58,7 +58,7 @@ func newAnalyzeCommand() *cobra.Command {
 	bindVMFlags(cmd, opts)
 	cmd.Flags().StringVarP(&vmID, "vm", "m", "", "baseline UUID or unique name")
 	cmd.Flags().StringVar(&samplePassword, "password", "", "password for encrypted archives")
-	cmd.Flags().IntVar(&timeout, "timeout", 60, "")
+	cmd.Flags().IntVar(&timeout, "timeout", 120, "")
 	cmd.Flags().SetInterspersed(false)
 	return cmd
 }

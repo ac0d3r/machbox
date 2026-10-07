@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 )
 
 type msgType uint8
@@ -41,10 +42,11 @@ func (m *message) encode(w io.Writer) error {
 	if err := binary.Write(w, binary.BigEndian, uint8(m.Type)); err != nil {
 		return err
 	}
-	if len(m.Payload) > 0xFFFFFFFF {
-		return fmt.Errorf("payload length %d exceeds uint32 max", len(m.Payload))
+	payloadLen := len(m.Payload)
+	if payloadLen > math.MaxUint32 {
+		return fmt.Errorf("payload length %d exceeds uint32 max", payloadLen)
 	}
-	if err := binary.Write(w, binary.BigEndian, uint32(len(m.Payload))); err != nil {
+	if err := binary.Write(w, binary.BigEndian, uint32(payloadLen)); err != nil {
 		return err
 	}
 	return writeFull(w, m.Payload)

@@ -23,9 +23,16 @@ linters:
         - performance
         - style
         - diagnostic
+      settings:
+        hugeParam:
+          sizeThreshold: 512
     errcheck:
       exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
         - (net.Conn).Close
+        - (net.Listener).Close
         - (io.Closer).Close
         - (io/fs.File).Close
         - (*os.File).Close
@@ -36,6 +43,7 @@ linters:
         - (*os.Process).Kill
         - (*github.com/Code-Hex/vz/v3.VirtioSocketListener).Close
         - (*github.com/ac0d3r/machbox/pkg/vm.VMInstance).Shutdown
+        - (*github.com/ac0d3r/machbox/internal/agent.Client).Close
   exclusions:
     rules:
       - path: _test\.go

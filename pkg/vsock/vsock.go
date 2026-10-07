@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"syscall"
 	"time"
@@ -53,11 +54,11 @@ func (c *conn) Close() error {
 	return err
 }
 
-func (c *conn) LocalAddr() net.Addr                { return addr{c.localPort} }
-func (c *conn) RemoteAddr() net.Addr               { return addr{c.remotePort} }
-func (c *conn) SetDeadline(time.Time) error        { return errNoDeadline }
-func (c *conn) SetReadDeadline(time.Time) error    { return errNoDeadline }
-func (c *conn) SetWriteDeadline(time.Time) error   { return errNoDeadline }
+func (c *conn) LocalAddr() net.Addr              { return addr{c.localPort} }
+func (c *conn) RemoteAddr() net.Addr             { return addr{c.remotePort} }
+func (c *conn) SetDeadline(time.Time) error      { return errNoDeadline }
+func (c *conn) SetReadDeadline(time.Time) error  { return errNoDeadline }
+func (c *conn) SetWriteDeadline(time.Time) error { return errNoDeadline }
 
 type listener struct {
 	fd   int
@@ -138,7 +139,7 @@ func accept(fd int) (int, error) {
 }
 
 func waitReadable(fd int) error {
-	if fd < 0 {
+	if fd < 0 || fd > math.MaxInt32 {
 		return net.ErrClosed
 	}
 	for {

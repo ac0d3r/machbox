@@ -17,6 +17,10 @@ import (
 )
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -25,7 +29,7 @@ func main() {
 	ln, err := vsock.Listen(agent.DefaultVsockPort)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "vsock listen: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	defer ln.Close()
 
@@ -36,8 +40,9 @@ func main() {
 	fmt.Printf("[agent] listening on vsock %d\n", agent.DefaultVsockPort)
 	if err := srv.Serve(ctx, ln); err != nil {
 		fmt.Fprintf(os.Stderr, "agent serve: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 func collectGuestInfo() agent.GuestInfo {
@@ -53,19 +58,19 @@ func collectGuestInfo() agent.GuestInfo {
 		info.Username = u.Username
 	}
 
-	if v, err := runTrim("scutil", "--get", "ComputerName"); err == nil {
+	if v, err := runTrim(exec.Command("scutil", "--get", "ComputerName")); err == nil {
 		info.Hostname = v
 	}
-	if v, err := runTrim("sw_vers", "-productName"); err == nil {
+	if v, err := runTrim(exec.Command("sw_vers", "-productName")); err == nil {
 		info.OSName = v
 	}
-	if v, err := runTrim("sw_vers", "-productVersion"); err == nil {
+	if v, err := runTrim(exec.Command("sw_vers", "-productVersion")); err == nil {
 		info.OSVersion = v
 	}
-	if v, err := runTrim("sw_vers", "-buildVersion"); err == nil {
+	if v, err := runTrim(exec.Command("sw_vers", "-buildVersion")); err == nil {
 		info.BuildVersion = v
 	}
-	if csr, err := runTrim("csrutil", "status"); err == nil {
+	if csr, err := runTrim(exec.Command("csrutil", "status")); err == nil {
 		info.SIPDisabled = strings.Contains(strings.ToLower(csr), "disabled")
 	}
 	return info
@@ -109,8 +114,8 @@ func isMounted(mountpoint string) (bool, error) {
 	return false, nil
 }
 
-func runTrim(name string, args ...string) (string, error) {
-	out, err := exec.Command(name, args...).Output()
+func runTrim(cmd *exec.Cmd) (string, error) {
+	out, err := cmd.Output()
 	if err != nil {
 		return "", err
 	}

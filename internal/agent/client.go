@@ -55,7 +55,7 @@ func WaitReady(ctx context.Context, dial DialFunc, interval time.Duration) (*Cli
 		logrus.Debugf("guest agent not ready: %v", err)
 		select {
 		case <-ctx.Done():
-			return nil, GuestInfo{}, fmt.Errorf("%w (last: %v)", ctx.Err(), last)
+			return nil, GuestInfo{}, fmt.Errorf("%w (last: %w)", ctx.Err(), last)
 		case <-time.After(interval):
 		}
 	}

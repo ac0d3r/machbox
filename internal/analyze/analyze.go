@@ -290,7 +290,7 @@ func (s *session) run(ctx context.Context, vmi *boxvm.VMInstance) (err error) {
 
 	if err := retp.Save(); err != nil {
 		if dynErr != nil {
-			return fmt.Errorf("dynamic analysis: %v; save report: %w", dynErr, err)
+			return fmt.Errorf("dynamic analysis: %w; save report: %w", dynErr, err)
 		}
 		return fmt.Errorf("save report: %w", err)
 	}
