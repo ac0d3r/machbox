@@ -14,8 +14,25 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// ProtocolVersion is the host↔guest agent protocol revision. Bump only when the
+// RPC contract changes incompatibly. Host releases that keep this value do not
+// require reinstalling machbox-guest.pkg or re-importing the baseline.
+const ProtocolVersion = "1"
+
 // DialFunc opens one vsock connection to the guest agent.
 type DialFunc func(ctx context.Context) (net.Conn, error)
+
+// CompatibleProtocol reports whether a guest handshake is usable with this host.
+func CompatibleProtocol(agentVersion string) error {
+	if agentVersion == "" {
+		return fmt.Errorf("guest agent did not report agent_version; reinstall machbox-guest.pkg")
+	}
+	if agentVersion != ProtocolVersion {
+		return fmt.Errorf("guest agent version %q incompatible with host protocol %q; reinstall machbox-guest.pkg",
+			agentVersion, ProtocolVersion)
+	}
+	return nil
+}
 
 // Client is the host-side session over a single vsock connection.
 type Client struct {
@@ -162,7 +179,7 @@ func isDeadlineExceededMsg(s string) bool {
 
 // LogGuest logs a successful guest handshake.
 func LogGuest(info GuestInfo) {
-	logrus.Infof("guest connected: %s %s (%s), host=%s user=%s agent=%q sip_disabled=%v",
+	logrus.Infof("guest connected: %s %s (%s), host=%s user=%s agent_version=%q sip_disabled=%v",
 		info.OSName, info.OSVersion, info.BuildVersion,
 		info.Hostname, info.Username, info.AgentVersion, info.SIPDisabled)
 	if info.Username != "root" {

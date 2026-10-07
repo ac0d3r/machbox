@@ -23,7 +23,7 @@ REPORT_WEB_DIR := internal/report/web
 all: build
 
 build: prepare-assets
-	CGO_ENABLED=1 GOOS=darwin go build -ldflags "-s -w -X github.com/ac0d3r/machbox/internal/version.Version=$(VERSION)" -trimpath -o "$(BINFILE)" main.go
+	CGO_ENABLED=1 GOOS=darwin go build -ldflags "-s -w -X main.Version=$(VERSION)" -trimpath -o "$(BINFILE)" main.go
 
 	@test -f ${ENTITLEMENTS} || { echo "error: missing entitlements file: $@" >&2; exit 1; }
 

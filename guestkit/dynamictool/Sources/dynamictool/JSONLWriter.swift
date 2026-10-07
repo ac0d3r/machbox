@@ -5,60 +5,79 @@ final class JSONLWriter {
     private let handle: FileHandle
     private let encoder: JSONEncoder
     private let shouldClose: Bool
+    private var buffer = Data()
     private var isClosed = false
 
+    /// Flush to disk once the in-memory buffer reaches this size.
+    private let flushThreshold = 64 * 1024
+
     init(path: String) throws {
-        if path == "-" {
-            handle = FileHandle.standardOutput
-            shouldClose = false
-        } else {
-            let url = URL(fileURLWithPath: path)
-            let directory = url.deletingLastPathComponent()
-            try FileManager.default.createDirectory(
-                at: directory, withIntermediateDirectories: true)
-
-            if !FileManager.default.fileExists(atPath: url.path) {
-                guard FileManager.default.createFile(atPath: url.path, contents: nil) else {
-                    throw AnalyzerError.fileWrite("failed to create output file: \(url.path)")
-                }
-            }
-
-            handle = try FileHandle(forWritingTo: url)
-            try Self.setCloseOnExec(handle.fileDescriptor, path: url.path)
-            try handle.seekToEnd()
-            shouldClose = true
-        }
-
         encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.withoutEscapingSlashes]
+
+        if path == "-" {
+            handle = .standardOutput
+            shouldClose = false
+            return
+        }
+
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        let directory = url.deletingLastPathComponent()
+        if directory.path != "." && !directory.path.isEmpty {
+            try FileManager.default.createDirectory(
+                at: directory, withIntermediateDirectories: true)
+        }
+
+        // Fresh file per run; CLOEXEC so sample children don't inherit the fd.
+        let fd = open(url.path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0o644)
+        guard fd >= 0 else {
+            throw AnalyzerError.fileWrite(
+                "failed to open output file \(url.path): \(String(cString: strerror(errno)))")
+        }
+        // We own the fd and close it explicitly in close().
+        handle = FileHandle(fileDescriptor: fd, closeOnDealloc: false)
+        shouldClose = true
     }
 
     func append(_ event: Event) throws {
-        var data = try encoder.encode(event)
-        data.append(0x0a)
-        try handle.write(contentsOf: data)
+        guard !isClosed else {
+            throw AnalyzerError.fileWrite("write to closed JSONLWriter")
+        }
+
+        var line = try encoder.encode(event)
+        line.append(0x0a)
+        buffer.append(line)
+
+        if buffer.count >= flushThreshold {
+            try flushBuffer()
+        }
+    }
+
+    func flush() throws {
+        guard !isClosed else { return }
+        try flushBuffer()
+        if shouldClose {
+            try handle.synchronize()
+        }
     }
 
     func close() throws {
-        guard shouldClose, !isClosed else { return }
+        guard !isClosed else { return }
+        try flushBuffer()
         isClosed = true
+        guard shouldClose else { return }
         try handle.synchronize()
         try handle.close()
     }
 
-    private static func setCloseOnExec(_ fd: Int32, path: String) throws {
-        let flags = fcntl(fd, F_GETFD)
-        guard flags >= 0 else {
-            throw AnalyzerError.fileWrite(
-                "fcntl(F_GETFD) failed for \(path): \(String(cString: strerror(errno)))")
+    private func flushBuffer() throws {
+        guard !buffer.isEmpty else { return }
+        do {
+            try handle.write(contentsOf: buffer)
+        } catch {
+            throw AnalyzerError.fileWrite("JSONL write failed: \(error.localizedDescription)")
         }
-
-        let result = fcntl(fd, F_SETFD, flags | FD_CLOEXEC)
-        guard result >= 0 else {
-            throw AnalyzerError.fileWrite(
-                "fcntl(F_SETFD, FD_CLOEXEC) failed for \(path): \(String(cString: strerror(errno)))"
-            )
-        }
+        buffer.removeAll(keepingCapacity: true)
     }
 }

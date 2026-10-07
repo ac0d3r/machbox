@@ -12,7 +12,6 @@ import (
 
 	"github.com/ac0d3r/machbox/internal/agent"
 	"github.com/ac0d3r/machbox/internal/assets"
-	"github.com/ac0d3r/machbox/internal/version"
 	boxvm "github.com/ac0d3r/machbox/pkg/vm"
 	"github.com/ac0d3r/machbox/pkg/vm/config"
 
@@ -81,9 +80,9 @@ func setup(ctx context.Context, dir string) (*agent.GuestInfo, error) {
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
 				err = fmt.Errorf(
-					"timed out after %s waiting for guest agent %q; "+
+					"timed out after %s waiting for guest agent API %q; "+
 						"install machbox-guest.pkg from the MachboxGuest volume in the GUI",
-					bootTimeout, version.Version)
+					bootTimeout, agent.ProtocolVersion)
 			}
 			logrus.Errorf("setup checks failed: %v — close the VM window to abort", err)
 			done <- outcome{err: err}
@@ -99,7 +98,7 @@ func setup(ctx context.Context, dir string) (*agent.GuestInfo, error) {
 
 	logrus.Infof("showing GUI (%dx%d); install machbox-guest.pkg from MachboxGuest if needed",
 		config.DefaultDisplayWidth, config.DefaultDisplayHeight)
-	logrus.Infof("waiting for guest agent %q…", version.Version)
+	logrus.Infof("waiting for guest agent protocol %q…", agent.ProtocolVersion)
 	graphicErr := inst.ShowGraphic(config.DefaultDisplayWidth, config.DefaultDisplayHeight)
 	cancel()
 
@@ -145,9 +144,8 @@ func waitGuest(ctx context.Context, inst *boxvm.VMInstance) (*agent.GuestInfo, e
 		if info.OSName == "" {
 			info.OSName = "macOS"
 		}
-		if info.AgentVersion != version.Version {
-			logrus.Warnf("guest not ready: agent version %q != expected %q — install/reinstall machbox-guest.pkg",
-				info.AgentVersion, version.Version)
+		if err := agent.CompatibleProtocol(info.AgentVersion); err != nil {
+			logrus.Warnf("guest not ready: %v — install/reinstall machbox-guest.pkg", err)
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()

@@ -3,6 +3,7 @@ package report
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -114,6 +115,138 @@ func TestDynamicRiskKeepsLowSignalActivityClean(t *testing.T) {
 	}
 	if got := risk.verdict(); got != "clean" {
 		t.Fatalf("verdict = %q, want clean", got)
+	}
+}
+
+func TestDynamicRiskShellAndExternalNetworkIsSuspiciousNotMalicious(t *testing.T) {
+	eventTypes := map[string]int{
+		"exec":        1,
+		"tcp_connect": 1,
+	}
+	behavior := &BehaviorSummary{
+		HasShellExecution:  true,
+		HasExternalNetwork: true,
+		CommandsExecuted:   []string{"/bin/bash"},
+		NetworkConnections: []string{"1.2.3.4:80"},
+	}
+	risk := evaluateDynamicRisk(nil, eventTypes, behavior)
+
+	if risk.score < 35 || risk.score >= 70 {
+		t.Fatalf("risk score = %d, want in [35, 70)", risk.score)
+	}
+	if got := risk.verdict(); got != "suspicious" {
+		t.Fatalf("verdict = %q, want suspicious", got)
+	}
+}
+
+func TestDynamicRiskPersistenceWithExternalNetworkElevates(t *testing.T) {
+	eventTypes := map[string]int{
+		"btm_launch_item_add": 1,
+		"tcp_connect":         1,
+	}
+	behavior := &BehaviorSummary{
+		HasExternalNetwork: true,
+		PersistenceItems:   []string{"/Library/LaunchAgents/com.example.plist"},
+		NetworkConnections: []string{"8.8.8.8:443"},
+	}
+	risk := evaluateDynamicRisk(nil, eventTypes, behavior)
+
+	if risk.score < 35 {
+		t.Fatalf("risk score = %d, want >= 35", risk.score)
+	}
+	if got := risk.verdict(); got != "suspicious" && got != "malicious" {
+		t.Fatalf("verdict = %q, want suspicious or malicious", got)
+	}
+}
+
+func TestDynamicRiskPrivilegeSignalsNotDoubleCounted(t *testing.T) {
+	eventTypes := map[string]int{
+		"seteuid": 3,
+		"setuid":  2,
+		"open":    1,
+	}
+	behavior := &BehaviorSummary{PrivilegeEscalation: true}
+	risk := evaluateDynamicRisk(nil, eventTypes, behavior)
+
+	// Privilege category is capped at 30; no stacking of seteuid+setuid+flag.
+	if risk.score > 30 {
+		t.Fatalf("risk score = %d, want <= 30 (privilege cap only)", risk.score)
+	}
+	privFactors := 0
+	for _, f := range risk.factors {
+		if strings.Contains(f, "uid") || strings.Contains(f, "privilege") {
+			privFactors++
+		}
+	}
+	if privFactors != 1 {
+		t.Fatalf("privilege factors = %d (%v), want exactly 1", privFactors, risk.factors)
+	}
+}
+
+func TestDynamicRiskRWXWithCodeSignatureInvalidation(t *testing.T) {
+	pid := int32(100)
+	tree := &ProcessTreeNode{
+		PID: pid,
+		Events: []DynamicEvent{
+			{Type: "mprotect", PID: pid, Metadata: map[string]string{"protection": "7"}},
+		},
+	}
+	eventTypes := map[string]int{
+		"mprotect":       1,
+		"cs_invalidated": 1,
+	}
+	risk := evaluateDynamicRisk(tree, eventTypes, nil)
+
+	// injection: RWX(15)+cs(15)=30 + combo(20) = 50 → suspicious
+	if risk.score < 35 {
+		t.Fatalf("risk score = %d, want >= 35", risk.score)
+	}
+	found := false
+	for _, f := range risk.factors {
+		if f == "RWX memory with code signature invalidation" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("missing RWX+cs combo factor, got %v", risk.factors)
+	}
+	// Category should surface both signals, not only the first.
+	hasRWX, hasCS := false, false
+	for _, f := range risk.factors {
+		if f == "RWX memory protection change" {
+			hasRWX = true
+		}
+		if f == "code signature invalidated" {
+			hasCS = true
+		}
+	}
+	if !hasRWX || !hasCS {
+		t.Fatalf("want both category factors, got %v", risk.factors)
+	}
+}
+
+func TestDynamicRiskLaunchAgentWriteNotDoubleCountedInFilesystem(t *testing.T) {
+	plist := "/Library/LaunchAgents/com.example.plist"
+	eventTypes := map[string]int{
+		"btm_launch_item_add": 1,
+		"open":                1,
+	}
+	behavior := &BehaviorSummary{
+		HasSensitiveWrite: true,
+		FilesWritten:      []string{plist},
+		PersistenceItems:  []string{plist},
+	}
+	risk := evaluateDynamicRisk(nil, eventTypes, behavior)
+
+	for _, f := range risk.factors {
+		if f == "write to sensitive location" {
+			t.Fatalf("LaunchAgent write should not also score as filesystem sensitive write, factors=%v", risk.factors)
+		}
+	}
+	// persistence: BTM(35)+launch path(10)=45 + LaunchAgent combo(15) = 60
+	if risk.score < 50 || risk.score >= 70 {
+		t.Fatalf("risk score = %d, want roughly persistence+combo without filesystem stack", risk.score)
 	}
 }
 
@@ -266,6 +399,7 @@ func TestPathMatchesSample(t *testing.T) {
 		matches bool
 	}{
 		{"/tmp/samples/malware", "/tmp/samples/malware", true},
+		{"/private/tmp/samples/malware", "/tmp/samples/malware", true},
 		{"/tmp/samples/malware", "malware", true},
 		{"/tmp/samples/malware.app/Contents/MacOS/malware", "malware", true},
 		{"/tmp/malware-scanner/malware", "malware", true},
@@ -366,6 +500,123 @@ func TestBehaviorSummaryShellAndExternalNetworkIsSuspicious(t *testing.T) {
 	}
 }
 
+func TestBehaviorSummaryCloneAndUDPAndNumericOpenFlags(t *testing.T) {
+	ppid := int32(1)
+	pid := int32(100)
+	dest := "/Library/LaunchAgents/com.cloned.plist"
+
+	events := []DynamicEvent{
+		{
+			Type: "clone", PID: pid, PPID: &ppid, Process: "sample",
+			Target: "/tmp/src -> " + dest,
+			Object: &EventObject{Kind: "file", Path: dest},
+			Metadata: map[string]string{
+				"source":      "/tmp/src",
+				"destination": dest,
+			},
+		},
+		{
+			Type: "dnet_udp_send", PID: pid, PPID: &ppid, Process: "sample",
+			Target:   "9.9.9.9:53",
+			Metadata: map[string]string{"remote": "9.9.9.9:53", "family": "inet4"},
+		},
+		{
+			Type: "open", PID: pid, PPID: &ppid, Process: "sample",
+			Target: "/etc/hosts",
+			Object: &EventObject{Kind: "file", Path: "/etc/hosts"},
+			// ES fflag uses FREAD(1)|FWRITE(2); 2 = write-only open.
+			Metadata: map[string]string{"fflag": "2", "access": "write"},
+		},
+	}
+
+	tree, _, err := parseAndBuildTree(eventsToJSONL(events), "sample")
+	if err != nil {
+		t.Fatalf("parseAndBuildTree error: %v", err)
+	}
+	bs := summarize(tree, 0).BehaviorSummary
+	if bs == nil {
+		t.Fatal("expected behavior summary")
+	}
+	if !bs.HasSensitiveWrite {
+		t.Error("expected sensitive write from clone/open")
+	}
+	if len(bs.FilesWritten) == 0 || bs.FilesWritten[0] != dest {
+		t.Errorf("FilesWritten = %v, want destination path %q first", bs.FilesWritten, dest)
+	}
+	if !bs.HasExternalNetwork {
+		t.Error("expected external network from udp_send")
+	}
+	if len(bs.NetworkConnections) == 0 || bs.NetworkConnections[0] != "9.9.9.9:53" {
+		t.Errorf("NetworkConnections = %v, want 9.9.9.9:53", bs.NetworkConnections)
+	}
+	foundHosts := false
+	for _, p := range bs.FilesWritten {
+		if p == "/etc/hosts" {
+			foundHosts = true
+			break
+		}
+	}
+	if !foundHosts {
+		t.Errorf("expected /etc/hosts write from numeric fflag open, got %v", bs.FilesWritten)
+	}
+}
+
+func TestBehaviorSummaryReadOnlyOpenNotCountedAsWrite(t *testing.T) {
+	ppid := int32(1)
+	pid := int32(100)
+
+	events := []DynamicEvent{
+		{
+			Type: "open", PID: pid, PPID: &ppid, Process: "sample",
+			Target: "/private/etc/hosts",
+			Object: &EventObject{Kind: "file", Path: "/private/etc/hosts"},
+			// FREAD=1 — previously misparsed as O_WRONLY and flooded FilesWritten.
+			Metadata: map[string]string{"fflag": "1", "access": "read"},
+		},
+		{
+			Type: "close", PID: pid, PPID: &ppid, Process: "sample",
+			Target: "/private/etc/hosts",
+			Object:   &EventObject{Kind: "file", Path: "/private/etc/hosts"},
+			Metadata: map[string]string{"modified": "0"},
+		},
+		{
+			Type: "open", PID: pid, PPID: &ppid, Process: "sample",
+			Target: "/System/Volumes/Preboot/Cryptexes/OS",
+			Object:   &EventObject{Kind: "file", Path: "/System/Volumes/Preboot/Cryptexes/OS"},
+			Metadata: map[string]string{"fflag": "1", "access": "read"},
+		},
+		{
+			Type: "close", PID: pid, PPID: &ppid, Process: "sample",
+			Target: "/dev/null",
+			Object:   &EventObject{Kind: "file", Path: "/dev/null"},
+			Metadata: map[string]string{"modified": "true"},
+		},
+	}
+
+	tree, _, err := parseAndBuildTree(eventsToJSONL(events), "sample")
+	if err != nil {
+		t.Fatalf("parseAndBuildTree error: %v", err)
+	}
+	bs := summarize(tree, 0).BehaviorSummary
+	if bs.HasSensitiveWrite {
+		t.Fatalf("read-only opens must not set HasSensitiveWrite, FilesWritten=%v", bs.FilesWritten)
+	}
+	for _, p := range bs.FilesWritten {
+		if p == "/private/etc/hosts" || p == "/System/Volumes/Preboot/Cryptexes/OS" {
+			t.Fatalf("read-only path %q must not be in FilesWritten=%v", p, bs.FilesWritten)
+		}
+	}
+	foundNull := false
+	for _, p := range bs.FilesWritten {
+		if p == "/dev/null" {
+			foundNull = true
+		}
+	}
+	if !foundNull {
+		t.Fatalf("close.modified=true should count as write, FilesWritten=%v", bs.FilesWritten)
+	}
+}
+
 func TestBehaviorSummarySensitiveFileWriteIncreasesRisk(t *testing.T) {
 	ppid := int32(1)
 	pid := int32(100)
@@ -434,6 +685,88 @@ func TestBehaviorSummaryFiltersSelfLaunch(t *testing.T) {
 	}
 	if len(bs.CommandLines) != 1 || bs.CommandLines[0] != "/bin/sh -c echo hi" {
 		t.Errorf("expected command line '/bin/sh -c echo hi', got %v", bs.CommandLines)
+	}
+}
+
+func TestParseAndBuildTreeMovesUIPCConnectToNetworks(t *testing.T) {
+	ppid := int32(1)
+	pid := int32(100)
+	events := []DynamicEvent{
+		{Type: "exec", PID: pid, PPID: &ppid, Process: "sample",
+			Object: &EventObject{Kind: "process", Path: "sample"}},
+		{Type: "uipc_connect", PID: pid, PPID: &ppid, Process: "sample",
+			Target:   "/private/var/run/mDNSResponder",
+			Metadata: map[string]string{"domain": "1"}},
+		{Type: "dnet_socket", PID: pid, PPID: &ppid, Process: "sample",
+			Metadata: map[string]string{"family": "unix", "direction": "create"}},
+	}
+
+	tree, _, err := parseAndBuildTree(eventsToJSONL(events), "sample")
+	if err != nil {
+		t.Fatalf("parseAndBuildTree error: %v", err)
+	}
+	if len(tree.Networks) != 2 {
+		t.Fatalf("Networks = %d, want 2 (uipc + dnet_socket)", len(tree.Networks))
+	}
+	types := map[string]bool{}
+	for _, ev := range tree.Networks {
+		types[ev.Type] = true
+	}
+	if !types["unix_connect"] {
+		t.Fatalf("expected unix_connect in Networks, got %v", tree.Networks)
+	}
+	if !types["socket"] {
+		t.Fatalf("expected socket in Networks, got %v", tree.Networks)
+	}
+	for _, ev := range tree.Events {
+		if ev.Type == "uipc_connect" || ev.Type == "unix_connect" {
+			t.Fatalf("unix connect should not remain in Events: %v", ev)
+		}
+	}
+}
+
+func TestBehaviorSummaryCollectsHostnameAndSwVers(t *testing.T) {
+	ppid := int32(1)
+	pid := int32(100)
+	shellPID := int32(101)
+	hostPID := int32(102)
+	swVersPID := int32(103)
+	samplePath := "/tmp/machbox_test/malware"
+
+	events := []DynamicEvent{
+		{Type: "exec", PID: pid, PPID: &ppid, Process: samplePath,
+			Object: &EventObject{Kind: "process", Path: samplePath}},
+		{Type: "fork", PID: shellPID, PPID: &pid, Process: samplePath,
+			Object: &EventObject{Kind: "process", Path: samplePath, PID: &shellPID, PPID: &pid}},
+		{Type: "exec", PID: shellPID, PPID: &pid, Process: samplePath,
+			Object:   &EventObject{Kind: "process", Path: "/bin/sh", PID: &shellPID, PPID: &pid},
+			Metadata: map[string]string{"argv": "/bin/sh\x00-c\x00hostname;sw_vers"}},
+		{Type: "exec", PID: hostPID, PPID: &shellPID, Process: "/bin/sh",
+			Object:   &EventObject{Kind: "process", Path: "/bin/hostname", PID: &hostPID, PPID: &shellPID},
+			Metadata: map[string]string{"argv": "/bin/hostname\x00"}},
+		{Type: "exec", PID: swVersPID, PPID: &shellPID, Process: "/bin/sh",
+			Object:   &EventObject{Kind: "process", Path: "/usr/bin/sw_vers", PID: &swVersPID, PPID: &shellPID},
+			Metadata: map[string]string{"argv": "/usr/bin/sw_vers\x00"}},
+	}
+
+	tree, _, err := parseAndBuildTree(eventsToJSONL(events), samplePath)
+	if err != nil {
+		t.Fatalf("parseAndBuildTree error: %v", err)
+	}
+	summary := summarize(tree, 0)
+	bs := summary.BehaviorSummary
+
+	for _, want := range []string{"/bin/sh", "/bin/hostname", "/usr/bin/sw_vers"} {
+		found := false
+		for _, cmd := range bs.CommandsExecuted {
+			if cmd == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("missing %q in CommandsExecuted=%v", want, bs.CommandsExecuted)
+		}
 	}
 }
 

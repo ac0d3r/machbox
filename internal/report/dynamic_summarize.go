@@ -1,7 +1,6 @@
 package report
 
 import (
-	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -87,14 +86,11 @@ func commandLineCore(line string) string {
 func stripOneCommandWrapper(line string) string {
 	line = strings.TrimSpace(line)
 
-	// Shell wrappers, with optional leading path like /bin/bash -c or bash -c.
-	shells := []string{"sh", "bash", "zsh", "csh", "tcsh", "ksh", "dash", "fish"}
-	for _, sh := range shells {
+	for _, sh := range shellBasenames {
 		prefix := sh + " -c"
 		if strings.HasPrefix(line, prefix) {
 			return strings.TrimSpace(line[len(prefix):])
 		}
-		// /bin/bash -c, /usr/local/bin/zsh -c, etc.
 		suffix := "/" + sh + " -c"
 		if idx := strings.Index(line, suffix); idx >= 0 {
 			return strings.TrimSpace(line[idx+len(suffix):])
@@ -103,7 +99,6 @@ func stripOneCommandWrapper(line string) string {
 	if strings.HasPrefix(line, "sudo ") {
 		return strings.TrimSpace(line[len("sudo "):])
 	}
-	// env FOO=bar ... cmd
 	if strings.HasPrefix(line, "env ") {
 		rest := strings.TrimSpace(line[len("env "):])
 		parts := strings.Fields(rest)
@@ -158,7 +153,7 @@ func extractSamplePaths(tree *ProcessTreeNode) []string {
 
 func isSamplePath(path string, samplePaths []string) bool {
 	for _, p := range samplePaths {
-		if path == p {
+		if pathMatchesSample(path, p) {
 			return true
 		}
 	}
@@ -176,34 +171,20 @@ func collectTreeStats(node *ProcessTreeNode, s *DynamicSummary, eventTypes map[s
 		ev := &node.Events[i]
 		eventTypes[ev.Type]++
 
-		// Collect file-system behavior.
 		collectFileBehavior(ev, behavior)
-
-		// Collect command execution behavior (skip self-launch).
 		collectProcessBehavior(ev, behavior, samplePaths)
-
-		// launchctl load/bootstrap is a common persistence mechanism.
 		collectLaunchctlPersistence(ev, s, behavior)
 
 		switch ev.Type {
 		case "btm_launch_item_add", "btm_launch_item_remove", "setextattr":
-			s.PersistenceCount++
-			if path := eventTargetPath(ev); path != "" {
-				s.PersistencePaths = appendUnique(s.PersistencePaths, path)
-				behavior.PersistenceItems = appendUnique(behavior.PersistenceItems, path)
-			}
+			notePersistence(s, behavior, eventTargetPath(ev))
 		case "seteuid", "setegid", "setreuid", "setregid", "setuid", "setgid":
 			s.PrivilegeChanges++
 			behavior.PrivilegeEscalation = true
 		case "cs_invalidated":
 			s.CodeSigInvalidations++
 		case "remote_thread_create", "get_task":
-			// 真正的代码注入能力：远程线程创建或获取完整任务端口
-			s.InjectionCount++
-			if target := eventTargetPath(ev); target != "" {
-				s.InjectedTargets = appendUnique(s.InjectedTargets, target)
-				behavior.InjectionTargets = appendUnique(behavior.InjectionTargets, target)
-			}
+			noteInjection(s, behavior, eventTargetPath(ev))
 		}
 	}
 
@@ -223,31 +204,32 @@ func collectTreeStats(node *ProcessTreeNode, s *DynamicSummary, eventTypes map[s
 }
 
 func collectFileBehavior(ev *DynamicEvent, behavior *BehaviorSummary) {
-	path := eventFilePath(ev)
-	if path == "" {
-		return
-	}
-
 	switch ev.Type {
-	case "write", "pwrite", "truncate", "creat":
-		behavior.FilesWritten = appendUnique(behavior.FilesWritten, path)
-		if isSensitivePath(path) {
-			behavior.HasSensitiveWrite = true
-		}
+	case "write", "pwrite", "truncate", "creat", "clone", "copyfile":
+		noteFileWrite(behavior, eventFilePath(ev))
 	case "open":
-		// Treat opens with write intent as writes when we can infer it.
-		if hasWriteIntent(ev.Metadata["flags"]) {
-			behavior.FilesWritten = appendUnique(behavior.FilesWritten, path)
-			if isSensitivePath(path) {
-				behavior.HasSensitiveWrite = true
-			}
+		// Only count opens that requested write (FWRITE). Read-only opens of
+		// sensitive paths must not appear under FilesWritten.
+		if openEventHasWriteIntent(ev) {
+			noteFileWrite(behavior, eventFilePath(ev))
+		}
+	case "close":
+		// ES often delivers open+close without a separate write event; modified
+		// on close is the reliable confirmation that content changed.
+		if closeEventWasModified(ev) {
+			noteFileWrite(behavior, eventFilePath(ev))
 		}
 	case "unlink", "rename":
-		behavior.FilesDeleted = appendUnique(behavior.FilesDeleted, path)
-		if isSensitivePath(path) {
-			behavior.HasSensitiveDelete = true
+		path := eventMetadata(ev, "source")
+		if path == "" {
+			path = eventFilePath(ev)
 		}
+		noteFileDelete(behavior, path)
 	case "chmod", "chown", "setmode", "setattr", "setextattr":
+		path := eventFilePath(ev)
+		if path == "" {
+			return
+		}
 		behavior.FilesModifiedPerms = appendUnique(behavior.FilesModifiedPerms, path)
 		if isSensitivePath(path) || ev.Type == "setextattr" {
 			behavior.HasSensitiveChmod = true
@@ -255,25 +237,12 @@ func collectFileBehavior(ev *DynamicEvent, behavior *BehaviorSummary) {
 	}
 }
 
-func hasWriteIntent(flags string) bool {
-	flags = strings.ToUpper(flags)
-	return strings.Contains(flags, "W") ||
-		strings.Contains(flags, "WRONLY") ||
-		strings.Contains(flags, "RDWR") ||
-		strings.Contains(flags, "CREAT") ||
-		strings.Contains(flags, "TRUNC")
-}
-
 func collectProcessBehavior(ev *DynamicEvent, behavior *BehaviorSummary, samplePaths []string) {
-	if ev.Type != "exec" && ev.Type != "posix_spawn" && ev.Type != "fork" {
+	if !isProcessLifecycleEvent(ev.Type) {
 		return
 	}
 	cmd := eventCommandPath(ev)
-	if cmd == "" {
-		return
-	}
-	// Filter out the sample launching itself; this is usually the first exec/spawn event.
-	if isSamplePath(cmd, samplePaths) {
+	if cmd == "" || isSamplePath(cmd, samplePaths) {
 		return
 	}
 	behavior.CommandsExecuted = appendUnique(behavior.CommandsExecuted, cmd)
@@ -289,39 +258,27 @@ func collectProcessBehavior(ev *DynamicEvent, behavior *BehaviorSummary, sampleP
 }
 
 func collectLaunchctlPersistence(ev *DynamicEvent, s *DynamicSummary, behavior *BehaviorSummary) {
-	if ev.Type != "exec" && ev.Type != "posix_spawn" && ev.Type != "fork" {
+	if !isProcessLifecycleEvent(ev.Type) {
 		return
 	}
 	cmd := eventCommandPath(ev)
 	if !isLaunchctlCommand(cmd) {
 		return
 	}
-	argv := ev.Metadata["argv"]
-	if argv == "" {
-		return
-	}
-	parts := strings.Split(argv, "\x00")
+	parts := splitNullArgv(eventMetadata(ev, "argv"))
 	if len(parts) < 2 {
 		return
 	}
-	// Drop trailing empty part caused by a terminating null byte.
-	for len(parts) > 0 && parts[len(parts)-1] == "" {
-		parts = parts[:len(parts)-1]
-	}
-
-	subcommand := parts[1]
-	if subcommand != "load" && subcommand != "loadw" && subcommand != "bootstrap" && subcommand != "enable" {
+	switch parts[1] {
+	case "load", "loadw", "bootstrap", "enable":
+	default:
 		return
 	}
-
 	plistPath := extractLaunchctlPlistPath(parts)
 	if plistPath == "" {
 		return
 	}
-
-	s.PersistenceCount++
-	s.PersistencePaths = appendUnique(s.PersistencePaths, plistPath)
-	behavior.PersistenceItems = appendUnique(behavior.PersistenceItems, plistPath)
+	notePersistence(s, behavior, plistPath)
 	behavior.HasLaunchctlPersistence = true
 }
 
@@ -345,7 +302,8 @@ func extractLaunchctlPlistPath(argv []string) string {
 
 func collectNetworkBehavior(ev *DynamicEvent, behavior *BehaviorSummary) {
 	switch ev.Type {
-	case "tcp_connect", "udp_connect":
+	case "tcp_connect", "udp_connect", "udp_send", "msg_send",
+		"tcp_accept", "udp_recv", "msg_recv":
 		remote := eventNetworkRemote(ev)
 		if remote != "" {
 			behavior.NetworkConnections = appendUnique(behavior.NetworkConnections, remote)
@@ -353,163 +311,21 @@ func collectNetworkBehavior(ev *DynamicEvent, behavior *BehaviorSummary) {
 		if isExternalEndpoint(remote) {
 			behavior.HasExternalNetwork = true
 		}
+		if ev.Type == "tcp_accept" {
+			behavior.HasListenSocket = true
+		}
 	case "bind":
 		behavior.HasListenSocket = true
-		local := ev.Metadata["local"]
-		if strings.HasPrefix(local, "0.0.0.0") || strings.HasPrefix(local, "[::]") {
+		if isBindAllLocal(eventMetadata(ev, "local")) {
 			behavior.HasBindAllInterfaces = true
 		}
 	}
 }
 
-func eventTargetPath(ev *DynamicEvent) string {
-	if ev.Target != "" {
-		return ev.Target
-	}
-	if ev.Object != nil {
-		if ev.Object.Path != "" {
-			return ev.Object.Path
-		}
-		if ev.Object.Name != "" {
-			return ev.Object.Name
-		}
-	}
-	return ""
-}
-
-func eventFilePath(ev *DynamicEvent) string {
-	if ev.Type == "exec" || ev.Type == "posix_spawn" || ev.Type == "fork" {
-		return ""
-	}
-	return eventTargetPath(ev)
-}
-
-func eventCommandPath(ev *DynamicEvent) string {
-	if ev.Object != nil && ev.Object.Path != "" {
-		return ev.Object.Path
-	}
-	if ev.Target != "" {
-		return ev.Target
-	}
-	return ev.Process
-}
-
-func eventCommandLine(ev *DynamicEvent) string {
-	// dynamictool stores argv as a null-separated string under the "argv" metadata key.
-	argv := ev.Metadata["argv"]
-	if argv == "" {
-		return ""
-	}
-	parts := strings.Split(argv, "\x00")
-	// Drop trailing empty part caused by a terminating null byte.
-	for len(parts) > 0 && parts[len(parts)-1] == "" {
-		parts = parts[:len(parts)-1]
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return strings.Join(parts, " ")
-}
-
-func eventNetworkRemote(ev *DynamicEvent) string {
-	for _, key := range []string{"remote", "dest", "dst", "peer"} {
-		if v := ev.Metadata[key]; v != "" {
-			return v
-		}
-	}
-	if ev.Target != "" {
-		return ev.Target
-	}
-	if ev.Object != nil && ev.Object.Name != "" {
-		return ev.Object.Name
-	}
-	return ""
-}
-
-func isShellPath(path string) bool {
-	base := filepath.Base(path)
-	shells := map[string]struct{}{
-		"sh": {}, "bash": {}, "zsh": {}, "csh": {}, "tcsh": {},
-		"ksh": {}, "dash": {}, "fish": {}, "rbash": {}, "rzsh": {},
-	}
-	_, ok := shells[base]
-	return ok
-}
-
-func isScriptPath(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	return ext == ".sh" || ext == ".py" || ext == ".pl" || ext == ".rb" ||
-		ext == ".php" || ext == ".js" || ext == ".applescript" || ext == ".scpt"
-}
-
-func isSensitivePath(path string) bool {
-	if path == "" {
-		return false
-	}
-	sensitive := []string{
-		"/System/",
-		"/usr/bin/",
-		"/usr/sbin/",
-		"/bin/",
-		"/sbin/",
-		"/etc/",
-		"/Library/LaunchAgents",
-		"/Library/LaunchDaemons",
-		"/Library/StartupItems",
-		"/Library/Preferences/LoginWindow",
-		"~/Library/LaunchAgents",
-		"/Users/*/Library/LaunchAgents",
-		"/Users/*/Library/LaunchDaemons",
-		".bash_profile", ".bashrc", ".zshrc", ".zprofile",
-		".profile", ".login", ".logout",
-		"/private/etc/",
-	}
-	for _, p := range sensitive {
-		if strings.Contains(path, p) {
-			return true
-		}
-	}
-	return false
-}
-
-func isExternalEndpoint(endpoint string) bool {
-	if endpoint == "" {
-		return false
-	}
-	// Strip port and brackets for IPv6.
-	host := endpoint
-	if i := strings.LastIndex(host, ":"); i > 0 {
-		host = host[:i]
-	}
-	host = strings.Trim(host, "[]")
-
-	// Local-only addresses are not external.
-	localPrefixes := []string{"127.", "10.", "192.168.", "172."}
-	for _, p := range localPrefixes {
-		if strings.HasPrefix(host, p) {
-			return false
-		}
-	}
-	if host == "localhost" || host == "::1" || host == "0.0.0.0" {
-		return false
-	}
-
-	// Heuristic: if it looks like an IP or has a port, treat as external.
-	return strings.Contains(endpoint, ".") || strings.Contains(endpoint, ":")
-}
-
-func appendUnique(slice []string, item string) []string {
-	for _, s := range slice {
-		if s == item {
-			return slice
-		}
-	}
-	return append(slice, item)
-}
-
 type dynamicRisk struct {
 	score       int
 	factors     []string
+	factorSet   map[string]struct{}
 	hasActivity bool
 }
 
@@ -520,10 +336,7 @@ func (r dynamicRisk) verdict() string {
 	if r.score >= 35 {
 		return "suspicious"
 	}
-	if r.score > 0 {
-		return "clean"
-	}
-	if r.hasActivity {
+	if r.score > 0 || r.hasActivity {
 		return "clean"
 	}
 	return "unknown"
@@ -537,231 +350,361 @@ func (r *dynamicRisk) add(points int, factor string) {
 	if r.score > 100 {
 		r.score = 100
 	}
-	if factor != "" {
-		r.factors = append(r.factors, factor)
+	r.noteFactor(factor)
+}
+
+func (r *dynamicRisk) noteFactor(factor string) {
+	if factor == "" {
+		return
+	}
+	if r.factorSet == nil {
+		r.factorSet = make(map[string]struct{})
+	}
+	if _, ok := r.factorSet[factor]; ok {
+		return
+	}
+	r.factorSet[factor] = struct{}{}
+	r.factors = append(r.factors, factor)
+}
+
+func (r *dynamicRisk) addCategory(points, cap int, factors ...string) {
+	if points <= 0 {
+		return
+	}
+	if points > cap {
+		points = cap
+	}
+	r.score += points
+	if r.score > 100 {
+		r.score = 100
+	}
+	for _, f := range factors {
+		r.noteFactor(f)
 	}
 }
 
 func evaluateDynamicRisk(tree *ProcessTreeNode, eventTypes map[string]int, behavior *BehaviorSummary) dynamicRisk {
 	risk := dynamicRisk{hasActivity: hasBehavioralActivity(eventTypes)}
-
 	if !risk.hasActivity {
 		return risk
 	}
 
-	// Kernel extension activity is rare and high impact on modern macOS.
-	if eventTypes["kextload"] > 0 || eventTypes["kextunload"] > 0 {
-		risk.add(85, "kernel extension load/unload")
-	}
+	mprotectPts, mprotectDesc, hasRWX := analyzeMprotectBase(tree, eventTypes)
 
-	addCodeInjectionRisk(&risk, tree, eventTypes, behavior)
-	addPersistenceRisk(&risk, eventTypes, behavior)
-	addPrivilegeRisk(&risk, eventTypes, behavior)
-	addProcessAccessRisk(&risk, eventTypes)
-	addFilesystemRisk(&risk, eventTypes, behavior)
-	addIPCAndReconRisk(&risk, tree, eventTypes)
-	if tree != nil {
-		addNetworkRisk(&risk, tree.Networks, eventTypes, behavior)
-		addCommandExecutionRisk(&risk, behavior)
-	}
+	scoreKernel(&risk, eventTypes)
+	scoreInjection(&risk, tree, eventTypes, behavior, mprotectPts, mprotectDesc)
+	scorePersistence(&risk, eventTypes, behavior)
+	scorePrivilege(&risk, eventTypes, behavior)
+	scoreNetwork(&risk, eventTypes, behavior)
+	scoreExecution(&risk, behavior)
+	scoreFilesystem(&risk, eventTypes, behavior)
+	scoreAccessRecon(&risk, tree, eventTypes)
+	scoreCombos(&risk, eventTypes, behavior, hasRWX)
 
 	return risk
 }
 
-func addCodeInjectionRisk(risk *dynamicRisk, tree *ProcessTreeNode, eventTypes map[string]int, behavior *BehaviorSummary) {
-	getTaskScore, getTaskFactor := analyzeGetTaskEvents(tree, eventTypes)
-	mprotectScore, mprotectFactor := analyzeMprotectEvents(tree, eventTypes)
+func scoreKernel(risk *dynamicRisk, eventTypes map[string]int) {
+	if eventTypes["kextload"] > 0 || eventTypes["kextunload"] > 0 {
+		risk.addCategory(85, 85, "kernel extension load/unload")
+	}
+}
+
+func scoreInjection(risk *dynamicRisk, tree *ProcessTreeNode, eventTypes map[string]int, behavior *BehaviorSummary, mprotectPts int, mprotectDesc string) {
+	raw := 0
+	var factors []string
 
 	if eventTypes["remote_thread_create"] > 0 {
-		risk.add(45, "remote thread creation")
+		raw += 40
+		factors = append(factors, "remote thread creation")
 	}
 	if eventTypes["trace"] > 0 {
-		risk.add(25, "process tracing")
+		raw += 15
+		factors = append(factors, "process tracing")
 	}
 	if eventTypes["cs_invalidated"] > 0 {
-		risk.add(20, "code signature invalidated")
-	}
-	if mprotectScore > 0 {
-		risk.add(mprotectScore, mprotectFactor)
-	}
-	if getTaskScore > 0 {
-		risk.add(getTaskScore, getTaskFactor)
-	}
-	if eventTypes["remote_thread_create"] > 0 && eventTypes["mprotect"] > 0 {
-		risk.add(20, "remote thread combined with memory protection changes")
+		raw += 15
+		factors = append(factors, "code signature invalidated")
 	}
 
+	if pts, desc := analyzeGetTaskEvents(tree, eventTypes); pts > 0 {
+		raw += pts
+		factors = append(factors, desc)
+	}
+	if mprotectPts > 0 {
+		raw += mprotectPts
+		factors = append(factors, mprotectDesc)
+	}
 	if behavior != nil && len(behavior.InjectionTargets) > 0 {
-		risk.add(10, "injection targeting specific processes")
+		raw += 8
+		factors = append(factors, "injection targeting specific processes")
 	}
+
+	risk.addCategory(raw, 60, factors...)
 }
 
-func addPersistenceRisk(risk *dynamicRisk, eventTypes map[string]int, behavior *BehaviorSummary) {
-	if eventTypes["btm_launch_item_add"] > 0 || eventTypes["btm_launch_item_remove"] > 0 {
-		risk.add(35, "background/login item modification")
-	}
-	if eventTypes["setextattr"] > 0 {
-		risk.add(10, "extended attribute modification")
-	}
+func scorePersistence(risk *dynamicRisk, eventTypes map[string]int, behavior *BehaviorSummary) {
+	raw := 0
+	var factors []string
 
-	if behavior != nil && len(behavior.PersistenceItems) > 0 {
-		risk.add(10, "persistence item paths observed")
-	}
+	hasBTM := eventTypes["btm_launch_item_add"] > 0 || eventTypes["btm_launch_item_remove"] > 0
+	hasLaunchctl := behavior != nil && behavior.HasLaunchctlPersistence
+	hasItems := behavior != nil && len(behavior.PersistenceItems) > 0
 
-	if behavior != nil && behavior.HasLaunchctlPersistence {
-		risk.add(30, "launchctl load/bootstrap persistence")
-	}
-}
-
-func addPrivilegeRisk(risk *dynamicRisk, eventTypes map[string]int, behavior *BehaviorSummary) {
-	if eventTypes["seteuid"] > 0 || eventTypes["setegid"] > 0 ||
-		eventTypes["setreuid"] > 0 || eventTypes["setregid"] > 0 {
-		risk.add(20, "effective uid/gid change")
-	}
-	if eventTypes["setuid"] > 0 || eventTypes["setgid"] > 0 {
-		risk.add(15, "uid/gid change")
-	}
-
-	if behavior != nil && behavior.PrivilegeEscalation {
-		risk.add(10, "privilege escalation behavior")
-	}
-}
-
-func addProcessAccessRisk(risk *dynamicRisk, eventTypes map[string]int) {
-	if eventTypes["proc_suspend_resume"] > 0 {
-		risk.add(20, "process suspend/resume control")
-	}
-	if eventTypes["signal"] > 3 {
-		risk.add(15, "multiple process signals")
-	} else if eventTypes["signal"] > 0 {
-		risk.add(5, "process signal")
-	}
-
-	procChecks := eventTypes["proc_check"]
+	// Take the strongest persistence signal; don't stack BTM + launchctl + items.
 	switch {
-	case procChecks > 20:
-		risk.add(25, "high-volume process permission checks")
-	case procChecks > 5:
-		risk.add(15, "repeated process permission checks")
-	case procChecks > 0:
-		risk.add(3, "process permission check")
+	case hasBTM:
+		raw = 35
+		factors = append(factors, "background/login item modification")
+	case hasLaunchctl:
+		raw = 30
+		factors = append(factors, "launchctl load/bootstrap persistence")
+	case hasItems:
+		raw = 20
+		factors = append(factors, "persistence item paths observed")
 	}
 
-	if eventTypes["get_task"]+eventTypes["get_task_read"]+eventTypes["get_task_inspect"] > 0 &&
-		eventTypes["remote_thread_create"] > 0 {
-		risk.add(25, "task port access combined with remote thread creation")
+	if eventTypes["setextattr"] > 0 {
+		raw += 5
+		factors = append(factors, "extended attribute modification")
 	}
+	if hasSensitiveLaunchPersistence(behavior) {
+		raw += 10
+		factors = append(factors, "LaunchAgent/Daemon path persistence")
+	}
+
+	risk.addCategory(raw, 50, factors...)
 }
 
-func addFilesystemRisk(risk *dynamicRisk, eventTypes map[string]int, behavior *BehaviorSummary) {
-	if eventTypes["link"] > 0 {
-		risk.add(15, "hard link creation")
-	}
-	if eventTypes["mount"] > 0 || eventTypes["remount"] > 0 {
-		risk.add(25, "filesystem mount/remount")
+func scorePrivilege(risk *dynamicRisk, eventTypes map[string]int, behavior *BehaviorSummary) {
+	raw := 0
+	var factors []string
+
+	switch {
+	case eventTypes["seteuid"] > 0 || eventTypes["setegid"] > 0 ||
+		eventTypes["setreuid"] > 0 || eventTypes["setregid"] > 0:
+		raw = 20
+		factors = append(factors, "effective uid/gid change")
+	case eventTypes["setuid"] > 0 || eventTypes["setgid"] > 0:
+		raw = 15
+		factors = append(factors, "uid/gid change")
+	case behavior != nil && behavior.PrivilegeEscalation:
+		raw = 15
+		factors = append(factors, "privilege escalation behavior")
 	}
 
-	if behavior != nil {
-		if behavior.HasSensitiveWrite {
-			risk.add(20, "write to sensitive location")
-		}
-		if behavior.HasSensitiveDelete {
-			risk.add(15, "delete sensitive file")
-		}
-		if behavior.HasSensitiveChmod {
-			risk.add(15, "permission change on sensitive path")
-		}
-	}
-
-	// Keep volume-based deletion scoring as a secondary signal.
-	if eventTypes["unlink"] > 20 {
-		risk.add(15, "high-volume file deletion")
-	} else if eventTypes["unlink"] > 0 {
-		risk.add(3, "file deletion")
-	}
+	risk.addCategory(raw, 30, factors...)
 }
 
-func addCommandExecutionRisk(risk *dynamicRisk, behavior *BehaviorSummary) {
+func scoreNetwork(risk *dynamicRisk, eventTypes map[string]int, behavior *BehaviorSummary) {
+	raw := 0
+	var factors []string
+
+	external := behavior != nil && behavior.HasExternalNetwork
+	bindAll := behavior != nil && behavior.HasBindAllInterfaces
+	listen := behavior != nil && behavior.HasListenSocket
+
+	if external {
+		raw += 25
+		factors = append(factors, "external network connection")
+	}
+	if bindAll {
+		raw += 18
+		factors = append(factors, "bind on all interfaces (0.0.0.0/::)")
+	}
+	if listen && !bindAll {
+		raw += 10
+		factors = append(factors, "network socket listen")
+	}
+
+	// Only score generic socket noise when behavior did not already capture intent.
+	if !external {
+		if eventTypes["tcp_connect"] > 0 {
+			raw += 8
+			factors = append(factors, "TCP network connection")
+		} else if eventTypes["udp_send"] > 0 || eventTypes["udp_connect"] > 0 {
+			raw += 6
+			factors = append(factors, "UDP network activity")
+		}
+	}
+	if !listen && eventTypes["tcp_accept"] > 0 {
+		raw += 8
+		factors = append(factors, "accepted inbound TCP connection")
+	}
+	if eventTypes["unix_connect"] > 0 {
+		raw += 2
+	}
+	if eventTypes["socket"] > 5 && !external && !listen {
+		raw += 4
+	}
+
+	risk.addCategory(raw, 40, factors...)
+}
+
+func scoreExecution(risk *dynamicRisk, behavior *BehaviorSummary) {
 	if behavior == nil {
 		return
 	}
+	raw := 0
+	var factors []string
 	if behavior.HasShellExecution {
-		risk.add(20, "shell execution")
+		raw += 18
+		factors = append(factors, "shell execution")
 	}
 	if behavior.HasScriptExecution {
-		risk.add(10, "script execution")
+		raw += 8
+		factors = append(factors, "script execution")
 	}
 	if len(behavior.CommandsExecuted) > 3 {
-		risk.add(10, "multiple distinct commands executed")
+		raw += 8
+		factors = append(factors, "multiple distinct commands executed")
 	}
+	risk.addCategory(raw, 35, factors...)
 }
 
-func addIPCAndReconRisk(risk *dynamicRisk, tree *ProcessTreeNode, eventTypes map[string]int) {
-	xpcScore, xpcFactor := analyzeXPCConnect(tree, eventTypes)
-	if xpcScore > 0 {
-		risk.add(xpcScore, xpcFactor)
+func scoreFilesystem(risk *dynamicRisk, eventTypes map[string]int, behavior *BehaviorSummary) {
+	raw := 0
+	var factors []string
+
+	if eventTypes["mount"] > 0 || eventTypes["remount"] > 0 {
+		raw += 20
+		factors = append(factors, "filesystem mount/remount")
+	}
+	if eventTypes["link"] > 0 {
+		raw += 10
+		factors = append(factors, "hard link creation")
+	}
+	if behavior != nil {
+		// LaunchAgent/Daemon writes are scored under persistence — don't also
+		// count them as generic sensitive filesystem writes.
+		if hasNonLaunchSensitiveWrite(behavior) {
+			raw += 18
+			factors = append(factors, "write to sensitive location")
+		}
+		if behavior.HasSensitiveDelete {
+			raw += 12
+			factors = append(factors, "delete sensitive file")
+		}
+		if behavior.HasSensitiveChmod {
+			raw += 10
+			factors = append(factors, "permission change on sensitive path")
+		}
+	}
+	// Demote bare deletion volume — only matters at high volume without sensitive delete.
+	if eventTypes["unlink"] > 20 && (behavior == nil || !behavior.HasSensitiveDelete) {
+		raw += 8
+		factors = append(factors, "high-volume file deletion")
+	}
+
+	risk.addCategory(raw, 35, factors...)
+}
+
+func scoreAccessRecon(risk *dynamicRisk, tree *ProcessTreeNode, eventTypes map[string]int) {
+	raw := 0
+	var factors []string
+
+	if eventTypes["proc_suspend_resume"] > 0 {
+		raw += 15
+		factors = append(factors, "process suspend/resume control")
+	}
+	switch {
+	case eventTypes["proc_check"] > 20:
+		raw += 12
+		factors = append(factors, "high-volume process permission checks")
+	case eventTypes["proc_check"] > 5:
+		raw += 6
+		factors = append(factors, "repeated process permission checks")
+	}
+	if eventTypes["signal"] > 3 {
+		raw += 6
+		factors = append(factors, "multiple process signals")
+	}
+	if pts, desc := analyzeXPCConnect(tree, eventTypes); pts > 0 {
+		raw += pts
+		factors = append(factors, desc)
 	}
 	if eventTypes["iokit_open"] > 0 {
-		risk.add(10, "IOKit user client access")
+		raw += 6
+		factors = append(factors, "IOKit user client access")
+	}
+
+	risk.addCategory(raw, 25, factors...)
+}
+
+func scoreCombos(risk *dynamicRisk, eventTypes map[string]int, behavior *BehaviorSummary, hasRWX bool) {
+	hasRemoteThread := eventTypes["remote_thread_create"] > 0
+	hasTask := eventTypes["get_task"]+eventTypes["get_task_read"]+eventTypes["get_task_inspect"] > 0
+	hasMprotect := eventTypes["mprotect"] > 0
+
+	if hasRemoteThread && (hasMprotect || hasTask) {
+		risk.add(25, "injection chain: remote thread with task/memory access")
+	}
+	if hasRWX && eventTypes["cs_invalidated"] > 0 {
+		risk.add(20, "RWX memory with code signature invalidation")
+	}
+
+	hasBTM := eventTypes["btm_launch_item_add"] > 0 || eventTypes["btm_launch_item_remove"] > 0
+	hasPersistence := hasBTM ||
+		(behavior != nil && (behavior.HasLaunchctlPersistence || len(behavior.PersistenceItems) > 0))
+	external := behavior != nil && behavior.HasExternalNetwork
+
+	if hasPersistence && external {
+		risk.add(15, "persistence with external network")
+	}
+	if behavior != nil && behavior.HasShellExecution && external {
+		risk.add(15, "shell execution with external network")
+	}
+	if hasSensitiveLaunchPersistence(behavior) &&
+		(hasBTM || (behavior != nil && behavior.HasLaunchctlPersistence)) {
+		risk.add(15, "LaunchAgent/Daemon write with install persistence")
 	}
 }
 
-func addNetworkRisk(risk *dynamicRisk, networkEvents []DynamicEvent, eventTypes map[string]int, behavior *BehaviorSummary) {
-	if len(networkEvents) == 0 {
-		return
-	}
+func isLaunchPersistencePath(path string) bool {
+	return strings.Contains(path, "/LaunchAgents") || strings.Contains(path, "/LaunchDaemons")
+}
 
-	if behavior != nil && behavior.HasExternalNetwork {
-		risk.add(20, "external network connection")
+func hasSensitiveLaunchPersistence(behavior *BehaviorSummary) bool {
+	if behavior == nil {
+		return false
 	}
-	if behavior != nil && behavior.HasBindAllInterfaces {
-		risk.add(18, "bind on all interfaces (0.0.0.0/::)")
-	}
-	if behavior != nil && behavior.HasListenSocket {
-		risk.add(10, "network socket listen")
-	}
-
-	if eventTypes["tcp_connect"] > 0 {
-		risk.add(10, "TCP network connection")
-	}
-	if eventTypes["unix_connect"] > 0 {
-		risk.add(3, "Unix domain socket connection")
-	}
-	if eventTypes["socket"] > 5 {
-		risk.add(10, "high volume socket creation")
-	} else if eventTypes["socket"] > 0 {
-		risk.add(2, "socket creation")
-	}
-	if eventTypes["msg_send"] > 0 || eventTypes["msg_recv"] > 0 {
-		risk.add(3, "network message activity")
-	}
-
-	// --- bind scoring (legacy count-based fallback) ---
-	if eventTypes["bind"] > 0 {
-		if eventTypes["bind"] > 1 {
-			risk.add(3, "multiple socket binds")
-		} else {
-			risk.add(5, "socket bind")
+	for _, p := range behavior.PersistenceItems {
+		if isLaunchPersistencePath(p) {
+			return true
 		}
-
-		for _, ev := range networkEvents {
-			if ev.Type != "bind" {
-				continue
-			}
-			local := ev.Metadata["local"]
-			if local == "" {
-				continue
-			}
-			// local format: "0.0.0.0:8080" or "[::]:80" or unix path
-			if strings.HasPrefix(local, "0.0.0.0") || strings.HasPrefix(local, "[::]") {
-				risk.add(5, "bind on all interfaces (0.0.0.0/::)")
+	}
+	if behavior.HasSensitiveWrite {
+		for _, p := range behavior.FilesWritten {
+			if isLaunchPersistencePath(p) {
+				return true
 			}
 		}
 	}
+	return false
+}
+
+// hasNonLaunchSensitiveWrite is true when sensitive writes include paths outside
+// LaunchAgents/Daemons (those belong to the persistence category).
+func hasNonLaunchSensitiveWrite(behavior *BehaviorSummary) bool {
+	if behavior == nil || !behavior.HasSensitiveWrite {
+		return false
+	}
+	sawSensitive := false
+	for _, p := range behavior.FilesWritten {
+		if !isSensitivePath(p) {
+			continue
+		}
+		sawSensitive = true
+		if !isLaunchPersistencePath(p) {
+			return true
+		}
+	}
+	// Flag set but no enumerable paths — keep scoring to avoid under-counting.
+	return !sawSensitive
 }
 
 func analyzeGetTaskEvents(tree *ProcessTreeNode, eventTypes map[string]int) (score int, description string) {
-	// get_task_name 仅查询进程名，风险极低，不计入评分
+	// get_task_name only queries the process name — ignore for scoring.
 	total := eventTypes["get_task"] + eventTypes["get_task_read"] + eventTypes["get_task_inspect"]
 	if total == 0 {
 		return 0, ""
@@ -787,23 +730,24 @@ func analyzeGetTaskEvents(tree *ProcessTreeNode, eventTypes map[string]int) (sco
 	})
 
 	if systemTargets > 0 {
-		return 45, "task access targeting system processes"
+		return 25, "task access targeting system processes"
 	}
 	if len(uniqueTargets) > 5 {
-		return 30, "task access across many distinct processes"
+		return 18, "task access across many distinct processes"
 	}
 	if total > 10 {
-		return 20, "high-volume task access"
+		return 12, "high-volume task access"
 	}
 	return 5, "task access"
 }
 
-func analyzeMprotectEvents(tree *ProcessTreeNode, eventTypes map[string]int) (score int, description string) {
+// analyzeMprotectBase returns a standalone mprotect score without combo stacking.
+// Combos are applied separately in scoreCombos.
+func analyzeMprotectBase(tree *ProcessTreeNode, eventTypes map[string]int) (score int, description string, hasRWX bool) {
 	if eventTypes["mprotect"] == 0 {
-		return 0, ""
+		return 0, "", false
 	}
 
-	hasRWX := false
 	walkTree(tree, func(ev DynamicEvent) {
 		if ev.Type != "mprotect" {
 			return
@@ -813,39 +757,10 @@ func analyzeMprotectEvents(tree *ProcessTreeNode, eventTypes map[string]int) (sc
 		}
 	})
 
-	// mprotect + exec + cs_invalidated = shellcode injection pattern
-	if eventTypes["exec"] > 0 && eventTypes["cs_invalidated"] > 0 {
-		if hasRWX {
-			return 55, "RWX memory with exec and code signature invalidation"
-		}
-		return 35, "memory protection changes with exec and code signature invalidation"
+	if hasRWX {
+		return 15, "RWX memory protection change", true
 	}
-
-	// mprotect + remote_thread_create = code injection
-	if eventTypes["remote_thread_create"] > 0 {
-		if hasRWX {
-			return 50, "RWX memory with remote thread creation"
-		}
-		return 30, "memory protection changes with remote thread creation"
-	}
-
-	// mprotect + exec alone: often JIT/dyld, low score
-	if eventTypes["exec"] > 0 {
-		if hasRWX {
-			return 20, "RWX memory after exec"
-		}
-		return 8, "memory protection changes after exec"
-	}
-
-	// mprotect + repeated proc_check = anti-analysis unpacking
-	if eventTypes["proc_check"] > 3 {
-		if hasRWX {
-			return 30, "RWX memory with repeated process checks"
-		}
-		return 15, "memory protection changes with repeated process checks"
-	}
-
-	return 3, "memory protection change"
+	return 5, "memory protection change", false
 }
 
 func analyzeXPCConnect(tree *ProcessTreeNode, eventTypes map[string]int) (score int, description string) {
@@ -871,10 +786,10 @@ func analyzeXPCConnect(tree *ProcessTreeNode, eventTypes map[string]int) (score 
 	})
 
 	if nonApple > 5 {
-		return 20, "multiple non-Apple XPC service connections"
+		return 12, "multiple non-Apple XPC service connections"
 	}
 	if nonApple > 0 {
-		return 10, "non-Apple XPC service connection"
+		return 6, "non-Apple XPC service connection"
 	}
 	return 0, ""
 }
@@ -889,15 +804,14 @@ func hasBehavioralActivity(eventTypes map[string]int) bool {
 }
 
 func isSystemProcessTarget(target string) bool {
-	systemPaths := []string{
+	for _, p := range []string{
 		"kernel_task",
 		"launchd",
 		"/System/Library/",
 		"/usr/sbin/",
 		"/sbin/",
 		"/usr/libexec/",
-	}
-	for _, p := range systemPaths {
+	} {
 		if strings.Contains(target, p) {
 			return true
 		}

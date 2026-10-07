@@ -54,10 +54,10 @@ struct Event: Codable {
         type: String,
         pid: pid_t,
         pidversion: Int32? = nil,
-        ppid: pid_t?,
+        ppid: pid_t? = nil,
         ppidversion: Int32? = nil,
-        process: String?,
-        target: String?,
+        process: String? = nil,
+        target: String? = nil,
         subject: ProcessIdentity? = nil,
         object: EventObject? = nil,
         metadata: [String: String]? = nil

@@ -5,24 +5,38 @@ import Foundation
 struct LaunchedSample {
     let pid: pid_t
     let processPath: String
+    /// True when the sample is a direct `posix_spawn` child (waitpid-able).
     let isChildProcess: Bool
 }
 
 enum SampleLauncher {
+    private static let launchServicesTimeout: TimeInterval = 10
+    private static let pidResolveTimeout: TimeInterval = 3
+    private static let pidPollInterval: TimeInterval = 0.05
+
     static func launch(
         executable: String,
         arguments: [String]
     ) throws -> LaunchedSample {
         let url = URL(fileURLWithPath: executable).standardizedFileURL
         if url.pathExtension.lowercased() == "app" {
-            return try launchApplication(
-                bundleURL: url,
-                arguments: arguments
-            )
+            return try launchApplication(bundleURL: url, arguments: arguments)
         }
-
         return try launchExecutable(url: url, arguments: arguments)
     }
+
+    /// Mach-O path used for ES path muting (bundle → executable, else the path itself).
+    static func executablePath(for samplePath: String) -> String {
+        let url = URL(fileURLWithPath: samplePath).standardizedFileURL
+        if url.pathExtension.lowercased() == "app",
+            let executable = Bundle(url: url)?.executableURL?.path
+        {
+            return executable
+        }
+        return url.path
+    }
+
+    // MARK: - Mach-O / script
 
     private static func launchExecutable(url: URL, arguments: [String]) throws -> LaunchedSample {
         let resolvedExecutable = url.path
@@ -31,17 +45,24 @@ enum SampleLauncher {
         }
 
         var fileActions: posix_spawn_file_actions_t?
-        posix_spawn_file_actions_init(&fileActions)
+        guard posix_spawn_file_actions_init(&fileActions) == 0 else {
+            throw AnalyzerError.launch("posix_spawn_file_actions_init failed")
+        }
         defer { posix_spawn_file_actions_destroy(&fileActions) }
 
-        let devNullFD = open("/dev/null", O_WRONLY)
+        let devNullFD = open("/dev/null", O_RDWR)
         guard devNullFD >= 0 else {
             throw AnalyzerError.launch("failed to open /dev/null")
         }
         defer { close(devNullFD) }
 
-        posix_spawn_file_actions_adddup2(&fileActions, devNullFD, STDOUT_FILENO)
-        posix_spawn_file_actions_adddup2(&fileActions, devNullFD, STDERR_FILENO)
+        guard
+            posix_spawn_file_actions_adddup2(&fileActions, devNullFD, STDIN_FILENO) == 0,
+            posix_spawn_file_actions_adddup2(&fileActions, devNullFD, STDOUT_FILENO) == 0,
+            posix_spawn_file_actions_adddup2(&fileActions, devNullFD, STDERR_FILENO) == 0
+        else {
+            throw AnalyzerError.launch("posix_spawn_file_actions_adddup2 failed")
+        }
 
         var argvStorage = ([resolvedExecutable] + arguments).map { strdup($0) }
         defer {
@@ -52,21 +73,24 @@ enum SampleLauncher {
         argvStorage.append(nil)
 
         var pid: pid_t = 0
-        let result = posix_spawn(&pid, resolvedExecutable, &fileActions, nil, argvStorage, environ)
+        let result = posix_spawn(
+            &pid, resolvedExecutable, &fileActions, nil, argvStorage, environ)
         guard result == 0 else {
-            let message = String(cString: strerror(result))
-            throw AnalyzerError.launch("posix_spawn failed: \(message)")
+            throw AnalyzerError.launch(
+                "posix_spawn failed: \(String(cString: strerror(result)))")
         }
 
-        return LaunchedSample(pid: pid, processPath: resolvedExecutable, isChildProcess: true)
+        return LaunchedSample(
+            pid: pid, processPath: resolvedExecutable, isChildProcess: true)
     }
+
+    // MARK: - .app bundle
 
     private static func launchApplication(
         bundleURL: URL,
         arguments: [String]
     ) throws -> LaunchedSample {
         var isDirectory: ObjCBool = false
-
         guard FileManager.default.fileExists(atPath: bundleURL.path, isDirectory: &isDirectory),
             isDirectory.boolValue
         else {
@@ -76,89 +100,145 @@ enum SampleLauncher {
         guard let executableURL = Bundle(url: bundleURL)?.executableURL else {
             throw AnalyzerError.launch("app bundle has no executable: \(bundleURL.path)")
         }
-
         let processPath = executableURL.path
+
+        // Ignore pre-existing instances of the same binary (common in reused VMs).
+        let preexisting = pids(matchingExecutable: processPath)
+
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.arguments = arguments
         configuration.activates = false
         configuration.createsNewApplicationInstance = true
 
-        let semaphore = DispatchSemaphore(value: 0)
-        var launchError: Error?
+        let runningApp = try openApplication(
+            at: bundleURL, configuration: configuration)
 
-        NSWorkspace.shared.openApplication(at: bundleURL, configuration: configuration) {
-            _, error in
-            launchError = error
-            semaphore.signal()
+        if let pid = validatedPID(from: runningApp, expectedPath: processPath),
+            !preexisting.contains(pid)
+        {
+            logPIDResolution(
+                path: processPath, selected: pid, source: "NSRunningApplication",
+                candidates: [pid])
+            return LaunchedSample(
+                pid: pid, processPath: processPath, isChildProcess: false)
         }
 
-        guard semaphore.wait(timeout: .now() + 10) == .success else {
-            throw AnalyzerError.launch("LaunchServices timed out for \(bundleURL.path)")
-        }
-
-        if let launchError {
-            throw AnalyzerError.launch(
-                "LaunchServices failed for \(bundleURL.path): \(launchError.localizedDescription)")
-        }
-
-        // openApplication returns before the app finishes exec-ing (it launches
-        // via xpcproxy).  In headless VMs NSWorkspace.runningApplications is
-        // unreliable, so resolve the real PID by scanning the process table.
-        let deadline = Date().addingTimeInterval(3.0)
-        var resolvedPID: pid_t = 0
+        // openApplication often returns before exec (via xpcproxy). Headless VMs
+        // also make NSWorkspace.runningApplications unreliable — poll the table.
+        let deadline = Date().addingTimeInterval(pidResolveTimeout)
+        var selected: pid_t?
+        var lastCandidates: [pid_t] = []
         while Date() < deadline {
-            if let pid = findPIDByExecutablePath(processPath) {
-                resolvedPID = pid
+            let candidates = pids(matchingExecutable: processPath)
+                .subtracting(preexisting)
+                .sorted()
+            lastCandidates = candidates
+            // Lowest new PID is typically the main app (helpers fork later).
+            if let pid = candidates.first {
+                selected = pid
                 break
             }
-            Thread.sleep(forTimeInterval: 0.05)
+            Thread.sleep(forTimeInterval: pidPollInterval)
         }
 
-        guard resolvedPID > 0 else {
+        guard let resolvedPID = selected else {
             throw AnalyzerError.launch(
                 "could not resolve running application pid for \(bundleURL.path)")
         }
 
+        logPIDResolution(
+            path: processPath, selected: resolvedPID, source: "proc_listallpids",
+            candidates: lastCandidates)
         return LaunchedSample(
-            pid: resolvedPID,
-            processPath: processPath,
-            isChildProcess: false
-        )
+            pid: resolvedPID, processPath: processPath, isChildProcess: false)
     }
 
-    private static func findPIDByExecutablePath(_ path: String) -> pid_t? {
-        // proc_listallpids(nil, 0) returns the number of pids, not bytes.
-        let pidCountHint = Int(proc_listallpids(nil, 0))
-        guard pidCountHint > 0 else { return nil }
+    private static func openApplication(
+        at bundleURL: URL,
+        configuration: NSWorkspace.OpenConfiguration
+    ) throws -> NSRunningApplication? {
+        let semaphore = DispatchSemaphore(value: 0)
+        var launchError: Error?
+        var runningApp: NSRunningApplication?
 
-        // Add headroom for processes spawned between the size query and list call.
-        var pids = [pid_t](repeating: 0, count: pidCountHint + 64)
+        NSWorkspace.shared.openApplication(at: bundleURL, configuration: configuration) {
+            app, error in
+            runningApp = app
+            launchError = error
+            semaphore.signal()
+        }
+
+        guard semaphore.wait(timeout: .now() + launchServicesTimeout) == .success else {
+            throw AnalyzerError.launch("LaunchServices timed out for \(bundleURL.path)")
+        }
+        if let launchError {
+            throw AnalyzerError.launch(
+                "LaunchServices failed for \(bundleURL.path): \(launchError.localizedDescription)")
+        }
+        return runningApp
+    }
+
+    private static func validatedPID(
+        from app: NSRunningApplication?,
+        expectedPath: String
+    ) -> pid_t? {
+        guard let app else { return nil }
+        let pid = app.processIdentifier
+        guard pid > 0 else { return nil }
+        guard let path = processPath(for: pid),
+            PathNormalization.matches(path, expectedPath)
+        else {
+            return nil
+        }
+        return pid
+    }
+
+    // MARK: - Process table
+
+    private static func pids(matchingExecutable path: String) -> Set<pid_t> {
+        guard let all = listAllPIDs() else { return [] }
+        var matches = Set<pid_t>()
+        for pid in all where pid > 0 {
+            guard let pidPath = processPath(for: pid),
+                PathNormalization.matches(pidPath, path)
+            else {
+                continue
+            }
+            matches.insert(pid)
+        }
+        return matches
+    }
+
+    private static func listAllPIDs() -> [pid_t]? {
+        // proc_listallpids(nil, 0) returns the number of pids, not bytes.
+        let hint = Int(proc_listallpids(nil, 0))
+        guard hint > 0 else { return nil }
+
+        var pids = [pid_t](repeating: 0, count: hint + 64)
         let returnedSize = proc_listallpids(
             &pids, Int32(pids.count * MemoryLayout<pid_t>.size))
         guard returnedSize > 0 else { return nil }
 
-        let pidCount = Int(returnedSize) / MemoryLayout<pid_t>.size
-        var pathBuffer = [CChar](repeating: 0, count: 4096)
-        var candidates: [pid_t] = []
-        for i in 0..<pidCount {
-            let pid = pids[i]
-            guard pid > 0 else { continue }
-            if proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count)) > 0 {
-                let pidPath = String(cString: pathBuffer)
-                if pidPath == path || pidPath.hasSuffix(path) {
-                    candidates.append(pid)
-                }
-            }
-        }
-
-        // Prefer the smallest PID: the parent app process always has a lower PID
-        // than any child it forks.  This avoids returning a helper/child process.
-        let result = candidates.min()
-        FileHandle.standardError.write(
-            Data(
-                "dynamictool: findPIDByExecutablePath target=\(path) scanned=\(pidCount) candidates=\(candidates) selected=\(result.map(String.init) ?? "nil")\n"
-                    .utf8))
-        return result
+        let count = Int(returnedSize) / MemoryLayout<pid_t>.size
+        return Array(pids.prefix(count))
     }
 
+    private static func processPath(for pid: pid_t) -> String? {
+        var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+        let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+        guard length > 0 else { return nil }
+        return String(cString: buffer)
+    }
+
+    private static func logPIDResolution(
+        path: String,
+        selected: pid_t,
+        source: String,
+        candidates: [pid_t]
+    ) {
+        FileHandle.standardError.write(
+            Data(
+                "dynamictool: resolvePID path=\(path) source=\(source) candidates=\(candidates) selected=\(selected)\n"
+                    .utf8))
+    }
 }

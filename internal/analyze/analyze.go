@@ -16,7 +16,6 @@ import (
 	"github.com/ac0d3r/machbox/internal/assets"
 	"github.com/ac0d3r/machbox/internal/db"
 	"github.com/ac0d3r/machbox/internal/report"
-	"github.com/ac0d3r/machbox/internal/version"
 	baselines "github.com/ac0d3r/machbox/internal/vm"
 	boxvm "github.com/ac0d3r/machbox/pkg/vm"
 	"github.com/ac0d3r/machbox/pkg/vm/config"
@@ -258,16 +257,15 @@ func (s *session) run(ctx context.Context, vmi *boxvm.VMInstance) (err error) {
 	client, info, err := agent.WaitReady(waitCtx, dial, time.Second)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return fmt.Errorf("timed out after %s waiting for guest agent %q",
-				agentWaitTimeout, version.Version)
+			return fmt.Errorf("timed out after %s waiting for guest agent protocol %q",
+				agentWaitTimeout, agent.ProtocolVersion)
 		}
 		return fmt.Errorf("wait for guest agent: %w", err)
 	}
 	defer client.Close()
 
-	if info.AgentVersion != version.Version {
-		return fmt.Errorf("guest agent version %q != expected %q; re-import the baseline",
-			info.AgentVersion, version.Version)
+	if err := agent.CompatibleProtocol(info.AgentVersion); err != nil {
+		return fmt.Errorf("%w; re-import the baseline", err)
 	}
 
 	s.wd, err = client.SetWorkdir()

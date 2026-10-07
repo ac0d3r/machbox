@@ -18,7 +18,7 @@ PKG_OUTPUT := $(BUILD_DIR)/$(AGENT_NAME).pkg
 all: package
 
 build-agent:
-	CGO_ENABLED=0 GOOS=darwin go build -ldflags "-s -w -X github.com/ac0d3r/machbox/internal/version.Version=$(VERSION)" -trimpath -o "$(AGENT_NAME)" main.go
+	CGO_ENABLED=0 GOOS=darwin go build -ldflags "-s -w" -trimpath -o "$(AGENT_NAME)" main.go
 
 	codesign --force --sign "$(SIGN_IDENTITY)" \
 		--options runtime \
