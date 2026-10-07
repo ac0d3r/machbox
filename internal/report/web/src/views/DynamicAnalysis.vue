@@ -19,6 +19,34 @@ const hasData = computed(() => {
 const summary = computed(() => parsedDynamic.value?.summary || {})
 const behavior = computed(() => summary.value?.behavior_summary || {})
 
+// Merge executable path + argv into one line, e.g. "/usr/bin/sw_vers -productVersion".
+const executedCommands = computed(() => {
+  const paths = behavior.value.commands_executed || []
+  const lines = behavior.value.command_lines || []
+  if (!paths.length && !lines.length) return []
+
+  const n = Math.max(paths.length, lines.length)
+  const out = []
+  for (let i = 0; i < n; i++) {
+    const path = paths[i] || ''
+    const line = (lines[i] || '').trim()
+    if (!path && line) {
+      out.push(line)
+      continue
+    }
+    if (!line) {
+      out.push(path)
+      continue
+    }
+    const parts = line.split(/\s+/)
+    const base = path.split('/').pop()
+    const args =
+      parts[0] === base || parts[0] === path ? parts.slice(1) : parts
+    out.push(args.length ? `${path} ${args.join(' ')}` : path)
+  }
+  return out
+})
+
 const verdictClass = (verdict) => {
   if (verdict === 'malicious') return 'verdict-malicious'
   if (verdict === 'suspicious') return 'verdict-suspicious'
@@ -87,7 +115,7 @@ const networksByProcess = computed(() => {
 
 const networkEventBadgeClass = (type) => {
   const high = ['tcp_connect', 'bind', 'tcp_accept']
-  const medium = ['udp_send', 'udp_recv', 'msg_send', 'msg_recv']
+  const medium = ['udp_send', 'udp_recv', 'msg_send', 'msg_recv', 'unix_connect', 'unix_bind', 'socket']
   if (high.includes(type)) return 'badge-network-high'
   if (medium.includes(type)) return 'badge-network-medium'
   return 'badge-network'
@@ -122,15 +150,20 @@ const formatEventTime = (ts) => {
 
 const eventBadgeClass = (type) => {
   const malicious = ['kextload', 'kextunload', 'get_task', 'get_task_name', 'get_task_read', 'get_task_inspect']
-  const suspicious = ['btm_launch_item_add', 'btm_launch_item_remove', 'seteuid', 'setegid', 'setreuid', 'setregid', 'link', 'mount', 'remount', 'mprotect']
+  const suspicious = [
+    'btm_launch_item_add', 'btm_launch_item_remove',
+    'seteuid', 'setegid', 'setreuid', 'setregid',
+    'link', 'clone', 'copyfile', 'mount', 'remount', 'mprotect',
+  ]
   if (malicious.includes(type)) return 'badge-malicious'
   if (suspicious.includes(type)) return 'badge-suspicious'
   return 'badge-clean'
 }
 
 const eventTarget = (ev) => {
-  if (ev.target) return ev.target
   if (ev.object?.path) return ev.object.path
+  if (ev.metadata?.destination) return ev.metadata.destination
+  if (ev.target) return ev.target
   if (ev.object?.name) return ev.object.name
   return '-'
 }
@@ -260,18 +293,17 @@ const toggle = (pid) => { collapsed.value[pid] = !collapsed.value[pid] }
               </div>
             </div>
 
-            <div class="behavior-section" v-if="behavior.command_lines?.length || behavior.commands_executed?.length || behavior.has_shell_execution || behavior.has_script_execution">
+            <div class="behavior-section" v-if="executedCommands.length || behavior.has_shell_execution || behavior.has_script_execution">
               <div class="behavior-title">🖥 Command Execution</div>
               <div class="behavior-tags">
                 <span class="behavior-tag warn" v-if="behavior.has_shell_execution">Shell</span>
                 <span class="behavior-tag suspicious" v-if="behavior.has_script_execution">Script</span>
               </div>
-              <div class="detail-list-item" v-for="(cmd, idx) in behavior.commands_executed" :key="'cmdpath-' + idx">{{ cmd }}</div>
               <textarea
-                v-if="behavior.command_lines?.length"
+                v-if="executedCommands.length"
                 class="command-lines-textarea"
                 readonly
-                :value="behavior.command_lines.join('\n')"
+                :value="executedCommands.join('\n')"
               ></textarea>
             </div>
 

@@ -1,8 +1,8 @@
+import Darwin
 import Foundation
 
 func run() throws {
-    let command: Command = try CLI.parse(Array(CommandLine.arguments.dropFirst()))
-
+    let command = try CLI.parse(Array(CommandLine.arguments.dropFirst()))
     switch command {
     case .run(let cfg):
         try runAnalysis(cfg: cfg)
@@ -13,14 +13,10 @@ private func runAnalysis(cfg: RunConfig) throws {
     let executablePath = URL(fileURLWithPath: cfg.executable).standardizedFileURL.path
 
     let writer = try JSONLWriter(path: cfg.outputPath)
-    defer { try? writer.close() }
-
     let pipeline = EventPipeline(writer: writer)
     defer { try? pipeline.flushAndClose() }
 
-    let dtraceClient = cfg.dtraceScript.flatMap {
-        DTraceClient.maybeStart(scriptPath: $0, sink: pipeline.accept)
-    }
+    var dtraceClient: DTraceClient?
     defer { dtraceClient?.stop() }
 
     let esClient = EndpointSecurityClient { event in
@@ -33,61 +29,89 @@ private func runAnalysis(cfg: RunConfig) throws {
 
     signal(SIGTERM, SIG_IGN)
     let sigSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
-    sigSource.setEventHandler { [esClient, pipeline, dtraceClient] in
-        esClient.stop()
-        dtraceClient?.stop()
-        try? pipeline.flushAndClose()
+    sigSource.setEventHandler {
         if let s = sample {
             kill(s.pid, SIGTERM)
         }
+        esClient.stop()
+        dtraceClient?.stop()
+        try? pipeline.flushAndClose()
+        _exit(0)
     }
     sigSource.resume()
     defer { sigSource.cancel() }
 
-    sample = try SampleLauncher.launch(
+    let targetPath = SampleLauncher.executablePath(for: executablePath)
+    esClient.prepareTarget(path: targetPath)
+
+    // Arm DTrace before launch. Starting after launch misses the sample's first
+    // socket/connect (e.g. mDNS). TARGET_PID=0 selects the execname denylist in
+    // network.d; the report later keeps only PIDs in the sample process tree.
+    if let script = cfg.dtraceScript {
+        dtraceClient = DTraceClient.maybeStart(
+            scriptPath: script,
+            targetPid: 0,
+            sink: pipeline.accept
+        )
+    }
+
+    let launched = try SampleLauncher.launch(
         executable: executablePath,
-        arguments: cfg.arguments,
+        arguments: cfg.arguments
     )
+    sample = launched
+
+    esClient.setTarget(pid: launched.pid, path: launched.processPath)
 
     pipeline.accept(
         Event(
             ts: Date(),
             type: "machbox_launch",
-            pid: sample!.pid,
+            pid: launched.pid,
             ppid: nil,
             process: nil,
-            target: sample!.processPath,
-            object: nil,
-            metadata: [
-                "is_child": String(sample!.isChildProcess)
-            ]
+            target: launched.processPath,
+            metadata: ["is_child": String(launched.isChildProcess)]
         ))
 
     FileHandle.standardError.write(
-        Data(
-            "dynamictool: launched pid \(sample!.pid)\n"
-                .utf8))
+        Data("dynamictool: launched pid \(launched.pid) path=\(launched.processPath)\n".utf8))
 
-    if sample!.isChildProcess {
+    try waitForSampleExit(launched)
+
+    // Let late ES/DTrace events drain before teardown.
+    Thread.sleep(forTimeInterval: 3.0)
+}
+
+private func waitForSampleExit(_ sample: LaunchedSample) throws {
+    if sample.isChildProcess {
         var status: Int32 = 0
-        let waitResult = waitpid(sample!.pid, &status, 0)
-        guard waitResult == sample!.pid else {
-            let message = String(cString: strerror(errno))
-            throw AnalyzerError.launch("waitpid failed: \(message)")
-        }
-
-        FileHandle.standardError.write(
-            Data("dynamictool: sample exited with status \(status)\n".utf8))
-    } else {
-        var buffer = [CChar](repeating: 0, count: 4096)
-        while proc_pidpath(sample!.pid, &buffer, UInt32(buffer.count)) > 0 {
-            Thread.sleep(forTimeInterval: 0.1)
+        let waitResult = waitpid(sample.pid, &status, 0)
+        guard waitResult == sample.pid else {
+            throw AnalyzerError.launch(
+                "waitpid failed: \(String(cString: strerror(errno)))")
         }
         FileHandle.standardError.write(
-            Data("dynamictool: sample exited\n".utf8))
+            Data("dynamictool: sample exited status=\(describeWaitStatus(status))\n".utf8))
+        return
     }
 
-    Thread.sleep(forTimeInterval: 3.0)
+    var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+    while proc_pidpath(sample.pid, &buffer, UInt32(buffer.count)) > 0 {
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    FileHandle.standardError.write(Data("dynamictool: sample exited\n".utf8))
+}
+
+private func describeWaitStatus(_ status: Int32) -> String {
+    // Swift can't import wait(2) status macros; decode the Darwin layout directly.
+    if (status & 0x7f) == 0 {
+        return "exit(\((status >> 8) & 0xff))"
+    }
+    if (status & 0xff) != 0x7f {
+        return "signal(\(status & 0x7f))"
+    }
+    return "raw(\(status))"
 }
 
 do {

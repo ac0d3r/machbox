@@ -14,8 +14,25 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// ProtocolVersion is the host↔guest agent protocol revision. Bump only when the
+// RPC contract changes incompatibly. Host releases that keep this value do not
+// require reinstalling machbox-guest.pkg or re-importing the baseline.
+const ProtocolVersion = "1"
+
 // DialFunc opens one vsock connection to the guest agent.
 type DialFunc func(ctx context.Context) (net.Conn, error)
+
+// CompatibleProtocol reports whether a guest handshake is usable with this host.
+func CompatibleProtocol(agentVersion string) error {
+	if agentVersion == "" {
+		return fmt.Errorf("guest agent did not report agent_version; reinstall machbox-guest.pkg")
+	}
+	if agentVersion != ProtocolVersion {
+		return fmt.Errorf("guest agent version %q incompatible with host protocol %q; reinstall machbox-guest.pkg",
+			agentVersion, ProtocolVersion)
+	}
+	return nil
+}
 
 // Client is the host-side session over a single vsock connection.
 type Client struct {
@@ -71,26 +88,27 @@ func (c *Client) Close() error {
 }
 
 // SetWorkdir tells the guest where to store files and mount the share.
-func (c *Client) SetWorkdir(_ context.Context) (workpath, sharepath string, err error) {
+func (c *Client) SetWorkdir() (WorkDir, error) {
+	tmpID := strconv.FormatInt(time.Now().UnixNano(), 36)
 	wd := WorkDir{
-		WorkPath:  fmt.Sprintf("/tmp/machbox_w%s", strconv.FormatInt(time.Now().UnixNano(), 36)),
-		SharePath: "/tmp/machbox_s",
+		WorkPath:  fmt.Sprintf("/tmp/machbox_w%s", tmpID),
+		SharePath: fmt.Sprintf("/tmp/machbox_s%s", tmpID),
 	}
 	if err := c.conn.sendJSON(msgSetWorkDir, wd); err != nil {
-		return "", "", fmt.Errorf("set workdir: %w", err)
+		return WorkDir{}, fmt.Errorf("set workdir: %w", err)
 	}
 	var a ack
 	if err := c.conn.recvJSON(msgACK, &a); err != nil {
-		return "", "", fmt.Errorf("set workdir: %w", err)
+		return WorkDir{}, fmt.Errorf("set workdir: %w", err)
 	}
 	if !a.OK {
-		return "", "", fmt.Errorf("set workdir: %s", a.Error)
+		return WorkDir{}, fmt.Errorf("set workdir: %s", a.Error)
 	}
-	return wd.WorkPath, wd.SharePath, nil
+	return wd, nil
 }
 
 // RunTask runs a non-streaming task and returns trimmed stdout.
-func (c *Client) RunTask(_ context.Context, task *Task) (string, error) {
+func (c *Client) RunTask(task *Task) (string, error) {
 	task.Stream = false
 	if err := c.conn.sendJSON(msgTask, task); err != nil {
 		return "", err
@@ -106,7 +124,7 @@ func (c *Client) RunTask(_ context.Context, task *Task) (string, error) {
 }
 
 // RunStreamTask runs a streaming task; the reader yields stdout until EOF.
-func (c *Client) RunStreamTask(_ context.Context, task *Task) (io.ReadCloser, error) {
+func (c *Client) RunStreamTask(task *Task) (io.ReadCloser, error) {
 	task.Stream = true
 	if err := c.conn.sendJSON(msgTask, task); err != nil {
 		return nil, err
@@ -161,7 +179,7 @@ func isDeadlineExceededMsg(s string) bool {
 
 // LogGuest logs a successful guest handshake.
 func LogGuest(info GuestInfo) {
-	logrus.Infof("guest connected: %s %s (%s), host=%s user=%s agent=%q sip_disabled=%v",
+	logrus.Infof("guest connected: %s %s (%s), host=%s user=%s agent_version=%q sip_disabled=%v",
 		info.OSName, info.OSVersion, info.BuildVersion,
 		info.Hostname, info.Username, info.AgentVersion, info.SIPDisabled)
 	if info.Username != "root" {

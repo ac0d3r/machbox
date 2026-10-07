@@ -18,7 +18,7 @@ PKG_OUTPUT := $(BUILD_DIR)/$(AGENT_NAME).pkg
 all: package
 
 build-agent:
-	CGO_ENABLED=0 GOOS=darwin go build -ldflags "-s -w -X github.com/ac0d3r/machbox/internal/version.Version=$(VERSION)" -trimpath -o "$(AGENT_NAME)" main.go
+	CGO_ENABLED=0 GOOS=darwin go build -ldflags "-s -w" -trimpath -o "$(AGENT_NAME)" main.go
 
 	codesign --force --sign "$(SIGN_IDENTITY)" \
 		--options runtime \
@@ -32,12 +32,12 @@ package: build-agent
 	mv $(AGENT_NAME) $(BIN_DST)/$(AGENT_NAME)
 	chmod 755 $(BIN_DST)/$(AGENT_NAME)
 
-	pkgbuild \
+	set -o pipefail; pkgbuild \
 		--root $(PAYLOAD_DIR) \
 		--scripts $(SCRIPTS_DIR) \
 		--identifier $(PKG_ID) \
 		--version $(VERSION) \
-		$(PKG_OUTPUT)
+		$(PKG_OUTPUT) 2>&1 | grep -v '^write: Permission denied$$'
 
 clean:
 	rm -rf $(BUILD_DIR)

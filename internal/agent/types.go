@@ -11,6 +11,7 @@ type GuestInfo struct {
 	OSName       string `json:"os_name"`
 	OSVersion    string `json:"os_version"`
 	BuildVersion string `json:"build_version"`
+	// AgentVersion is the protocol revision used for host compatibility checks.
 	AgentVersion string `json:"agent_version"`
 	SIPDisabled  bool   `json:"sip_disabled"`
 }

@@ -6,11 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/sirupsen/logrus"
 )
 
 type DynamicEvent struct {
@@ -185,8 +182,10 @@ func parseAndBuildTree(r io.Reader, samplePath string) (*ProcessTreeNode, int, e
 				ppid = *ev.PPID
 			}
 			path := ev.Process
-			if (ev.Type == "exec" || ev.Type == "fork") && ev.Object != nil && ev.Object.Path != "" {
-				path = ev.Object.Path
+			if isProcessLifecycleEvent(ev.Type) {
+				if cmd := eventCommandPath(&ev); cmd != "" {
+					path = cmd
+				}
 			}
 			info = &procInfo{
 				pid:  ev.PID,
@@ -194,16 +193,30 @@ func parseAndBuildTree(r io.Reader, samplePath string) (*ProcessTreeNode, int, e
 				path: path,
 			}
 			infos[ev.PID] = info
-		} else if (ev.Type == "exec" || ev.Type == "fork") && ev.Object != nil && ev.Object.Path != "" {
-			info.path = ev.Object.Path
+		} else if isProcessLifecycleEvent(ev.Type) {
+			// Prefer exec/posix_spawn image path so fork-then-exec children
+			// (hostname, sw_vers, …) are not stuck with the pre-exec sample path.
+			if cmd := eventCommandPath(&ev); cmd != "" {
+				info.path = cmd
+			}
 			if ev.PPID != nil {
 				info.ppid = *ev.PPID
 			}
 		}
 
-		// Strip dnet_ prefix and collect network events separately.
+		// Network events live on node.Networks (UI Network panel). DTrace uses
+		// dnet_* types; ES emits uipc_* for Unix-domain sockets.
 		if strings.HasPrefix(ev.Type, "dnet_") {
 			ev.Type = strings.TrimPrefix(ev.Type, "dnet_")
+			info.networkEvents = append(info.networkEvents, ev)
+			continue
+		}
+		if ev.Type == "uipc_connect" || ev.Type == "uipc_bind" {
+			if ev.Type == "uipc_connect" {
+				ev.Type = "unix_connect"
+			} else {
+				ev.Type = "unix_bind"
+			}
 			info.networkEvents = append(info.networkEvents, ev)
 			continue
 		}
@@ -213,7 +226,7 @@ func parseAndBuildTree(r io.Reader, samplePath string) (*ProcessTreeNode, int, e
 		// For exec events the target process may be a new PID we have not seen yet.
 		if ev.Type == "exec" && ev.Object != nil && ev.Object.PID != nil {
 			targetPID := *ev.Object.PID
-			if _, ok := infos[targetPID]; !ok {
+			if existing, ok := infos[targetPID]; !ok {
 				targetPPID := int32(0)
 				if ev.Object.PPID != nil {
 					targetPPID = *ev.Object.PPID
@@ -222,6 +235,11 @@ func parseAndBuildTree(r io.Reader, samplePath string) (*ProcessTreeNode, int, e
 					pid:  targetPID,
 					ppid: targetPPID,
 					path: ev.Object.Path,
+				}
+			} else if ev.Object.Path != "" {
+				existing.path = ev.Object.Path
+				if ev.Object.PPID != nil {
+					existing.ppid = *ev.Object.PPID
 				}
 			}
 		}
@@ -338,61 +356,15 @@ func parseAndBuildTree(r io.Reader, samplePath string) (*ProcessTreeNode, int, e
 // findSampleExecCutoff returns the index of the last exec/fork event that
 // transitions the process into the sample binary. Events before this index are
 // considered pre-sample activity for that PID.
-func findSampleExecCutoff(pid int32, events []DynamicEvent, samplePath string) int {
-	logrus.Debugf("[cutoff-debug] pid=%d samplePath=%q eventCount=%d", pid, samplePath, len(events))
+func findSampleExecCutoff(_ int32, events []DynamicEvent, samplePath string) int {
 	for i := len(events) - 1; i >= 0; i-- {
-		ev := events[i]
-		if ev.Type != "exec" && ev.Type != "fork" {
+		ev := &events[i]
+		if !isProcessLifecycleEvent(ev.Type) {
 			continue
 		}
-		// Prefer Object.Path (the new process identity), but fall back to
-		// Target/Process because some emitters populate only Target.
-		path := ""
-		if ev.Object != nil {
-			path = ev.Object.Path
-		}
-		if path == "" && ev.Target != "" {
-			path = ev.Target
-		}
-		if path == "" {
-			path = ev.Process
-		}
-		matched := path != "" && pathMatchesSample(path, samplePath)
-		logrus.Debugf("[cutoff-debug] pid=%d idx=%d type=%s objPath=%q target=%q process=%q chosen=%q matched=%v", pid, i, ev.Type, ev.Object.Path, ev.Target, ev.Process, path, matched)
-		if matched {
-			logrus.Debugf("[cutoff-debug] pid=%d cutoff=%d", pid, i)
+		if pathMatchesSample(eventCommandPath(ev), samplePath) {
 			return i
 		}
 	}
-
-	logrus.Debugf("[cutoff-debug] pid=%d no cutoff found", pid)
 	return -1
-}
-
-// pathMatchesSample reports whether path refers to the sample executable.
-// It avoids strings.Contains which can falsely match when the workdir name
-// happens to contain the sample basename.
-//
-// For app bundles (.app), paths inside the bundle (e.g. Contents/MacOS/...)
-// are also considered a match because the launcher passes the bundle path
-// while exec events carry the inner executable path.
-func pathMatchesSample(path, samplePath string) bool {
-	if path == "" || samplePath == "" {
-		return false
-	}
-	if path == samplePath {
-		return true
-	}
-	if strings.HasSuffix(samplePath, ".app") {
-		if strings.HasPrefix(path, samplePath+string(filepath.Separator)) {
-			return true
-		}
-	}
-	if strings.HasSuffix(path, samplePath) {
-		prefix := path[:len(path)-len(samplePath)]
-		if prefix == "" || strings.HasSuffix(prefix, string(filepath.Separator)) {
-			return true
-		}
-	}
-	return false
 }

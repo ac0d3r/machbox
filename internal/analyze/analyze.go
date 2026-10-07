@@ -16,7 +16,6 @@ import (
 	"github.com/ac0d3r/machbox/internal/assets"
 	"github.com/ac0d3r/machbox/internal/db"
 	"github.com/ac0d3r/machbox/internal/report"
-	"github.com/ac0d3r/machbox/internal/version"
 	baselines "github.com/ac0d3r/machbox/internal/vm"
 	boxvm "github.com/ac0d3r/machbox/pkg/vm"
 	"github.com/ac0d3r/machbox/pkg/vm/config"
@@ -143,12 +142,11 @@ type session struct {
 	password   string
 	timeout    int
 
-	workpath  string
-	sharepath string
+	wd agent.WorkDir
 }
 
 func (s *session) vmSamplePath() string {
-	return filepath.Join(s.sharepath, s.sampleName)
+	return filepath.Join(s.wd.SharePath, s.sampleName)
 }
 
 func resolveSample(path string) (abs, name string, err error) {
@@ -259,23 +257,22 @@ func (s *session) run(ctx context.Context, vmi *boxvm.VMInstance) (err error) {
 	client, info, err := agent.WaitReady(waitCtx, dial, time.Second)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return fmt.Errorf("timed out after %s waiting for guest agent %q",
-				agentWaitTimeout, version.Version)
+			return fmt.Errorf("timed out after %s waiting for guest agent protocol %q",
+				agentWaitTimeout, agent.ProtocolVersion)
 		}
 		return fmt.Errorf("wait for guest agent: %w", err)
 	}
 	defer client.Close()
 
-	if info.AgentVersion != version.Version {
-		return fmt.Errorf("guest agent version %q != expected %q; re-import the baseline",
-			info.AgentVersion, version.Version)
+	if err := agent.CompatibleProtocol(info.AgentVersion); err != nil {
+		return fmt.Errorf("%w; re-import the baseline", err)
 	}
 
-	s.workpath, s.sharepath, err = client.SetWorkdir(ctx)
+	s.wd, err = client.SetWorkdir()
 	if err != nil {
 		return err
 	}
-	logrus.Infof("set WorkDir: %s, ShareDir: %s", s.workpath, s.sharepath)
+	logrus.Infof("set WorkDir: %s, ShareDir: %s", s.wd.WorkPath, s.wd.SharePath)
 
 	retp := report.New(info)
 
@@ -303,22 +300,24 @@ func (s *session) run(ctx context.Context, vmi *boxvm.VMInstance) (err error) {
 func (s *session) runStatic(ctx context.Context, client *agent.Client, retp *report.Parser) error {
 	logrus.Infoln("run static analysis task")
 
-	args := []string{}
+	// Unpack zip/dmg/pkg under the writable workdir (share is read-only).
+	extractDir := filepath.Join(s.wd.WorkPath, "extract")
+	args := []string{"--extract-dir", extractDir}
 	if s.password != "" {
 		args = append(args, "--password", s.password)
 	}
 	args = append(args, s.vmSamplePath())
 
-	output, err := client.RunTask(ctx, &agent.Task{
-		Command: filepath.Join(s.sharepath, "statictool"),
+	output, err := client.RunTask(&agent.Task{
+		Command: filepath.Join(s.wd.SharePath, "statictool"),
 		Args:    args,
-		WorkDir: s.workpath,
+		WorkDir: s.wd.WorkPath,
 		Timeout: s.timeout,
 	})
 	if err != nil {
 		return err
 	}
-	return retp.StaticResult(output, s.vmSamplePath(), s.workpath)
+	return retp.StaticResult(output, s.vmSamplePath())
 }
 
 func (s *session) runDynamic(ctx context.Context, client *agent.Client, retp *report.Parser) error {
@@ -335,12 +334,13 @@ func (s *session) runDynamic(ctx context.Context, client *agent.Client, retp *re
 
 	runPath := samplePath
 	// Share is mounted read-only; copy onto the writable workdir before chmod/exec.
-	if s.sharepath != "" && (samplePath == s.sharepath || strings.HasPrefix(samplePath, s.sharepath+string(os.PathSeparator))) {
-		dst := filepath.Join(s.workpath, filepath.Base(samplePath))
-		if _, err := client.RunTask(ctx, &agent.Task{
+	share := s.wd.SharePath
+	if share != "" && (samplePath == share || strings.HasPrefix(samplePath, share+string(os.PathSeparator))) {
+		dst := filepath.Join(s.wd.WorkPath, filepath.Base(samplePath))
+		if _, err := client.RunTask(&agent.Task{
 			Command: "cp",
 			Args:    []string{"-R", samplePath, dst},
-			WorkDir: s.workpath,
+			WorkDir: s.wd.WorkPath,
 			Timeout: s.timeout,
 		}); err != nil {
 			return fmt.Errorf("copy sample to workdir: %w", err)
@@ -351,10 +351,10 @@ func (s *session) runDynamic(ctx context.Context, client *agent.Client, retp *re
 
 	switch pickTyp {
 	case "mach-o", "appbundle":
-		if _, err := client.RunTask(ctx, &agent.Task{
+		if _, err := client.RunTask(&agent.Task{
 			Command: "chmod",
 			Args:    []string{"-R", "+x", runPath},
-			WorkDir: s.workpath,
+			WorkDir: s.wd.WorkPath,
 			Timeout: s.timeout,
 		}); err != nil {
 			return fmt.Errorf("chmod +x: %w", err)
@@ -362,13 +362,13 @@ func (s *session) runDynamic(ctx context.Context, client *agent.Client, retp *re
 	}
 
 	dynamicArgs := []string{"run", "-ds",
-		filepath.Join(s.sharepath, "DTrace", "network.d"), "-o", "-", runPath}
+		filepath.Join(s.wd.SharePath, "DTrace", "network.d"), "-o", "-", runPath}
 	dynamicArgs = append(dynamicArgs, s.sampleArgs...)
 
-	reader, err := client.RunStreamTask(ctx, &agent.Task{
-		Command: filepath.Join(s.sharepath, "dynamictool"),
+	reader, err := client.RunStreamTask(&agent.Task{
+		Command: filepath.Join(s.wd.SharePath, "dynamictool"),
 		Args:    dynamicArgs,
-		WorkDir: s.workpath,
+		WorkDir: s.wd.WorkPath,
 		Timeout: s.timeout,
 	})
 	if err != nil {

@@ -1,8 +1,8 @@
 package filebase
 
 import (
+	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -30,13 +30,8 @@ type BaseInfo struct {
 	IsDir    bool     `json:"is_dir,omitempty"`
 	Ext      string   `json:"ext,omitempty"`
 	Type     FileType `json:"type"`
-	Evidence Evidence `json:"evidence,omitempty"`
-	Hash     Hash     `json:"hash"`
-}
-
-type Evidence struct {
-	FileType string `json:"filetype,omitempty"`
-	MIME     string `json:"mime,omitempty"`
+	MIME     string   `json:"mime,omitempty"`
+	Hash     Hash     `json:"hash,omitempty"`
 }
 
 func GenFromFile(path string) (info BaseInfo, err error) {
@@ -51,69 +46,107 @@ func GenFromFile(path string) (info BaseInfo, err error) {
 	info.Size = fi.Size()
 	info.IsDir = fi.IsDir()
 
-	if !info.IsDir {
-		if info.Hash, err = HashFile(path); err != nil {
-			return info, err
-		}
+	if info.IsDir {
+		info.Type = detectType(path, info, sniffResult{})
+		return info, nil
 	}
 
-	info.Evidence.FileType, err = detectWithFile(path)
+	sniffed, hash, err := inspectFile(path, info.Size)
 	if err != nil {
 		return info, err
 	}
-
-	mtype, err := mimetype.DetectFile(path)
-	if err == nil {
-		info.Evidence.MIME = mtype.String()
-	}
-
-	info.Type = detectType(path, info)
+	info.Hash = hash
+	info.MIME = sniffed.MIME
+	info.Type = detectType(path, info, sniffed)
 	return info, nil
 }
 
-func detectWithFile(targetPath string) (string, error) {
-	output, err := exec.Command("file", "-b", targetPath).Output()
+func inspectFile(path string, size int64) (sniffResult, Hash, error) {
+	f, err := os.Open(path)
 	if err != nil {
-		return "", err
+		return sniffResult{}, Hash{}, err
 	}
+	defer f.Close()
 
-	out := strings.TrimSpace(string(output))
+	header := make([]byte, 4096)
+	n, err := f.Read(header)
+	if n == 0 && err != nil && err != io.EOF {
+		return sniffResult{}, Hash{}, err
+	}
+	header = header[:n]
 
-	if strings.HasPrefix(out, "Mach-O universal binary") {
-		if res := strings.Split(out, "\n"); len(res) > 0 {
-			out = res[0]
+	sniffed := sniffHeader(header)
+	if sniffed.Kind == kindUnknown && size >= 512 {
+		trailer := make([]byte, 512)
+		if _, rerr := f.ReadAt(trailer, size-512); rerr == nil && sniffDMGTrailer(trailer) {
+			sniffed.Kind = kindDMG
 		}
 	}
 
-	return out, nil
+	if mt := mimetype.Detect(header); mt != nil {
+		sniffed.MIME = mt.String()
+	}
+
+	if _, err := f.Seek(0, 0); err != nil {
+		return sniffed, Hash{}, err
+	}
+	hash, err := hashReader(f)
+	if err != nil {
+		return sniffed, Hash{}, err
+	}
+	return sniffed, hash, nil
 }
 
-func detectType(path string, info BaseInfo) FileType {
-	switch {
-	case info.IsDir && info.Ext == ".app" && hasAppBundleStructure(path):
+func detectType(path string, info BaseInfo, sniffed sniffResult) FileType {
+	if info.IsDir && info.Ext == ".app" && hasAppBundleStructure(path) {
 		return TypeAppBundle
-	case info.Evidence.MIME == "application/zip" || strings.HasPrefix(info.Evidence.FileType, "Zip archive data"):
-		return TypeZIP
-	case info.Ext == ".pkg":
-		return TypePKG
-	case info.Ext == ".dmg":
-		return TypeDMG
-	case info.Evidence.MIME == "application/x-mach-binary" ||
-		strings.HasPrefix(info.Evidence.FileType, "Mach-O"):
+	}
 
-		if info.Ext == ".dylib" || strings.Contains(strings.ToLower(info.Evidence.FileType), "dynamically linked shared library") {
+	mime := info.MIME
+	if mime == "" {
+		mime = sniffed.MIME
+	}
+
+	isMach := sniffed.Kind == kindMachO || sniffed.Kind == kindDylib ||
+		mime == "application/x-mach-binary"
+	isDylib := sniffed.Kind == kindDylib || info.Ext == ".dylib"
+
+	// Archive types apply to files only. Expanded PKG components are directories
+	// (e.g. com.example.pkg/) and must be scanned as directories, not re-expanded.
+	if !info.IsDir {
+		switch {
+		case sniffed.Kind == kindZIP ||
+			mime == "application/zip" ||
+			mime == "application/x-zip-compressed" ||
+			info.Ext == ".zip":
+			return TypeZIP
+
+		case sniffed.Kind == kindXAR ||
+			info.Ext == ".pkg" ||
+			info.Ext == ".xar" ||
+			strings.Contains(mime, "xar"):
+			return TypePKG
+
+		case sniffed.Kind == kindDMG ||
+			info.Ext == ".dmg" ||
+			mime == "application/x-apple-diskimage":
+			return TypeDMG
+
+		case isMach && isDylib:
+			return TypeDylib
+
+		case isMach:
+			return TypeMachO
+
+		case info.Ext == ".dylib":
 			return TypeDylib
 		}
-		return TypeMachO
-	default:
-		return TypeUnknown
 	}
+
+	return TypeUnknown
 }
 
 func hasAppBundleStructure(path string) bool {
-	infoPlist := filepath.Join(path, "Contents", "Info.plist")
-	if _, err := os.Stat(infoPlist); err != nil {
-		return false
-	}
-	return true
+	_, err := os.Stat(filepath.Join(path, "Contents", "Info.plist"))
+	return err == nil
 }

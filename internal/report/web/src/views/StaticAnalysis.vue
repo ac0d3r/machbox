@@ -3,6 +3,7 @@ import { ref, watch, computed } from 'vue'
 import { formatSize } from '../utils.js'
 import MachoAnalysis from '../components/MachoAnalysis.vue'
 import AppBundle from '../components/AppBundle.vue'
+import PackageInfo from '../components/PackageInfo.vue'
 import FileTreeNode from '../components/FileTreeNode.vue'
 
 const props = defineProps({
@@ -47,10 +48,10 @@ const rawDataJson = computed(() => {
           <tr><th>File Name</th><td>{{ parsedStatic?.base?.name || report.sample_name }}</td></tr>
           <tr><th>File Format</th><td>{{ report.file_type || '-' }}</td></tr>
           <tr>
-            <th>File Type</th>
+            <th>Detected Type</th>
             <td>
-              {{ parsedStatic?.base?.evidence?.filetype || '-' }}
-              <span v-if="parsedStatic?.base?.evidence?.mime" class="mime-hint">({{ parsedStatic.base.evidence.mime }})</span>
+              {{ parsedStatic?.base?.type || '-' }}
+              <span v-if="parsedStatic?.base?.mime" class="mime-hint">({{ parsedStatic.base.mime }})</span>
             </td>
           </tr>
           <tr><th>File Size</th><td>{{ formatSize(report.file_size) }}</td></tr>
@@ -75,6 +76,9 @@ const rawDataJson = computed(() => {
         </div>
         <div v-else-if="parsedStatic.base?.type === 'appbundle'" class="appbundle-content">
           <AppBundle :data="parsedStatic.data" />
+        </div>
+        <div v-else-if="parsedStatic.base?.type === 'pkg'" class="pkg-content">
+          <PackageInfo :data="parsedStatic.data" />
         </div>
         <div v-else class="json-viewer">{{ rawDataJson }}</div>
       </div>

@@ -12,7 +12,6 @@ import (
 	"syscall"
 
 	"github.com/ac0d3r/machbox/internal/agent"
-	"github.com/ac0d3r/machbox/internal/version"
 	"github.com/ac0d3r/machbox/pkg/vsock"
 )
 
@@ -47,9 +46,9 @@ func run() int {
 
 func collectGuestInfo() agent.GuestInfo {
 	info := agent.GuestInfo{
-		OSName:       "macOS",
-		AgentVersion: version.Version,
-		Username:     "root",
+		OSName:   "macOS",
+		AgentVersion: agent.ProtocolVersion,
+		Username: "root",
 	}
 	if h, err := os.Hostname(); err == nil {
 		info.Hostname = h

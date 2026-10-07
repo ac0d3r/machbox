@@ -4,7 +4,13 @@ import Foundation
 final class EndpointSecurityClient {
     private var client: OpaquePointer?
     private let dispatchQueue = DispatchQueue(label: "dynamictool.es-events", qos: .userInitiated)
+    private let stateQueue = DispatchQueue(label: "dynamictool.es-state")
     private let sink: (Event) -> Void
+
+    private var targetPid: pid_t?
+    private var targetPath: String?
+    private var trackedPids = Set<pid_t>()
+    private var pathMuteInverted = false
 
     init(sink: @escaping (Event) -> Void) {
         self.sink = sink
@@ -12,24 +18,12 @@ final class EndpointSecurityClient {
 
     func start() throws {
         let result = es_new_client(&client) { [weak self] _, message in
-            guard let self, let event = Self.normalize(message: message) else {
-                return
-            }
-
-            if Self.NoiseFilter.shouldDrop(event: event) {
-                return
-            }
-            self.dispatchQueue.async {
-                self.sink(event)
-            }
+            self?.handle(message: message)
         }
 
         guard result == ES_NEW_CLIENT_RESULT_SUCCESS else {
             throw AnalyzerError.endpointSecurity(Self.newClientErrorDescription(result))
         }
-
-        muteSelfProcess()
-        muteSystemProcesses()
 
         let events: [es_event_type_t] = [
             ES_EVENT_TYPE_NOTIFY_EXEC,
@@ -76,6 +70,10 @@ final class EndpointSecurityClient {
             ES_EVENT_TYPE_NOTIFY_SETEGID,
             ES_EVENT_TYPE_NOTIFY_SETREUID,
             ES_EVENT_TYPE_NOTIFY_SETREGID,
+            ES_EVENT_TYPE_NOTIFY_CLONE,
+            ES_EVENT_TYPE_NOTIFY_COPYFILE,
+            ES_EVENT_TYPE_NOTIFY_TRUNCATE,
+            ES_EVENT_TYPE_NOTIFY_CHDIR,
         ]
 
         let subscribeResult = events.withUnsafeBufferPointer { buffer in
@@ -87,131 +85,180 @@ final class EndpointSecurityClient {
         }
     }
 
-    private func muteSelfProcess() {
-        guard let client else { return }
-
-        var token = audit_token_t()
-        var count = mach_msg_type_number_t(
-            MemoryLayout<audit_token_t>.size / MemoryLayout<natural_t>.size
-        )
-        let kr = withUnsafeMutablePointer(to: &token) {
-            $0.withMemoryRebound(
-                to: integer_t.self,
-                capacity: Int(count)
-            ) {
-                task_info(
-                    mach_task_self_,
-                    task_flavor_t(TASK_AUDIT_TOKEN),
-                    $0,
-                    &count
-                )
-            }
+    /// Arm path-based mute inversion before launch so early sample events are not lost.
+    func prepareTarget(path: String) {
+        stateQueue.sync {
+            targetPath = PathNormalization.normalize(path)
+            applyInvertedPathMutingLocked(path)
         }
+        FileHandle.standardError.write(
+            Data("dynamictool: ES prepare target path=\(path)\n".utf8))
+    }
 
-        guard kr == KERN_SUCCESS else {
-            FileHandle.standardError.write(
-                Data("dynamictool: warning: failed to get self audit token\n".utf8))
-            return
-        }
-        withUnsafePointer(to: token) { ptr in
-            let result = es_mute_process(client, ptr)
-            if result != ES_RETURN_SUCCESS {
-                FileHandle.standardError.write(
-                    Data("dynamictool: warning: es_mute_process(self) failed\n".utf8))
+    /// Begin tracking the sample process tree.
+    ///
+    /// Clears path mute inversion from `prepareTarget`. We intentionally do **not**
+    /// use process mute inversion: after a child `exec`s into `/bin/hostname` (etc.)
+    /// its audit token/pidversion changes, and inverted process muting drops the
+    /// NOTIFY_EXEC (and further events) before we can allowlist the new token.
+    /// Tree membership is enforced in `shouldAcceptLocked` instead.
+    func setTarget(pid: pid_t, path: String?) {
+        stateQueue.sync {
+            targetPid = pid
+            if let path {
+                targetPath = PathNormalization.normalize(path)
             }
+            trackedPids.insert(pid)
+            clearInvertedPathMutingLocked()
+        }
+        FileHandle.standardError.write(
+            Data("dynamictool: ES target pid=\(pid) path=\(path ?? "") (software tree filter)\n".utf8))
+    }
+
+    func stop() {
+        stateQueue.sync {
+            if let client {
+                _ = es_unsubscribe_all(client)
+                _ = es_delete_client(client)
+                self.client = nil
+            }
+            trackedPids.removeAll()
+            targetPid = nil
+            targetPath = nil
+            pathMuteInverted = false
         }
     }
 
-    private func muteSystemProcesses() {
+    private func handle(message: UnsafePointer<es_message_t>) {
+        let accepted = stateQueue.sync { () -> Bool in
+            trackAndMuteLocked(message)
+            return shouldAcceptLocked(message)
+        }
+        guard accepted else { return }
+        guard let event = Self.normalize(message: message) else { return }
+        dispatchQueue.async {
+            self.sink(event)
+        }
+    }
+
+    private func shouldAcceptLocked(_ message: UnsafePointer<es_message_t>) -> Bool {
+        let proc = message.pointee.process.pointee
+        let pid = audit_token_to_pid(proc.audit_token)
+
+        if targetPid != nil {
+            if trackedPids.contains(pid) || trackedPids.contains(proc.ppid) {
+                return true
+            }
+            if message.pointee.event_type == ES_EVENT_TYPE_NOTIFY_EXEC {
+                let target = message.pointee.event.exec.target.pointee
+                let targetPID = audit_token_to_pid(target.audit_token)
+                return trackedPids.contains(targetPID) || trackedPids.contains(target.ppid)
+            }
+            return false
+        }
+
+        // Path armed before launch: accept matching executable activity.
+        guard let targetPath else { return false }
+        if PathNormalization.matches(Self.path(for: proc.executable), targetPath) {
+            return true
+        }
+        if message.pointee.event_type == ES_EVENT_TYPE_NOTIFY_EXEC {
+            let target = message.pointee.event.exec.target.pointee
+            return PathNormalization.matches(Self.path(for: target.executable), targetPath)
+        }
+        return false
+    }
+
+    private func trackAndMuteLocked(_ message: UnsafePointer<es_message_t>) {
+        guard targetPid != nil || targetPath != nil else { return }
+
+        let eventType = message.pointee.event_type
+        let proc = message.pointee.process.pointee
+        let pid = audit_token_to_pid(proc.audit_token)
+        let processMatched =
+            targetPath.map { PathNormalization.matches(Self.path(for: proc.executable), $0) }
+            ?? false
+
+        if trackedPids.contains(pid) || (targetPid == nil && processMatched) {
+            if targetPid == nil && processMatched {
+                trackedPids.insert(pid)
+            }
+        }
+
+        switch eventType {
+        case ES_EVENT_TYPE_NOTIFY_FORK:
+            let child = message.pointee.event.fork.child.pointee
+            let childPid = audit_token_to_pid(child.audit_token)
+            if trackedPids.contains(pid) || trackedPids.contains(proc.ppid) {
+                trackedPids.insert(childPid)
+            }
+
+        case ES_EVENT_TYPE_NOTIFY_EXEC:
+            let target = message.pointee.event.exec.target.pointee
+            let targetPID = audit_token_to_pid(target.audit_token)
+            let execPath = Self.path(for: target.executable)
+            let pathMatched =
+                targetPath.map { PathNormalization.matches(execPath, $0) } ?? false
+            // Pre-exec image still matches the sample (direct posix_spawn/exec), or
+            // parent is already in the sample tree (fork event lost / raced).
+            let preExecMatched =
+                targetPath.map { PathNormalization.matches(Self.path(for: proc.executable), $0) }
+                ?? false
+            let inTree =
+                trackedPids.contains(pid) || trackedPids.contains(targetPID)
+                || trackedPids.contains(proc.ppid) || trackedPids.contains(target.ppid)
+                || pathMatched || preExecMatched
+            if inTree {
+                trackedPids.insert(pid)
+                trackedPids.insert(targetPID)
+                if targetPid == nil {
+                    targetPid = targetPID
+                }
+            }
+
+        case ES_EVENT_TYPE_NOTIFY_EXIT:
+            trackedPids.remove(pid)
+
+        default:
+            break
+        }
+    }
+
+    private func applyInvertedPathMutingLocked(_ path: String) {
         guard let client else { return }
+        _ = es_unmute_all_paths(client)
+        if !pathMuteInverted {
+            let result = es_invert_muting(client, ES_MUTE_INVERSION_TYPE_PATH)
+            if result == ES_RETURN_SUCCESS {
+                pathMuteInverted = true
+            } else {
+                FileHandle.standardError.write(
+                    Data("dynamictool: warning: es_invert_muting(path) failed\n".utf8))
+            }
+        }
 
-        let paths: [String] = [
-            "/usr/sbin/syslogd",
-            "/usr/libexec/logd",
-            "/usr/libexec/logd_helper",
-            "/usr/sbin/notifyd",  // 通知守护
-            "/usr/sbin/distnoted",  // 通知系统
-            "/usr/sbin/cfprefsd",  // 偏好设置
-            "/usr/sbin/automount",
-            "/usr/libexec/coreservicesd",
-            "/usr/libexec/biomed",
-            "/usr/libexec/oahd",  // Rosetta
-            "/usr/libexec/timed",  // 时间同步
-            "/usr/libexec/powerd",  // 电源管理
-            "/usr/libexec/gamepolicyd",  // 游戏策略
-            "/usr/libexec/runningboardd",  // 进程生命周期管理
-            "/usr/libexec/thermalmonitord",  // 温控服务
-            "/usr/libexec/endpointsecurityd",  // ES 自身
-            "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",  // 窗口服务器
-            "/System/Library/PrivateFrameworks/EcosystemAnalytics.framework/Support/ecosystemanalyticsd",  // Apple Analytics
-            // Metal Shader 编译
-            "/System/Library/Frameworks/Metal.framework/Versions/A/XPCServices/MTLCompilerService.xpc/Contents/MacOS/MTLCompilerService",
-            "/System/Library/Frameworks/Metal.framework/Versions/A/XPCServices/MTLCompilerService.xpc",
-            // machbox
-            "/usr/local/libexec/machbox-guest",
-        ]
-
-        for path in paths {
-            let result = path.withCString { cPath in
+        for candidate in PathNormalization.equivalentPaths(path) {
+            let result = candidate.withCString { cPath in
                 es_mute_path(client, cPath, ES_MUTE_PATH_TYPE_LITERAL)
             }
             if result != ES_RETURN_SUCCESS {
                 FileHandle.standardError.write(
-                    Data("dynamictool: warning: failed to ES-mute \(path)\n".utf8))
+                    Data("dynamictool: warning: failed to ES-mute path \(candidate)\n".utf8))
             }
         }
     }
 
-    private enum NoiseFilter {
-        static let noisyPathPrefixes: [String] = [
-            // Spotlight
-            "/System/Volumes/Data/.Spotlight-V100",
-            "/.Spotlight-V100",
-            "/private/var/db/Spotlight",
-            // Biome
-            "/private/var/db/biome",
-            "/Library/Biome",
-        ]
-        static let noisyProcesses: Set<String> = [
-            // Spotlight
-            "System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared",
-            "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds",
-            "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores",
-            // Biome
-            "/System/Library/PrivateFrameworks/BiomeStreams.framework/Support/BiomeAgent",
-            // CoreDuet
-            "/System/Library/PrivateFrameworks/CoreDuetContext.framework/Versions/A/Resources/contextstored",
-        ]
-        static let lowValueEvents: Set<String> = [
-            "open",
-            "close",
-            "write",
-            "mmap",
-            "proc_check",
-        ]
-        static func shouldDrop(event: Event) -> Bool {
-            guard let processPath = event.process else {
-                return false
-            }
-            guard noisyProcesses.contains(processPath) else {
-                return false
-            }
-            guard lowValueEvents.contains(event.type) else {
-                return false
-            }
-            guard let target = event.target else {
-                return false
-            }
-            return noisyPathPrefixes.contains {
-                target.hasPrefix($0)
-            }
-        }
-    }
-
-    func stop() {
-        if let client {
-            _ = es_delete_client(client)
-            self.client = nil
+    /// Undo path mute inversion; tree filtering is done in software afterward.
+    private func clearInvertedPathMutingLocked() {
+        guard let client else { return }
+        _ = es_unmute_all_paths(client)
+        guard pathMuteInverted else { return }
+        let result = es_invert_muting(client, ES_MUTE_INVERSION_TYPE_PATH)
+        if result == ES_RETURN_SUCCESS {
+            pathMuteInverted = false
+        } else {
+            FileHandle.standardError.write(
+                Data("dynamictool: warning: failed to clear inverted path muting\n".utf8))
         }
     }
 
@@ -235,6 +282,15 @@ final class EndpointSecurityClient {
             path: processPath
         )
 
+        func withIdentity(_ metadata: [String: String]?) -> [String: String]? {
+            var meta = metadata ?? [:]
+            let signingID = string(from: process.signing_id)
+            let teamID = string(from: process.team_id)
+            if !signingID.isEmpty { meta["signing_id"] = signingID }
+            if !teamID.isEmpty { meta["team_id"] = teamID }
+            return nonEmpty(meta)
+        }
+
         func event(
             _ type: String,
             target: String?,
@@ -252,7 +308,7 @@ final class EndpointSecurityClient {
                 target: target,
                 subject: subject,
                 object: object,
-                metadata: nonEmpty(metadata)
+                metadata: withIdentity(metadata)
             )
         }
 
@@ -267,6 +323,10 @@ final class EndpointSecurityClient {
             var meta: [String: String] = [
                 "is_platform": String(target.is_platform_binary)
             ]
+            let signingID = string(from: target.signing_id)
+            let teamID = string(from: target.team_id)
+            if !signingID.isEmpty { meta["signing_id"] = signingID }
+            if !teamID.isEmpty { meta["team_id"] = teamID }
             // extra exec args
             var execEvent = msg.event.exec
             withUnsafePointer(to: &execEvent) { execPtr in
@@ -278,7 +338,7 @@ final class EndpointSecurityClient {
                 }
                 meta["argv"] = argv.joined(separator: "\u{00}")
             }
-            // extra exec evns
+            // extra exec envs
             withUnsafePointer(to: &execEvent) { execPtr in
                 let envCount = es_exec_env_count(execPtr)
                 var envs: [String] = []
@@ -351,18 +411,17 @@ final class EndpointSecurityClient {
             )
 
         case ES_EVENT_TYPE_NOTIFY_OPEN:
-            let target = path(for: msg.event.open.file)
-            return Event(
-                ts: timestamp,
-                type: "open",
-                pid: processPID,
-                pidversion: processPIDVersion,
-                ppid: process.ppid,
-                ppidversion: processParentPIDVersion,
-                process: processPath,
+            let openEvent = msg.event.open
+            let target = path(for: openEvent.file)
+            // fflag is FREAD/FWRITE (fcntl), not open(2) O_RDONLY/O_WRONLY.
+            return event(
+                "open",
                 target: target,
-                subject: subject,
-                object: EventObject(kind: "file", path: target)
+                object: EventObject(kind: "file", path: target),
+                metadata: [
+                    "fflag": String(openEvent.fflag),
+                    "access": (openEvent.fflag & FWRITE) != 0 ? "write" : "read",
+                ]
             )
 
         case ES_EVENT_TYPE_NOTIFY_CREATE:
@@ -399,8 +458,71 @@ final class EndpointSecurityClient {
             return event("unlink", target: target, object: EventObject(kind: "file", path: target))
 
         case ES_EVENT_TYPE_NOTIFY_MMAP:
-            let target = path(for: msg.event.mmap.source)
-            return event("mmap", target: target, object: EventObject(kind: "file", path: target))
+            let mmap = msg.event.mmap
+            let target = path(for: mmap.source)
+            return event(
+                "mmap",
+                target: target,
+                object: EventObject(kind: "file", path: target),
+                metadata: [
+                    "protection": String(mmap.protection),
+                    "max_protection": String(mmap.max_protection),
+                    "flags": String(mmap.flags),
+                    "file_pos": String(mmap.file_pos),
+                ]
+            )
+
+        case ES_EVENT_TYPE_NOTIFY_CLONE:
+            let clone = msg.event.clone
+            let source = path(for: clone.source) ?? ""
+            let targetDir = path(for: clone.target_dir) ?? ""
+            let targetName = string(from: clone.target_name)
+            let destination =
+                targetDir.isEmpty
+                ? targetName
+                : URL(fileURLWithPath: targetDir).appendingPathComponent(targetName).path
+            return event(
+                "clone",
+                target: "\(source) -> \(destination)",
+                object: EventObject(kind: "file", path: destination),
+                metadata: ["source": source, "destination": destination]
+            )
+
+        case ES_EVENT_TYPE_NOTIFY_COPYFILE:
+            let copy = msg.event.copyfile
+            let source = path(for: copy.source) ?? ""
+            let targetDir = path(for: copy.target_dir) ?? ""
+            let targetName = string(from: copy.target_name)
+            let destination: String
+            if let targetFile = path(for: copy.target_file), !targetFile.isEmpty {
+                destination = targetFile
+            } else if targetDir.isEmpty {
+                destination = targetName
+            } else {
+                destination = URL(fileURLWithPath: targetDir).appendingPathComponent(targetName)
+                    .path
+            }
+            return event(
+                "copyfile",
+                target: "\(source) -> \(destination)",
+                object: EventObject(kind: "file", path: destination),
+                metadata: [
+                    "source": source,
+                    "destination": destination,
+                    "mode": String(copy.mode),
+                    "flags": String(copy.flags),
+                ]
+            )
+
+        case ES_EVENT_TYPE_NOTIFY_TRUNCATE:
+            let target = path(for: msg.event.truncate.target)
+            return event(
+                "truncate", target: target, object: EventObject(kind: "file", path: target))
+
+        case ES_EVENT_TYPE_NOTIFY_CHDIR:
+            let target = path(for: msg.event.chdir.target)
+            return event(
+                "chdir", target: target, object: EventObject(kind: "file", path: target))
 
         case ES_EVENT_TYPE_NOTIFY_UIPC_BIND:
             let target = joinPath(

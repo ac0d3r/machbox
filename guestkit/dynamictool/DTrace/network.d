@@ -6,6 +6,16 @@ inline int AF_UNIX   = 1;
 inline int AF_INET   = 2;
 inline int AF_INET6  = 30;
 
+/*
+ * dynamictool starts this script before sample launch with TARGET_PID=0 so
+ * early socket/connect are not missed (progenyof needs a live root pid).
+ * TARGET_PID>0 restricts to pid/progenyof; TARGET_PID=0 uses the execname
+ * denylist. The report keeps only PIDs in the sample process tree.
+ */
+#ifndef TARGET_PID
+#define TARGET_PID 0
+#endif
+
 #define NOISE_FILTER \
     execname != "mDNSResponder" && \
     execname != "oahd" && \
@@ -36,7 +46,13 @@ inline int AF_INET6  = 30;
     execname != "tccd" && \
     execname != "powerd" && \
     execname != "thermalmonitord" && \
-    execname != "runningboardd" 
+    execname != "runningboardd"
+
+#if TARGET_PID > 0
+#define SAMPLE_FILTER (pid == TARGET_PID || progenyof(TARGET_PID))
+#else
+#define SAMPLE_FILTER (NOISE_FILTER)
+#endif
 
 BEGIN {
     printf("PROBE_START\n");
@@ -44,7 +60,7 @@ BEGIN {
 
 /* ---------- socket create ---------- */
 syscall::socket:entry
-/NOISE_FILTER/
+/SAMPLE_FILTER/
 {
     this->domain = arg0;
     this->socktype = arg1;
@@ -64,7 +80,7 @@ syscall::socket:entry
 /* ---------- TCP/UDP connect ---------- */
 syscall::connect:entry,
 syscall::connect_nocancel:entry
-/arg1 != 0 && NOISE_FILTER/
+/arg1 != 0 && SAMPLE_FILTER/
 {
     this->sa = (uint8_t *)copyin(arg1, 128);
     this->family = this->sa[1];
@@ -92,7 +108,7 @@ syscall::connect_nocancel:entry
 
 /* ---------- bind ---------- */
 syscall::bind:entry
-/arg1 != 0 && arg2 > 0 && NOISE_FILTER/
+/arg1 != 0 && arg2 > 0 && SAMPLE_FILTER/
 {
     this->len = arg2 <= 128 ? arg2 : 128;
     this->sa = (uint8_t *)copyin(arg1, this->len);
@@ -122,7 +138,7 @@ syscall::bind:entry
 /* ---------- TCP accept ---------- */
 syscall::accept:entry,
 syscall::accept_nocancel:entry
-/arg1 != 0 && arg2 != 0 && NOISE_FILTER/
+/arg1 != 0 && arg2 != 0 && SAMPLE_FILTER/
 {
     self->accept_sa   = arg1;
     self->accept_lenp = arg2;
@@ -163,7 +179,7 @@ syscall::accept_nocancel:return
 
 /* ---------- UDP sendto ---------- */
 syscall::sendto:entry
-/arg4 != 0 && NOISE_FILTER/
+/arg4 != 0 && SAMPLE_FILTER/
 {
     this->sa = (uint8_t *)copyin(arg4, 128);
     this->family = this->sa[1];
@@ -187,7 +203,7 @@ syscall::sendto:entry
 
 /* ---------- UDP recvfrom ---------- */
 syscall::recvfrom:entry
-/arg4 != 0 && arg5 != 0 && NOISE_FILTER/
+/arg4 != 0 && arg5 != 0 && SAMPLE_FILTER/
 {
     self->recvfrom_sa   = arg4;
     self->recvfrom_lenp = arg5;
@@ -223,7 +239,7 @@ syscall::recvfrom:return
 
 /* ---------- sendmsg ---------- */
 syscall::sendmsg:entry
-/arg1 != 0 && NOISE_FILTER/
+/arg1 != 0 && SAMPLE_FILTER/
 {
     this->msghdr = (struct msghdr *)copyin(arg1, sizeof(struct msghdr));
     this->sa = (uint8_t *)this->msghdr->msg_name;
@@ -251,7 +267,7 @@ syscall::sendmsg:entry
 
 /* ---------- recvmsg ---------- */
 syscall::recvmsg:entry
-/arg1 != 0 && NOISE_FILTER/
+/arg1 != 0 && SAMPLE_FILTER/
 {
     self->recvmsg_msghdr = arg1;
 }

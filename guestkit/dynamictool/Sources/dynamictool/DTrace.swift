@@ -1,7 +1,9 @@
+import Darwin
 import Foundation
 
 final class DTraceClient {
     private let scriptPath: String
+    private let targetPid: pid_t
     private let sink: (Event) -> Void
     private var process: Process?
     private var pipeHandle: FileHandle?
@@ -14,8 +16,9 @@ final class DTraceClient {
         try! NSRegularExpression(pattern: #"(\w+)=([^ ]+)"#, options: [])
     }()
 
-    init(scriptPath: String, sink: @escaping (Event) -> Void) {
+    init(scriptPath: String, targetPid: pid_t, sink: @escaping (Event) -> Void) {
         self.scriptPath = scriptPath
+        self.targetPid = targetPid
         self.sink = sink
     }
 
@@ -26,7 +29,12 @@ final class DTraceClient {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/sbin/dtrace")
-        process.arguments = ["-C", "-s", scriptPath]
+        // -D must come before -s so the preprocessor sees TARGET_PID.
+        process.arguments = [
+            "-C",
+            "-D", "TARGET_PID=\(targetPid)",
+            "-s", scriptPath,
+        ]
 
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -38,7 +46,7 @@ final class DTraceClient {
             guard let self else { return }
             let data = handle.availableData
             guard !data.isEmpty else {
-                self.flushBuffer()
+                self.flushBufferAsync()
                 return
             }
             guard let text = String(data: data, encoding: .utf8) else { return }
@@ -46,7 +54,7 @@ final class DTraceClient {
         }
 
         process.terminationHandler = { [weak self] _ in
-            self?.flushBuffer()
+            self?.flushBufferAsync()
         }
 
         try process.run()
@@ -54,22 +62,57 @@ final class DTraceClient {
     }
 
     func stop() {
+        // Drop the handler before tearing down the process to avoid races.
+        pipeHandle?.readabilityHandler = nil
+
         queue.sync {
             if let process = self.process {
                 process.terminate()
                 process.waitUntilExit()
             }
             self.process = nil
-
-            self.pipeHandle?.readabilityHandler = nil
             self.pipeHandle?.closeFile()
             self.pipeHandle = nil
-
-            self._flushBuffer()
+            self.flushBufferLocked()
         }
     }
 
-    // MARK: - Buffer handling (always dispatched to queue)
+    func waitForReady(timeout: TimeInterval) -> Bool {
+        readySemaphore.wait(timeout: .now() + timeout) == .success
+    }
+
+    // MARK: - Factory
+
+    static func maybeStart(
+        scriptPath: String,
+        targetPid: pid_t,
+        sink: @escaping (Event) -> Void,
+        readyTimeout: TimeInterval = 5
+    ) -> DTraceClient? {
+        do {
+            let client = DTraceClient(
+                scriptPath: scriptPath, targetPid: targetPid, sink: sink)
+            try client.start()
+            FileHandle.standardError.write(
+                Data(
+                    "dynamictool: dtrace network probe started (pid=\(targetPid) script=\(scriptPath))\n"
+                        .utf8))
+            if client.waitForReady(timeout: readyTimeout) {
+                FileHandle.standardError.write(
+                    Data("dynamictool: dtrace network probe ready\n".utf8))
+            } else {
+                FileHandle.standardError.write(
+                    Data("dynamictool: warning: dtrace network probe ready timeout\n".utf8))
+            }
+            return client
+        } catch {
+            FileHandle.standardError.write(
+                Data("dynamictool: warning: failed to start dtrace network probe: \(error)\n".utf8))
+            return nil
+        }
+    }
+
+    // MARK: - Buffer handling
 
     private func consume(_ text: String) {
         queue.async { [weak self] in
@@ -84,18 +127,17 @@ final class DTraceClient {
         }
     }
 
-    private func flushBuffer() {
+    private func flushBufferAsync() {
         queue.async { [weak self] in
-            self?._flushBuffer()
+            self?.flushBufferLocked()
         }
     }
 
-    private func _flushBuffer() {
-        if !buffer.isEmpty {
-            let line = buffer
-            buffer = ""
-            processLine(line)
-        }
+    private func flushBufferLocked() {
+        guard !buffer.isEmpty else { return }
+        let line = buffer
+        buffer = ""
+        processLine(line)
     }
 
     private func processLine(_ line: String) {
@@ -103,47 +145,14 @@ final class DTraceClient {
         guard !trimmed.isEmpty else { return }
 
         if trimmed == "PROBE_START" {
-            queue.async { [weak self] in
-                guard let self else { return }
-                if !self.isReady {
-                    self.isReady = true
-                    self.readySemaphore.signal()
-                }
+            if !isReady {
+                isReady = true
+                readySemaphore.signal()
             }
             return
         }
         if let event = Self.parse(line: trimmed) {
             sink(event)
-        }
-    }
-
-    func waitForReady(timeout: TimeInterval) -> Bool {
-        let result = readySemaphore.wait(timeout: .now() + timeout)
-        return result == .success
-    }
-
-    // MARK: - Factory
-
-    static func maybeStart(
-        scriptPath: String, sink: @escaping (Event) -> Void, readyTimeout: TimeInterval = 5
-    ) -> DTraceClient? {
-        do {
-            let client = DTraceClient(scriptPath: scriptPath, sink: sink)
-            try client.start()
-            FileHandle.standardError.write(
-                Data("dynamictool: dtrace network probe started (\(scriptPath))\n".utf8))
-            if client.waitForReady(timeout: readyTimeout) {
-                FileHandle.standardError.write(
-                    Data("dynamictool: dtrace network probe ready\n".utf8))
-            } else {
-                FileHandle.standardError.write(
-                    Data("dynamictool: warning: dtrace network probe ready timeout\n".utf8))
-            }
-            return client
-        } catch {
-            FileHandle.standardError.write(
-                Data("dynamictool: warning: failed to start dtrace network probe: \(error)\n".utf8))
-            return nil
         }
     }
 
@@ -170,39 +179,31 @@ final class DTraceClient {
             return nil
         }
 
-        let ts = Date(timeIntervalSince1970: tsVal)
-        let comm = dict["comm"]
-
-        var target: String?
         var metadata: [String: String] = [:]
+        for key in ["family", "dir", "local", "remote", "path", "socktype", "protocol"] {
+            if let value = dict[key], !value.isEmpty {
+                metadata[key == "dir" ? "direction" : key] = value
+            }
+        }
 
-        if let family = dict["family"] {
-            metadata["family"] = family
-        }
-        if let dir = dict["dir"] {
-            metadata["direction"] = dir
-        }
-        if let local = dict["local"] {
-            target = local
-            metadata["local"] = local
-        }
-        if let remote = dict["remote"] {
-            target = remote
-            metadata["remote"] = remote
-        }
-        if let path: String = dict["path"] {
-            target = path
-            metadata["path"] = path
-        }
+        let target = dict["remote"] ?? dict["local"] ?? dict["path"]
+        let process = processPath(for: pid) ?? dict["comm"]
 
         return Event(
-            ts: ts,
+            ts: Date(timeIntervalSince1970: tsVal),
             type: type,
             pid: pid,
             ppid: nil,
-            process: comm,
+            process: process,
             target: target,
             metadata: metadata.isEmpty ? nil : metadata
         )
+    }
+
+    private static func processPath(for pid: pid_t) -> String? {
+        var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+        let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+        guard length > 0 else { return nil }
+        return String(cString: buffer)
     }
 }

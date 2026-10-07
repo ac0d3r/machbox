@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -42,7 +41,7 @@ func (p *Parser) SetPickFile(path string) {
 	p.pickeFilePath = path
 }
 
-func (p *Parser) StaticResult(data, originSample, workpath string) error {
+func (p *Parser) StaticResult(data, originSample string) error {
 	gjret := gjson.Parse(data)
 
 	p.data.SHA256 = gjret.Get("base.hash.sha256").String()
@@ -55,10 +54,11 @@ func (p *Parser) StaticResult(data, originSample, workpath string) error {
 		p.pickTyp = p.data.FileType
 		p.pickeFile, p.pickeFilePath = originSample, originSample
 	default:
-		p.pickeFile, p.pickTyp = pickMainFile(&gjret)
-		if p.pickeFile != "" {
-			p.pickeFilePath = filepath.Join(workpath, p.pickeFile)
-		}
+		// zip/dmg/pkg (and other containers): children carry absolute guest paths
+		// under --extract-dir (writable workdir).
+		path, typ := pickMainFile(&gjret)
+		p.pickeFile, p.pickTyp = path, typ
+		p.pickeFilePath = path
 	}
 
 	sanitized := workdirRegex.ReplaceAllString(data, sanitizedPath)
@@ -131,7 +131,5 @@ func pickMainFile(gjret *gjson.Result) (path, typ string) {
 		return candidates[i].path < candidates[j].path
 	})
 
-	rel := strings.TrimSpace(candidates[0].path)
-	rel = strings.TrimPrefix(rel, string(filepath.Separator))
-	return rel, candidates[0].typ
+	return strings.TrimSpace(candidates[0].path), candidates[0].typ
 }

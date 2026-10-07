@@ -117,7 +117,7 @@ watch(() => props.data, (data) => {
               <tr><th>Identifier</th><td>{{ info.code_signature.identifier || '-' }}</td></tr>
               <tr><th>Team ID</th><td>{{ info.code_signature.team_id || '-' }}</td></tr>
               <tr><th>CDHash</th><td>{{ info.code_signature.cdhash || '-' }}</td></tr>
-              <tr><th>Flags</th><td>{{ info.code_signature.code_directories?.[0]?.flags_str || '-' }}</td></tr>
+              <tr><th>Flags</th><td>{{ info.code_signature.code_directories?.[0]?.flags || '-' }}</td></tr>
               <tr>
                 <th>Entitlements</th>
                 <td>

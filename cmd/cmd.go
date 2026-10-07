@@ -7,7 +7,6 @@ import (
 
 	"github.com/ac0d3r/machbox/internal/assets"
 	"github.com/ac0d3r/machbox/internal/logger"
-	"github.com/ac0d3r/machbox/internal/version"
 	"github.com/ac0d3r/machbox/pkg/vm/config"
 
 	"github.com/spf13/cobra"
@@ -31,13 +30,13 @@ type rootOptions struct {
 	log logOptions
 }
 
-func NewRootCommand() *cobra.Command {
+func NewRootCommand(version string) *cobra.Command {
 	opts := &rootOptions{}
 
 	cmd := &cobra.Command{
 		Use:           "machbox",
 		Short:         "macOS malware analysis sandbox",
-		Version:       version.Version,
+		Version:       version,
 		SilenceErrors: true,
 		CompletionOptions: cobra.CompletionOptions{
 			DisableDefaultCmd: true,
@@ -73,8 +72,8 @@ func NewRootCommand() *cobra.Command {
 }
 
 // Execute creates the root command and runs it.
-func Execute() error {
-	return NewRootCommand().Execute()
+func Execute(version string) error {
+	return NewRootCommand(version).Execute()
 }
 
 func bindVMFlags(cmd *cobra.Command, opts *vmOptions) {
