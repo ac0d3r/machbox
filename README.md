@@ -18,7 +18,11 @@
 
 ## Download
 
-Prebuilt Apple Silicon binaries are available on the [GitHub Releases](https://github.com/ac0d3r/machbox/releases) page.
+```bash
+brew install ac0d3r/tap/machbox
+```
+
+Prebuilt Apple Silicon binaries are also on the [GitHub Releases](https://github.com/ac0d3r/machbox/releases) page.
 
 ```bash
 curl -L -o machbox https://github.com/ac0d3r/machbox/releases/latest/download/machbox-darwin-arm64
@@ -28,6 +32,11 @@ chmod +x machbox
 > The release binary is ad-hoc signed, macOS Gatekeeper will block it until you remove the quarantine attribute with `xattr -d com.apple.quarantine`.
 
 ## Build from Source
+
+- Go 1.25+
+- Node.js 20+ (includes npm)
+- Swift 5.9+
+- Xcode, for the macOS SDK, `codesign`, `pkgbuild`, and `hdiutil`
 
 ```bash
 git clone https://github.com/ac0d3r/machbox.git

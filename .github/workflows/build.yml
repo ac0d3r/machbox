@@ -79,3 +79,14 @@ jobs:
         with:
           files: release/machbox-darwin-*
           generate_release_notes: true
+
+      - name: Update Homebrew tap
+        uses: mislav/bump-homebrew-formula-action@v4
+        with:
+          formula-name: machbox
+          homebrew-tap: ac0d3r/homebrew-tap
+          base-branch: main
+          tag-name: ${{ github.ref_name }}
+          download-url: https://github.com/ac0d3r/machbox/releases/download/${{ github.ref_name }}/machbox-darwin-arm64
+        env:
+          COMMITTER_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
