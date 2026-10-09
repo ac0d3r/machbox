@@ -9,6 +9,7 @@
 - mach-o
 - Application Bundle
 - Disk Image(.dmg)
+- Package(.pkg)
 - zip archive (supports password extraction)
 
 ## System Requirements

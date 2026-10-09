@@ -352,12 +352,12 @@ func (s *session) runDynamic(ctx context.Context, client *agent.Client, retp *re
 	switch pickTyp {
 	case "mach-o", "appbundle":
 		if _, err := client.RunTask(&agent.Task{
-			Command: "chmod",
-			Args:    []string{"-R", "+x", runPath},
+			Command: "sh",
+			Args:    []string{"-c", "xattr -cr \"$1\" && chmod -R +x \"$1\"", "_", runPath},
 			WorkDir: s.wd.WorkPath,
 			Timeout: s.timeout,
 		}); err != nil {
-			return fmt.Errorf("chmod +x: %w", err)
+			return fmt.Errorf("prepare sample for exec: %w", err)
 		}
 	}
 
