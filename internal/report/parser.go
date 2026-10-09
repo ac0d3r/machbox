@@ -169,8 +169,7 @@ func archiveStem(name string) string {
 	ext := filepath.Ext(name)
 	stem := strings.TrimSuffix(name, ext)
 	// sample.tar.gz-style: strip one more known archive suffix if present.
-	switch strings.ToLower(filepath.Ext(stem)) {
-	case ".tar":
+	if strings.EqualFold(filepath.Ext(stem), ".tar") {
 		stem = strings.TrimSuffix(stem, filepath.Ext(stem))
 	}
 	return stem
