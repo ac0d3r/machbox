@@ -22,6 +22,7 @@ func newAnalyzeCommand() *cobra.Command {
 		Use:                   "analyze [flags] <sample> [--] [sample-args...]",
 		Short:                 "Run malware analysis inside an imported sandbox baseline",
 		DisableFlagsInUseLine: true,
+		SilenceUsage:          true,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) < 1 {
 				return fmt.Errorf("missing sample file path")

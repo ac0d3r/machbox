@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -21,9 +22,8 @@ var workdirRegex = regexp.MustCompile(`(?:/private)?/tmp/machbox_[^/"]+`)
 type Parser struct {
 	data *db.Report
 
-	pickTyp       string
-	pickeFile     string
-	pickeFilePath string
+	pickTyp  string
+	pickPath string
 }
 
 func New(env agent.GuestInfo) *Parser {
@@ -33,12 +33,12 @@ func New(env agent.GuestInfo) *Parser {
 // GetPickFile returns the guest path of the primary executable for dynamic
 // analysis, and its type (mach-o, appbundle, dylib, …).
 func (p *Parser) GetPickFile() (path, typ string) {
-	return p.pickeFilePath, p.pickTyp
+	return p.pickPath, p.pickTyp
 }
 
 // SetPickFile updates the guest path used for dynamic analysis / report parsing.
 func (p *Parser) SetPickFile(path string) {
-	p.pickeFilePath = path
+	p.pickPath = path
 }
 
 func (p *Parser) StaticResult(data, originSample string) error {
@@ -52,13 +52,12 @@ func (p *Parser) StaticResult(data, originSample string) error {
 	switch p.data.FileType {
 	case "mach-o", "appbundle", "dylib":
 		p.pickTyp = p.data.FileType
-		p.pickeFile, p.pickeFilePath = originSample, originSample
+		p.pickPath = originSample
 	default:
 		// zip/dmg/pkg (and other containers): children carry absolute guest paths
 		// under --extract-dir (writable workdir).
 		path, typ := pickMainFile(&gjret)
-		p.pickeFile, p.pickTyp = path, typ
-		p.pickeFilePath = path
+		p.pickPath, p.pickTyp = path, typ
 	}
 
 	sanitized := workdirRegex.ReplaceAllString(data, sanitizedPath)
@@ -73,7 +72,7 @@ func (p *Parser) StaticResult(data, originSample string) error {
 }
 
 func (p *Parser) ParseDynamicResult(reader io.Reader) error {
-	tree, parseErrors, err := parseAndBuildTree(reader, p.pickeFilePath)
+	tree, parseErrors, err := parseAndBuildTree(reader, p.pickPath)
 	if err != nil {
 		p.data.Error = fmt.Sprintf("dynamic parse failed: %v", err)
 		return fmt.Errorf("parse dynamic result: %w", err)
@@ -93,12 +92,13 @@ func (p *Parser) Save() error {
 	return db.CreateReport(p.data)
 }
 
+type pickCandidate struct {
+	path string
+	typ  string
+}
+
 func pickMainFile(gjret *gjson.Result) (path, typ string) {
-	type candidate struct {
-		path string
-		typ  string
-	}
-	var candidates []candidate
+	var apps, machosOutside, machosInside []pickCandidate
 
 	var walk func(gjson.Result)
 	walk = func(r gjson.Result) {
@@ -107,9 +107,23 @@ func pickMainFile(gjret *gjson.Result) (path, typ string) {
 		}
 		r.ForEach(func(_, item gjson.Result) bool {
 			typ := item.Get("base.type").String()
-			path := item.Get("base.path").String()
-			if path != "" && (typ == "mach-o" || typ == "appbundle" || typ == "dylib") {
-				candidates = append(candidates, candidate{path: path, typ: typ})
+			path := strings.TrimSpace(item.Get("base.path").String())
+			if path != "" {
+				switch typ {
+				case "appbundle":
+					// Skip Helper.app nested under another .app.
+					if !isNestedAppBundle(path) {
+						apps = append(apps, pickCandidate{path: path, typ: typ})
+					}
+				case "mach-o":
+					c := pickCandidate{path: path, typ: typ}
+					if pathInsideAppBundle(path) {
+						machosInside = append(machosInside, c)
+					} else {
+						machosOutside = append(machosOutside, c)
+					}
+					// dylib intentionally omitted — not a useful dynamic launch target.
+				}
 			}
 			walk(item.Get("children"))
 			return true
@@ -117,19 +131,97 @@ func pickMainFile(gjret *gjson.Result) (path, typ string) {
 	}
 	walk(gjret.Get("children"))
 
-	if len(candidates) == 0 {
+	stem := archiveStem(gjret.Get("base.name").String())
+	switch {
+	case len(apps) > 0:
+		return bestPickCandidate(apps, stem)
+	case len(machosOutside) > 0:
+		return bestPickCandidate(machosOutside, stem)
+	case len(machosInside) > 0:
+		return bestPickCandidate(machosInside, stem)
+	default:
 		return "", ""
 	}
+}
 
-	priority := map[string]int{"appbundle": 0, "mach-o": 1, "dylib": 2}
-	sort.Slice(candidates, func(i, j int) bool {
-		pi := priority[candidates[i].typ]
-		pj := priority[candidates[j].typ]
-		if pi != pj {
-			return pi < pj
+func bestPickCandidate(cs []pickCandidate, stem string) (path, typ string) {
+	sort.Slice(cs, func(i, j int) bool {
+		ni := nameMatchRank(cs[i].path, stem)
+		nj := nameMatchRank(cs[j].path, stem)
+		if ni != nj {
+			return ni < nj
 		}
-		return candidates[i].path < candidates[j].path
+		di := pathDepth(cs[i].path)
+		dj := pathDepth(cs[j].path)
+		if di != dj {
+			return di < dj
+		}
+		return cs[i].path < cs[j].path
 	})
+	return cs[0].path, cs[0].typ
+}
 
-	return strings.TrimSpace(candidates[0].path), candidates[0].typ
+func archiveStem(name string) string {
+	name = filepath.Base(strings.TrimSpace(name))
+	if name == "" || name == "." {
+		return ""
+	}
+	ext := filepath.Ext(name)
+	stem := strings.TrimSuffix(name, ext)
+	// sample.tar.gz-style: strip one more known archive suffix if present.
+	if strings.EqualFold(filepath.Ext(stem), ".tar") {
+		stem = strings.TrimSuffix(stem, filepath.Ext(stem))
+	}
+	return stem
+}
+
+// nameMatchRank: lower is better (exact = 0, partial = 1, none = 2).
+func nameMatchRank(path, stem string) int {
+	if stem == "" {
+		return 1
+	}
+	base := filepath.Base(path)
+	base = strings.TrimSuffix(base, filepath.Ext(base))
+	bl := strings.ToLower(base)
+	sl := strings.ToLower(stem)
+	switch {
+	case bl == sl:
+		return 0
+	case strings.Contains(bl, sl) || strings.Contains(sl, bl):
+		return 1
+	default:
+		return 2
+	}
+}
+
+func pathDepth(path string) int {
+	clean := filepath.Clean(path)
+	if clean == "" || clean == "." || clean == string(filepath.Separator) {
+		return 0
+	}
+	return strings.Count(clean, string(filepath.Separator))
+}
+
+func isNestedAppBundle(path string) bool {
+	parts := strings.Split(filepath.Clean(path), string(filepath.Separator))
+	n := 0
+	for _, part := range parts {
+		if strings.HasSuffix(strings.ToLower(part), ".app") {
+			n++
+		}
+	}
+	return n > 1
+}
+
+func pathInsideAppBundle(path string) bool {
+	parts := strings.Split(filepath.Clean(path), string(filepath.Separator))
+	if len(parts) < 2 {
+		return false
+	}
+	for _, part := range parts[:len(parts)-1] {
+		if strings.HasSuffix(strings.ToLower(part), ".app") {
+			return true
+		}
+	}
+	return false
 }
