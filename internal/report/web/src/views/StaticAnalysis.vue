@@ -7,7 +7,7 @@ import PackageInfo from '../components/PackageInfo.vue'
 import FileTreeNode from '../components/FileTreeNode.vue'
 
 const props = defineProps({
-  report: Object,
+  report: { type: Object, required: true },
 })
 
 const expanded = ref({ base: true, deep: true })
@@ -64,7 +64,7 @@ const rawDataJson = computed(() => {
     </div>
 
     <!-- Deep analysis -->
-    <div class="panel-card" v-if="parsedStatic?.data">
+    <div v-if="parsedStatic?.data" class="panel-card">
       <div class="panel-header" @click="expanded.deep = !expanded.deep">
         <span class="panel-icon">🔍</span>
         <span>Deep Analysis</span>
@@ -85,7 +85,7 @@ const rawDataJson = computed(() => {
     </div>
 
     <!-- Children -->
-    <div class="panel-card" v-if="parsedStatic?.children && parsedStatic.children.length">
+    <div v-if="parsedStatic?.children && parsedStatic.children.length" class="panel-card">
       <div class="panel-header">
         <span class="panel-icon">📁</span>
         <span>Children</span>

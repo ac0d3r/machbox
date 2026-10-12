@@ -29,8 +29,7 @@ enum SampleLauncher {
     static func executablePath(for samplePath: String) -> String {
         let url = URL(fileURLWithPath: samplePath).standardizedFileURL
         if url.pathExtension.lowercased() == "app",
-            let executable = Bundle(url: url)?.executableURL?.path
-        {
+            let executable = Bundle(url: url)?.executableURL?.path {
             return executable
         }
         return url.path
@@ -114,8 +113,7 @@ enum SampleLauncher {
             at: bundleURL, configuration: configuration)
 
         if let pid = validatedPID(from: runningApp, expectedPath: processPath),
-            !preexisting.contains(pid)
-        {
+            !preexisting.contains(pid) {
             logPIDResolution(
                 path: processPath, selected: pid, source: "NSRunningApplication",
                 candidates: [pid])
@@ -161,8 +159,7 @@ enum SampleLauncher {
         var launchError: Error?
         var runningApp: NSRunningApplication?
 
-        NSWorkspace.shared.openApplication(at: bundleURL, configuration: configuration) {
-            app, error in
+        NSWorkspace.shared.openApplication(at: bundleURL, configuration: configuration) { app, error in
             runningApp = app
             launchError = error
             semaphore.signal()

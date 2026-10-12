@@ -1,0 +1,40 @@
+name: Lint Swift
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "guestkit/dynamictool/**"
+      - ".github/workflows/lint-swift.yml"
+  pull_request:
+    paths:
+      - "guestkit/dynamictool/**"
+      - ".github/workflows/lint-swift.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  swiftlint:
+    name: lint
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SwiftLint
+        env:
+          SWIFTLINT_VERSION: "0.65.1"
+        run: |
+          curl -fsSL \
+            "https://github.com/realm/SwiftLint/releases/download/${SWIFTLINT_VERSION}/portable_swiftlint.zip" \
+            -o /tmp/swiftlint.zip
+          unzip -oq /tmp/swiftlint.zip -d "$RUNNER_TEMP/swiftlint"
+          echo "$RUNNER_TEMP/swiftlint" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/swiftlint/swiftlint" version
+
+      - name: SwiftLint
+        working-directory: guestkit/dynamictool
+        # --disable-sourcekit: works with Command Line Tools only (no full Xcode).
+        run: swiftlint lint --strict --disable-sourcekit --reporter github-actions-logging

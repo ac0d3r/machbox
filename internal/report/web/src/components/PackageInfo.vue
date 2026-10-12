@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 
 defineProps({
-  data: Object,
+  data: { type: Object, required: true },
 })
 
 const expanded = ref({ meta: true, scripts: true, components: true, signature: true })
@@ -29,7 +29,7 @@ const expanded = ref({ meta: true, scripts: true, components: true, signature: t
       </div>
     </div>
 
-    <div class="sub-panel" v-if="data.scripts?.preinstall || data.scripts?.postinstall">
+    <div v-if="data.scripts?.preinstall || data.scripts?.postinstall" class="sub-panel">
       <div class="sub-panel-header" @click="expanded.scripts = !expanded.scripts">
         <span class="sub-panel-title">Scripts</span>
         <span class="arrow" :class="{ open: expanded.scripts }">▸</span>
@@ -46,7 +46,7 @@ const expanded = ref({ meta: true, scripts: true, components: true, signature: t
       </div>
     </div>
 
-    <div class="sub-panel" v-if="data.components?.length">
+    <div v-if="data.components?.length" class="sub-panel">
       <div class="sub-panel-header" @click="expanded.components = !expanded.components">
         <span class="sub-panel-title">Components ({{ data.components.length }})</span>
         <span class="arrow" :class="{ open: expanded.components }">▸</span>
@@ -68,7 +68,7 @@ const expanded = ref({ meta: true, scripts: true, components: true, signature: t
       </div>
     </div>
 
-    <div class="sub-panel" v-if="data.signature">
+    <div v-if="data.signature" class="sub-panel">
       <div class="sub-panel-header" @click="expanded.signature = !expanded.signature">
         <span class="sub-panel-title">Signature</span>
         <span class="arrow" :class="{ open: expanded.signature }">▸</span>

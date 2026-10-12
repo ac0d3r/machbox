@@ -1,0 +1,78 @@
+name: Go
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+      - "guestkit/statictool/go.mod"
+      - "guestkit/statictool/go.sum"
+      - ".golangci.yml"
+      - ".github/workflows/lint-go.yml"
+  pull_request:
+    paths:
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+      - "guestkit/statictool/go.mod"
+      - "guestkit/statictool/go.sum"
+      - ".golangci.yml"
+      - ".github/workflows/lint-go.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  golangci:
+    name: lint
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            guestkit/statictool/go.sum
+
+      - name: Prepare embed
+        run: |
+          mkdir -p internal/assets/data/ && touch internal/assets/data/placeholder
+          mkdir -p internal/report/web/dist && touch internal/report/web/dist/placeholder
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+
+  test:
+    name: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            guestkit/statictool/go.sum
+
+      - name: Prepare embed
+        run: |
+          mkdir -p internal/assets/data/ && touch internal/assets/data/placeholder
+          mkdir -p internal/report/web/dist && touch internal/report/web/dist/placeholder
+
+      - name: Test machbox
+        run: go test $(go list ./... | grep -v /node_modules/)
+
+      - name: Test statictool
+        working-directory: guestkit/statictool
+        run: go test ./...

@@ -42,13 +42,13 @@ const navItems = [
 </script>
 
 <template>
-  <div class="detail-page" v-if="loading">
+  <div v-if="loading" class="detail-page">
     <div class="loading">Loading...</div>
   </div>
-  <div class="detail-page" v-else-if="error">
+  <div v-else-if="error" class="detail-page">
     <div class="error">{{ error }}</div>
   </div>
-  <div class="detail-page" v-else-if="report">
+  <div v-else-if="report" class="detail-page">
     <!-- Sidebar -->
     <aside class="sidebar">
       <div class="back-row" @click="router.push('/')">← Back to list</div>
@@ -69,12 +69,12 @@ const navItems = [
     <!-- Main -->
     <main class="detail-main">
       <!-- Overview card -->
-      <div class="overview-card" v-once>
+      <div v-once class="overview-card">
         <div class="overview-left">
           <div class="hex-icon">
             <svg viewBox="0 0 100 100" width="80" height="80">
-              <polygon points="50,5 95,27.5 95,72.5 50,95 5,72.5 5,27.5" fill="none" stroke="#e67e22" stroke-width="3"/>
-              <polygon points="50,15 85,33 85,67 50,85 15,67 15,33" fill="#fdf2e9" stroke="#e67e22" stroke-width="2"/>
+              <polygon points="50,5 95,27.5 95,72.5 50,95 5,72.5 5,27.5" fill="none" stroke="#e67e22" stroke-width="3" />
+              <polygon points="50,15 85,33 85,67 50,85 15,67 15,33" fill="#fdf2e9" stroke="#e67e22" stroke-width="2" />
               <text x="50" y="58" text-anchor="middle" fill="#e67e22" font-size="28" font-weight="700">?</text>
             </svg>
           </div>
@@ -99,17 +99,17 @@ const navItems = [
               <span class="info-value env-box">{{ parsedEnv.os_version || '-' }} ({{ parsedEnv.build_version || '-' }})</span>
             </div>
           </div>
-          <div class="hash-section" v-if="parsedStatic?.base?.hash?.md5 || parsedStatic?.base?.hash?.sha1 || parsedStatic?.base?.hash?.sha256">
+          <div v-if="parsedStatic?.base?.hash?.md5 || parsedStatic?.base?.hash?.sha1 || parsedStatic?.base?.hash?.sha256" class="hash-section">
             <div class="hash-title">HASH</div>
-            <div class="hash-row" v-if="parsedStatic?.base?.hash?.md5">
+            <div v-if="parsedStatic?.base?.hash?.md5" class="hash-row">
               <span class="hash-label">MD5</span>
               <span class="hash-value">{{ parsedStatic.base.hash.md5 }}</span>
             </div>
-            <div class="hash-row" v-if="parsedStatic?.base?.hash?.sha1">
+            <div v-if="parsedStatic?.base?.hash?.sha1" class="hash-row">
               <span class="hash-label">SHA1</span>
               <span class="hash-value">{{ parsedStatic.base.hash.sha1 }}</span>
             </div>
-            <div class="hash-row" v-if="parsedStatic?.base?.hash?.sha256">
+            <div v-if="parsedStatic?.base?.hash?.sha256" class="hash-row">
               <span class="hash-label">SHA256</span>
               <span class="hash-value">{{ parsedStatic.base.hash.sha256 }}</span>
             </div>

@@ -3,7 +3,7 @@ import { ref, watch, computed } from 'vue'
 import ProcessTree from './ProcessTree.vue'
 
 const props = defineProps({
-  report: Object,
+  report: { type: Object, required: true },
 })
 
 const parsedDynamic = ref(null)
@@ -225,79 +225,79 @@ const toggle = (pid) => { collapsed.value[pid] = !collapsed.value[pid] }
               <span class="summary-value">{{ summary.risk_score }}</span>
               <span class="summary-label">Risk Score</span>
             </div>
-            <div class="summary-item" v-if="summary.injection_count">
+            <div v-if="summary.injection_count" class="summary-item">
               <span class="summary-value warn">{{ summary.injection_count }}</span>
               <span class="summary-label">Injections</span>
             </div>
-            <div class="summary-item" v-if="summary.persistence_count">
+            <div v-if="summary.persistence_count" class="summary-item">
               <span class="summary-value warn">{{ summary.persistence_count }}</span>
               <span class="summary-label">Persistence</span>
             </div>
-            <div class="summary-item" v-if="behavior.has_launchctl_persistence">
+            <div v-if="behavior.has_launchctl_persistence" class="summary-item">
               <span class="summary-value warn">launchctl</span>
               <span class="summary-label">Persistence</span>
             </div>
-            <div class="summary-item" v-if="summary.privilege_changes">
+            <div v-if="summary.privilege_changes" class="summary-item">
               <span class="summary-value warn">{{ summary.privilege_changes }}</span>
               <span class="summary-label">Privilege Changes</span>
             </div>
-            <div class="summary-item" v-if="summary.code_sig_invalidations">
+            <div v-if="summary.code_sig_invalidations" class="summary-item">
               <span class="summary-value warn">{{ summary.code_sig_invalidations }}</span>
               <span class="summary-label">Code Sig Invalidated</span>
             </div>
-            <div class="summary-item" v-if="summary.parse_errors">
+            <div v-if="summary.parse_errors" class="summary-item">
               <span class="summary-value warn">{{ summary.parse_errors }}</span>
               <span class="summary-label">Parse Errors</span>
             </div>
-            <div class="summary-item" v-if="behavior.child_processes">
+            <div v-if="behavior.child_processes" class="summary-item">
               <span class="summary-value">{{ behavior.child_processes }}</span>
               <span class="summary-label">Child Processes</span>
             </div>
           </div>
 
-          <div class="risk-factors" v-if="summary.risk_factors?.length">
+          <div v-if="summary.risk_factors?.length" class="risk-factors">
             <div class="behavior-title">⚠️ Risk Factors</div>
-            <div class="risk-factor-item" v-for="(factor, idx) in summary.risk_factors" :key="'rf-' + idx">{{ factor }}</div>
+            <div v-for="(factor, idx) in summary.risk_factors" :key="'rf-' + idx" class="risk-factor-item">{{ factor }}</div>
           </div>
 
           <!-- Behavior Summary -->
-          <div class="behavior-summary" v-if="Object.keys(behavior).length">
-            <div class="behavior-section" v-if="behavior.has_external_network || behavior.has_bind_all_interfaces || behavior.has_listen_socket || behavior.network_connections?.length">
+          <div v-if="Object.keys(behavior).length" class="behavior-summary">
+            <div v-if="behavior.has_external_network || behavior.has_bind_all_interfaces || behavior.has_listen_socket || behavior.network_connections?.length" class="behavior-section">
               <div class="behavior-title">🌐 Network</div>
               <div class="behavior-tags">
-                <span class="behavior-tag warn" v-if="behavior.has_external_network">External Connection</span>
-                <span class="behavior-tag warn" v-if="behavior.has_bind_all_interfaces">Bind 0.0.0.0/::</span>
-                <span class="behavior-tag suspicious" v-if="behavior.has_listen_socket">Listen Socket</span>
+                <span v-if="behavior.has_external_network" class="behavior-tag warn">External Connection</span>
+                <span v-if="behavior.has_bind_all_interfaces" class="behavior-tag warn">Bind 0.0.0.0/::</span>
+                <span v-if="behavior.has_listen_socket" class="behavior-tag suspicious">Listen Socket</span>
               </div>
-              <div class="detail-list-item" v-for="(conn, idx) in behavior.network_connections" :key="'net-' + idx">{{ conn }}</div>
+              <div v-for="(conn, idx) in behavior.network_connections" :key="'net-' + idx" class="detail-list-item">{{ conn }}</div>
             </div>
 
-            <div class="behavior-section" v-if="behavior.files_written?.length || behavior.files_deleted?.length || behavior.files_modified_perms?.length || behavior.has_sensitive_write || behavior.has_sensitive_delete || behavior.has_sensitive_chmod">
+            <div v-if="behavior.files_written?.length || behavior.files_deleted?.length || behavior.files_modified_perms?.length || behavior.has_sensitive_write || behavior.has_sensitive_delete || behavior.has_sensitive_chmod" class="behavior-section">
               <div class="behavior-title">📁 File System</div>
               <div class="behavior-tags">
-                <span class="behavior-tag warn" v-if="behavior.has_sensitive_write">Sensitive Write</span>
-                <span class="behavior-tag warn" v-if="behavior.has_sensitive_delete">Sensitive Delete</span>
-                <span class="behavior-tag warn" v-if="behavior.has_sensitive_chmod">Sensitive Chmod</span>
+                <span v-if="behavior.has_sensitive_write" class="behavior-tag warn">Sensitive Write</span>
+                <span v-if="behavior.has_sensitive_delete" class="behavior-tag warn">Sensitive Delete</span>
+                <span v-if="behavior.has_sensitive_chmod" class="behavior-tag warn">Sensitive Chmod</span>
               </div>
-              <div class="detail-list" v-if="behavior.files_written?.length">
+              <div v-if="behavior.files_written?.length" class="detail-list">
                 <div class="detail-list-title">Written</div>
-                <div class="detail-list-item" v-for="(path, idx) in behavior.files_written" :key="'w-' + idx">{{ path }}</div>
+                <div v-for="(path, idx) in behavior.files_written" :key="'w-' + idx" class="detail-list-item">{{ path }}</div>
               </div>
-              <div class="detail-list" v-if="behavior.files_deleted?.length">
+              <div v-if="behavior.files_deleted?.length" class="detail-list">
                 <div class="detail-list-title">Deleted</div>
-                <div class="detail-list-item" v-for="(path, idx) in behavior.files_deleted" :key="'d-' + idx">{{ path }}</div>
+                <div v-for="(path, idx) in behavior.files_deleted" :key="'d-' + idx" class="detail-list-item">{{ path }}</div>
               </div>
-              <div class="detail-list" v-if="behavior.files_modified_perms?.length">
+              <div v-if="behavior.files_modified_perms?.length" class="detail-list">
                 <div class="detail-list-title">Permission Changes</div>
-                <div class="detail-list-item" v-for="(path, idx) in behavior.files_modified_perms" :key="'p-' + idx">{{ path }}</div>
+                <div v-for="(path, idx) in behavior.files_modified_perms" :key="'p-' + idx" class="detail-list-item">{{ path }}</div>
               </div>
             </div>
 
-            <div class="behavior-section" v-if="executedCommands.length || behavior.has_shell_execution || behavior.has_script_execution">
+            <div v-if="executedCommands.length || behavior.has_shell_execution || behavior.has_script_execution" class="behavior-section">
               <div class="behavior-title">🖥 Command Execution</div>
               <div class="behavior-tags">
-                <span class="behavior-tag warn" v-if="behavior.has_shell_execution">Shell</span>
-                <span class="behavior-tag suspicious" v-if="behavior.has_script_execution">Script</span>
+                <span v-if="behavior.has_shell_execution" class="behavior-tag warn">Shell</span>
+                <span v-if="behavior.has_script_execution" class="behavior-tag suspicious">Script</span>
               </div>
               <textarea
                 v-if="executedCommands.length"
@@ -307,7 +307,7 @@ const toggle = (pid) => { collapsed.value[pid] = !collapsed.value[pid] }
               ></textarea>
             </div>
 
-            <div class="behavior-section" v-if="behavior.privilege_escalation">
+            <div v-if="behavior.privilege_escalation" class="behavior-section">
               <div class="behavior-title">🔒 Privilege</div>
               <div class="behavior-tags">
                 <span class="behavior-tag warn">Privilege Escalation</span>
@@ -315,20 +315,20 @@ const toggle = (pid) => { collapsed.value[pid] = !collapsed.value[pid] }
             </div>
           </div>
 
-          <div class="detail-lists" v-if="summary.persistence_paths?.length || summary.injected_targets?.length">
-            <div class="detail-list" v-if="parsedDynamic.summary.persistence_paths?.length">
+          <div v-if="summary.persistence_paths?.length || summary.injected_targets?.length" class="detail-lists">
+            <div v-if="parsedDynamic.summary.persistence_paths?.length" class="detail-list">
               <div class="detail-list-title">📝 Persistence Items</div>
-              <div class="detail-list-item" v-for="(path, idx) in parsedDynamic.summary.persistence_paths" :key="idx">{{ path }}</div>
+              <div v-for="(path, idx) in parsedDynamic.summary.persistence_paths" :key="idx" class="detail-list-item">{{ path }}</div>
             </div>
-            <div class="detail-list" v-if="parsedDynamic.summary.injected_targets?.length">
+            <div v-if="parsedDynamic.summary.injected_targets?.length" class="detail-list">
               <div class="detail-list-title">💉 Injected Targets</div>
-              <div class="detail-list-item" v-for="(target, idx) in parsedDynamic.summary.injected_targets" :key="idx">{{ target }}</div>
+              <div v-for="(target, idx) in parsedDynamic.summary.injected_targets" :key="idx" class="detail-list-item">{{ target }}</div>
             </div>
           </div>
         </div>
       </div>
       <!-- Process Tree -->
-      <div class="panel-card" v-if="parsedDynamic.process_tree">
+      <div v-if="parsedDynamic.process_tree" class="panel-card">
         <div class="panel-header">
           <span class="panel-icon">🌳</span>
           <span>Process Tree</span>
@@ -339,16 +339,16 @@ const toggle = (pid) => { collapsed.value[pid] = !collapsed.value[pid] }
       </div>
 
       <!-- Network by Process -->
-      <div class="panel-card" v-if="networksByProcess.length">
+      <div v-if="networksByProcess.length" class="panel-card">
         <div class="panel-header">
           <span class="panel-icon">🌐</span>
           <span>Network by Process</span>
         </div>
         <div class="panel-body no-padding">
           <div
-            class="process-group"
             v-for="proc in networksByProcess"
             :key="proc.pid"
+            class="process-group"
           >
             <div class="process-header" @click="toggle('net-' + proc.pid)">
               <span class="process-toggle">{{ isCollapsed('net-' + proc.pid) ? '▸' : '▾' }}</span>
@@ -383,16 +383,16 @@ const toggle = (pid) => { collapsed.value[pid] = !collapsed.value[pid] }
       </div>
 
       <!-- Events by Process -->
-      <div class="panel-card" v-if="eventsByProcess.length">
+      <div v-if="eventsByProcess.length" class="panel-card">
         <div class="panel-header">
           <span class="panel-icon">📋</span>
           <span>Events by Process</span>
         </div>
         <div class="panel-body no-padding">
           <div
-            class="process-group"
             v-for="proc in eventsByProcess"
             :key="proc.pid"
+            class="process-group"
           >
             <div class="process-header" @click="toggle(proc.pid)">
               <span class="process-toggle">{{ isCollapsed(proc.pid) ? '▸' : '▾' }}</span>
