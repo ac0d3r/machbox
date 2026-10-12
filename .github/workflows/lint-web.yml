@@ -1,0 +1,39 @@
+name: Lint Web
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "internal/report/web/**"
+      - ".github/workflows/lint-web.yml"
+  pull_request:
+    paths:
+      - "internal/report/web/**"
+      - ".github/workflows/lint-web.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  eslint:
+    name: lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: internal/report/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: internal/report/web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: ESLint
+        run: npm run lint

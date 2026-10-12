@@ -4,9 +4,12 @@ ENTITLEMENTS  := entitlements.plist
 SIGN_IDENTITY := $(or $(SIGN_IDENTITY),-)
 BINFILE       := bin/$(PRODUCT_NAME)
 
-.PHONY: all build clean
+.PHONY: all build lint clean
 
 all: build
+
+lint:
+	swiftlint lint --strict --disable-sourcekit
 
 build:
 	swift build -c "$(CONFIGURATION)" --product "$(PRODUCT_NAME)" \

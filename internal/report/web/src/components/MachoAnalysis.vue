@@ -3,7 +3,7 @@ import { ref, watch } from 'vue'
 import SymbolName from './SymbolName.vue'
 
 const props = defineProps({
-  data: Object,
+  data: { type: Object, required: true },
 })
 
 const archExpanded = ref({})
@@ -41,7 +41,6 @@ watch(() => props.data, (data) => {
         <span class="arrow" :class="{ open: !archExpanded[arch]?.collapsed }">▸</span>
       </div>
       <div v-if="archExpanded[arch] && !archExpanded[arch].collapsed" class="arch-body">
-
         <!-- Header -->
         <div class="sub-panel">
           <div class="sub-panel-header" @click="archExpanded[arch].header = !archExpanded[arch].header">
@@ -60,7 +59,7 @@ watch(() => props.data, (data) => {
         </div>
 
         <!-- Load Commands -->
-        <div class="sub-panel" v-if="info.load_commands && info.load_commands.length">
+        <div v-if="info.load_commands && info.load_commands.length" class="sub-panel">
           <div class="sub-panel-header" @click="archExpanded[arch].load_commands = !archExpanded[arch].load_commands">
             <span class="sub-panel-title">Load Commands ({{ info.load_commands.length }})</span>
             <span class="arrow" :class="{ open: archExpanded[arch]?.load_commands }">▸</span>
@@ -82,7 +81,7 @@ watch(() => props.data, (data) => {
         </div>
 
         <!-- Sections -->
-        <div class="sub-panel" v-if="info.sections && info.sections.length">
+        <div v-if="info.sections && info.sections.length" class="sub-panel">
           <div class="sub-panel-header" @click="archExpanded[arch].sections = !archExpanded[arch].sections">
             <span class="sub-panel-title">Sections ({{ info.sections.length }})</span>
             <span class="arrow" :class="{ open: archExpanded[arch]?.sections }">▸</span>
@@ -106,7 +105,7 @@ watch(() => props.data, (data) => {
         </div>
 
         <!-- Code Signature -->
-        <div class="sub-panel" v-if="info.code_signature">
+        <div v-if="info.code_signature" class="sub-panel">
           <div class="sub-panel-header" @click="archExpanded[arch].code_signature = !archExpanded[arch].code_signature">
             <span class="sub-panel-title">Code Signature</span>
             <span class="arrow" :class="{ open: archExpanded[arch]?.code_signature }">▸</span>
@@ -138,7 +137,7 @@ watch(() => props.data, (data) => {
         </div>
 
         <!-- Symbols -->
-        <div class="sub-panel" v-if="info.symbol && (info.symbol.imports && Object.keys(info.symbol.imports).length || info.symbol.exports?.length || info.symbol.locals?.length)">
+        <div v-if="info.symbol && (info.symbol.imports && Object.keys(info.symbol.imports).length || info.symbol.exports?.length || info.symbol.locals?.length)" class="sub-panel">
           <div class="sub-panel-header" @click="archExpanded[arch].symbols = !archExpanded[arch].symbols">
             <span class="sub-panel-title">Symbols</span>
             <span class="arrow" :class="{ open: archExpanded[arch]?.symbols }">▸</span>
@@ -205,7 +204,7 @@ watch(() => props.data, (data) => {
         </div>
 
         <!-- Strings -->
-        <div class="sub-panel" v-if="info.strings?.cstrings?.length || info.strings?.iocs?.length">
+        <div v-if="info.strings?.cstrings?.length || info.strings?.iocs?.length" class="sub-panel">
           <div class="sub-panel-header" @click="archExpanded[arch].strings = !archExpanded[arch].strings">
             <span class="sub-panel-title">Strings ({{ (info.strings.iocs?.length || 0) + (info.strings.cstrings?.length || 0) }})</span>
             <span class="arrow" :class="{ open: archExpanded[arch]?.strings }">▸</span>

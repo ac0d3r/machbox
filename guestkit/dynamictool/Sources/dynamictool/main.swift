@@ -30,8 +30,8 @@ private func runAnalysis(cfg: RunConfig) throws {
     signal(SIGTERM, SIG_IGN)
     let sigSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
     sigSource.setEventHandler {
-        if let s = sample {
-            kill(s.pid, SIGTERM)
+        if let sample {
+            kill(sample.pid, SIGTERM)
         }
         esClient.stop()
         dtraceClient?.stop()

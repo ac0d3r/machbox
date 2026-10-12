@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 
 defineProps({
-  data: Object,
+  data: { type: Object, required: true },
 })
 
 const expanded = ref({ appInfo: true })

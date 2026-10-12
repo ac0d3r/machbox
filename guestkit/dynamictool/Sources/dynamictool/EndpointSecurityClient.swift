@@ -73,7 +73,7 @@ final class EndpointSecurityClient {
             ES_EVENT_TYPE_NOTIFY_CLONE,
             ES_EVENT_TYPE_NOTIFY_COPYFILE,
             ES_EVENT_TYPE_NOTIFY_TRUNCATE,
-            ES_EVENT_TYPE_NOTIFY_CHDIR,
+            ES_EVENT_TYPE_NOTIFY_CHDIR
         ]
 
         let subscribeResult = events.withUnsafeBufferPointer { buffer in
@@ -420,7 +420,7 @@ final class EndpointSecurityClient {
                 object: EventObject(kind: "file", path: target),
                 metadata: [
                     "fflag": String(openEvent.fflag),
-                    "access": (openEvent.fflag & FWRITE) != 0 ? "write" : "read",
+                    "access": (openEvent.fflag & FWRITE) != 0 ? "write" : "read"
                 ]
             )
 
@@ -468,7 +468,7 @@ final class EndpointSecurityClient {
                     "protection": String(mmap.protection),
                     "max_protection": String(mmap.max_protection),
                     "flags": String(mmap.flags),
-                    "file_pos": String(mmap.file_pos),
+                    "file_pos": String(mmap.file_pos)
                 ]
             )
 
@@ -510,7 +510,7 @@ final class EndpointSecurityClient {
                     "source": source,
                     "destination": destination,
                     "mode": String(copy.mode),
-                    "flags": String(copy.flags),
+                    "flags": String(copy.flags)
                 ]
             )
 
@@ -540,7 +540,7 @@ final class EndpointSecurityClient {
                 metadata: [
                     "domain": String(uipc.domain),
                     "type": String(uipc.type),
-                    "protocol": String(uipc.protocol),
+                    "protocol": String(uipc.protocol)
                 ]
             )
 
@@ -687,7 +687,7 @@ final class EndpointSecurityClient {
             let iokit = msg.event.iokit_open
             var meta: [String: String] = [
                 "user_client_type": String(iokit.user_client_type),
-                "user_client_class": string(from: iokit.user_client_class),
+                "user_client_class": string(from: iokit.user_client_class)
             ]
             if msg.version >= 10 {
                 meta["parent_registry_id"] = String(iokit.parent_registry_id)
@@ -704,7 +704,7 @@ final class EndpointSecurityClient {
                 metadata: [
                     "address": String(mprotect.address),
                     "size": String(mprotect.size),
-                    "protection": String(mprotect.protection),
+                    "protection": String(mprotect.protection)
                 ]
             )
 
@@ -744,7 +744,7 @@ final class EndpointSecurityClient {
                 "app_url": string(from: item.app_url),
                 "legacy": String(item.legacy),
                 "managed": String(item.managed),
-                "uid": String(item.uid),
+                "uid": String(item.uid)
             ]
             return event("btm_launch_item_add", target: meta["item_url"], metadata: nonEmpty(meta))
 
@@ -757,7 +757,7 @@ final class EndpointSecurityClient {
                 "app_url": string(from: item.app_url),
                 "legacy": String(item.legacy),
                 "managed": String(item.managed),
-                "uid": String(item.uid),
+                "uid": String(item.uid)
             ]
             return event(
                 "btm_launch_item_remove", target: meta["item_url"], metadata: nonEmpty(meta))
@@ -778,7 +778,7 @@ final class EndpointSecurityClient {
                 target: "ruid=\(msg.event.setreuid.ruid) euid=\(msg.event.setreuid.euid)",
                 metadata: [
                     "ruid": String(msg.event.setreuid.ruid),
-                    "euid": String(msg.event.setreuid.euid),
+                    "euid": String(msg.event.setreuid.euid)
                 ]
             )
 
@@ -788,7 +788,7 @@ final class EndpointSecurityClient {
                 target: "rgid=\(msg.event.setregid.rgid) egid=\(msg.event.setregid.egid)",
                 metadata: [
                     "rgid": String(msg.event.setregid.rgid),
-                    "egid": String(msg.event.setregid.egid),
+                    "egid": String(msg.event.setregid.egid)
                 ]
             )
 
@@ -803,7 +803,7 @@ final class EndpointSecurityClient {
                 object: EventObject(kind: "remote_login", name: username),
                 metadata: [
                     "success": String(login.success), "username": username,
-                    "source_address": sourceAddress,
+                    "source_address": sourceAddress
                 ]
             )
 
@@ -829,7 +829,7 @@ final class EndpointSecurityClient {
                 object: EventObject(kind: "remote_session", name: username),
                 metadata: [
                     "success": String(attach.success), "source_address": sourceAddress,
-                    "username": username,
+                    "username": username
                 ]
             )
 
@@ -883,7 +883,7 @@ final class EndpointSecurityClient {
             return ""
         }
         let buffer = UnsafeRawBufferPointer(start: data, count: Int(token.length))
-        return String(decoding: buffer, as: UTF8.self)
+        return String(bytes: buffer, encoding: .utf8) ?? ""
     }
 
     private static func createTargetPath(_ create: es_event_create_t) -> String? {
@@ -903,8 +903,7 @@ final class EndpointSecurityClient {
     }
 
     private static func joinPath(dir: UnsafePointer<es_file_t>?, filename: es_string_token_t)
-        -> String?
-    {
+        -> String? {
         guard let directory = path(for: dir) else {
             return string(from: filename)
         }
@@ -938,8 +937,7 @@ final class EndpointSecurityClient {
     }
 
     private static func parentPIDVersion(for process: es_process_t, messageVersion: UInt32)
-        -> Int32?
-    {
+        -> Int32? {
         guard messageVersion >= 4 else {
             return nil
         }
@@ -960,8 +958,10 @@ final class EndpointSecurityClient {
     private static func newClientErrorDescription(_ result: es_new_client_result_t) -> String {
         switch result {
         case ES_NEW_CLIENT_RESULT_ERR_NOT_ENTITLED:
-            return
-                "EndpointSecurity client creation failed: missing com.apple.developer.endpoint-security.client entitlement"
+            return """
+                EndpointSecurity client creation failed: \
+                missing com.apple.developer.endpoint-security.client entitlement
+                """
         case ES_NEW_CLIENT_RESULT_ERR_NOT_PERMITTED:
             return
                 "EndpointSecurity client creation failed: Full Disk Access / TCC permission not granted"

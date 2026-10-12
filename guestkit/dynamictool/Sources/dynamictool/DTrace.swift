@@ -13,7 +13,11 @@ final class DTraceClient {
     private var isReady = false
 
     private static let regex: NSRegularExpression = {
-        try! NSRegularExpression(pattern: #"(\w+)=([^ ]+)"#, options: [])
+        do {
+            return try NSRegularExpression(pattern: #"(\w+)=([^ ]+)"#, options: [])
+        } catch {
+            preconditionFailure("invalid dtrace field regex: \(error)")
+        }
     }()
 
     init(scriptPath: String, targetPid: pid_t, sink: @escaping (Event) -> Void) {
@@ -33,7 +37,7 @@ final class DTraceClient {
         process.arguments = [
             "-C",
             "-D", "TARGET_PID=\(targetPid)",
-            "-s", scriptPath,
+            "-s", scriptPath
         ]
 
         let pipe = Pipe()
@@ -164,8 +168,7 @@ final class DTraceClient {
         regex.enumerateMatches(in: line, options: [], range: range) { match, _, _ in
             guard let match = match, match.numberOfRanges == 3 else { return }
             if let keyRange = Range(match.range(at: 1), in: line),
-                let valueRange = Range(match.range(at: 2), in: line)
-            {
+                let valueRange = Range(match.range(at: 2), in: line) {
                 dict[String(line[keyRange])] = String(line[valueRange])
             }
         }

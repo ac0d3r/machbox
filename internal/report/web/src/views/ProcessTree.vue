@@ -2,8 +2,8 @@
 import { ref } from 'vue'
 
 const props = defineProps({
-  node: Object,
-  depth: { type: Number, default: 0 }
+  node: { type: Object, required: true },
+  depth: { type: Number, default: 0 },
 })
 
 const expanded = ref(true)

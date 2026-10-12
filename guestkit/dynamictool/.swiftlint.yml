@@ -1,0 +1,53 @@
+included:
+  - Sources
+
+excluded:
+  - .build
+
+# EndpointSecurityClient is a large ES event surface; keep structural limits loose
+# so lint gates style/correctness without forcing a rewrite.
+disabled_rules:
+  - todo
+  # Needs SourceKit; we run with --disable-sourcekit (CLT / no Xcode).
+  - statement_position
+
+line_length:
+  warning: 140
+  error: 200
+  ignores_urls: true
+  ignores_function_declarations: true
+
+file_length:
+  warning: 1200
+  error: 1500
+
+type_body_length:
+  warning: 1000
+  error: 1300
+
+function_body_length:
+  warning: 600
+  error: 800
+
+cyclomatic_complexity:
+  warning: 60
+  error: 80
+
+identifier_name:
+  min_length:
+    warning: 2
+    error: 1
+  excluded:
+    - id
+    - ok
+    - to
+    - on
+    - x
+    - y
+    - i
+    - j
+
+trailing_comma:
+  mandatory_comma: false
+
+reporter: "xcode"
