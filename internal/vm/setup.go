@@ -20,6 +20,13 @@ import (
 
 const bootTimeout = 15 * time.Minute
 
+type setupPurpose int
+
+const (
+	purposeImport setupPurpose = iota
+	purposeUpdateAgent
+)
+
 // ErrSIPEnabled is returned when the guest still has System Integrity
 // Protection enabled.
 var ErrSIPEnabled = errors.New(
@@ -27,9 +34,9 @@ var ErrSIPEnabled = errors.New(
 		"boot the guest into Recovery Mode, open Utilities → Terminal, run " +
 		"`csrutil disable`, then reboot the guest and import again")
 
-// setup boots the cloned VBVM with the guest DMG attached and a GUI, then
-// dials the guest agent until a matching version reports in (or SIP/timeout).
-func setup(ctx context.Context, dir string) (*agent.GuestInfo, error) {
+// setup boots the VBVM with the guest DMG attached and a GUI, then dials the
+// guest agent until a matching protocol reports in (or SIP/timeout).
+func setup(ctx context.Context, dir string, purpose setupPurpose) (*agent.GuestInfo, error) {
 	// Main thread is pinned in main(); do not UnlockOSThread.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -67,6 +74,13 @@ func setup(ctx context.Context, dir string) (*agent.GuestInfo, error) {
 	waitCtx, waitCancel := context.WithTimeout(ctx, bootTimeout)
 	defer waitCancel()
 
+	finishVerb := "finish import"
+	pkgHint := "install machbox-guest.pkg from the MachboxGuest volume in the GUI"
+	if purpose == purposeUpdateAgent {
+		finishVerb = "finish agent update"
+		pkgHint = "reinstall machbox-guest.pkg from the MachboxGuest volume in the GUI"
+	}
+
 	go func() {
 		// Let StartGraphicApplication settle before the first Connect.
 		select {
@@ -76,13 +90,12 @@ func setup(ctx context.Context, dir string) (*agent.GuestInfo, error) {
 		case <-time.After(2 * time.Second):
 		}
 
-		info, err := waitGuest(waitCtx, inst)
+		info, err := waitGuest(waitCtx, inst, purpose)
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
 				err = fmt.Errorf(
-					"timed out after %s waiting for guest agent API %q; "+
-						"install machbox-guest.pkg from the MachboxGuest volume in the GUI",
-					bootTimeout, agent.ProtocolVersion)
+					"timed out after %s waiting for guest agent API %q; %s",
+					bootTimeout, agent.ProtocolVersion, pkgHint)
 			}
 			logrus.Errorf("setup checks failed: %v — close the VM window to abort", err)
 			done <- outcome{err: err}
@@ -92,12 +105,12 @@ func setup(ctx context.Context, dir string) (*agent.GuestInfo, error) {
 			done <- outcome{err: err}
 			return
 		}
-		logrus.Info("setup checks passed — close the VM window to finish import")
+		logrus.Infof("setup checks passed — close the VM window to %s", finishVerb)
 		done <- outcome{info: info}
 	}()
 
-	logrus.Infof("showing GUI (%dx%d); install machbox-guest.pkg from MachboxGuest if needed",
-		config.DefaultDisplayWidth, config.DefaultDisplayHeight)
+	logrus.Infof("showing GUI (%dx%d); %s",
+		config.DefaultDisplayWidth, config.DefaultDisplayHeight, pkgHint)
 	logrus.Infof("waiting for guest agent protocol %q…", agent.ProtocolVersion)
 	graphicErr := inst.ShowGraphic(config.DefaultDisplayWidth, config.DefaultDisplayHeight)
 	cancel()
@@ -123,15 +136,27 @@ func setup(ctx context.Context, dir string) (*agent.GuestInfo, error) {
 	return r.info, r.err
 }
 
-func waitGuest(ctx context.Context, inst *boxvm.VMInstance) (*agent.GuestInfo, error) {
+func waitGuest(ctx context.Context, inst *boxvm.VMInstance, purpose setupPurpose) (*agent.GuestInfo, error) {
 	dial := func(ctx context.Context) (net.Conn, error) {
 		return inst.ConnectVsock(ctx, agent.DefaultVsockPort)
 	}
 
+	// update-agent must observe the agent go down (pkg reinstall / kickstart)
+	// before accepting a handshake, otherwise an already-running old agent
+	// would pass immediately without the user reinstalling.
+	requireRestart := purpose == purposeUpdateAgent
+	sawDown := !requireRestart
+	loggedWaitingReinstall := false
+
 	for {
 		client, info, err := agent.Dial(ctx, dial)
 		if err != nil {
-			logrus.Debugf("guest agent not ready: %v", err)
+			if requireRestart && !sawDown {
+				logrus.Debugf("guest agent unreachable (waiting for reinstall cycle): %v", err)
+			} else {
+				logrus.Debugf("guest agent not ready: %v", err)
+			}
+			sawDown = true
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -145,7 +170,20 @@ func waitGuest(ctx context.Context, inst *boxvm.VMInstance) (*agent.GuestInfo, e
 			info.OSName = "macOS"
 		}
 		if err := agent.CompatibleProtocol(info.AgentVersion); err != nil {
+			sawDown = true
 			logrus.Warnf("guest not ready: %v — install/reinstall machbox-guest.pkg", err)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Second):
+			}
+			continue
+		}
+		if !sawDown {
+			if !loggedWaitingReinstall {
+				logrus.Info("guest agent is still running; reinstall machbox-guest.pkg from MachboxGuest to continue")
+				loggedWaitingReinstall = true
+			}
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()

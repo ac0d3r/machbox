@@ -20,6 +20,7 @@ func newVMCommand() *cobra.Command {
 		newVMImportCommand(),
 		newVMListCommand(),
 		newVMRenameCommand(),
+		newVMUpdateAgentCommand(),
 		newVMRemoveCommand(),
 	)
 	return cmd
@@ -98,6 +99,27 @@ func newVMRenameCommand() *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "new baseline name")
 	_ = cmd.MarkFlagRequired("name")
 	return cmd
+}
+
+func newVMUpdateAgentCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "update-agent <uuid-or-name>",
+		Short: "Reinstall the guest agent on an imported baseline",
+		Long: "Boots the baseline with the current MachboxGuest disk attached. " +
+			"In the VM window, open MachboxGuest and reinstall machbox-guest.pkg, " +
+			"then close the window when checks pass.",
+		Args:         cobra.ExactArgs(1),
+		SilenceUsage: true,
+		RunE: withVMDB(func(cmd *cobra.Command, args []string) error {
+			rec, err := vm.UpdateAgent(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\tagent=%s\n",
+				rec.UUID, rec.Name, rec.AgentVersion)
+			return nil
+		}),
+	}
 }
 
 func newVMRemoveCommand() *cobra.Command {

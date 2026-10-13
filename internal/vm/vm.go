@@ -71,7 +71,7 @@ func Import(ctx context.Context, opts ImportOptions) (vm *db.VM, err error) {
 		return nil, fmt.Errorf("clone vm bundle: %w", err)
 	}
 
-	info, err := setup(ctx, dir)
+	info, err := setup(ctx, dir, purposeImport)
 	if err != nil {
 		return nil, fmt.Errorf("import %s failed: %w", id, err)
 	}
@@ -92,6 +92,42 @@ func Import(ctx context.Context, opts ImportOptions) (vm *db.VM, err error) {
 	}
 
 	logrus.Infof("baseline %s is ready", id)
+	return vm, nil
+}
+
+// UpdateAgent boots an imported baseline with the current guest.dmg attached
+// so the user can reinstall machbox-guest.pkg, then refreshes guest metadata
+// in the database. The on-disk baseline is kept on failure.
+func UpdateAgent(ctx context.Context, identifier string) (*db.VM, error) {
+	vm, err := Resolve(identifier)
+	if err != nil {
+		return nil, err
+	}
+
+	dir := assets.VMPath(vm.UUID)
+	if _, err := os.Stat(dir); err != nil {
+		return nil, fmt.Errorf("baseline files %s: %w", dir, err)
+	}
+
+	logrus.Infof("updating guest agent for baseline %s (%s)", vm.Name, vm.UUID)
+	info, err := setup(ctx, dir, purposeUpdateAgent)
+	if err != nil {
+		return nil, fmt.Errorf("update agent for %s failed: %w", vm.UUID, err)
+	}
+	if info == nil {
+		return nil, fmt.Errorf("update agent for %s failed: setup returned no guest info (aborted?)", vm.UUID)
+	}
+
+	vm.OSName = info.OSName
+	vm.OSVersion = info.OSVersion
+	vm.OSBuild = info.BuildVersion
+	vm.AgentVersion = info.AgentVersion
+	vm.Error = ""
+	if err := db.SaveVM(vm); err != nil {
+		return nil, fmt.Errorf("save baseline after agent update: %w", err)
+	}
+
+	logrus.Infof("baseline %s agent updated to protocol %q", vm.UUID, vm.AgentVersion)
 	return vm, nil
 }
 

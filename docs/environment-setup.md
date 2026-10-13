@@ -42,3 +42,21 @@ In the VM window:
 2. Install `machbox-guest.pkg`.
 3. Wait for the installation to finish (Xcode Command Line Tools will be installed silently).
 4. After the checks pass, close the VM window to finish the import.
+
+## Update the Guest Agent on an Imported Baseline
+
+When a new Machbox release ships an updated `machbox-guest.pkg` (for example after
+a guest agent / protocol change), reinstall it on an existing baseline without
+re-importing the VirtualBuddy bundle:
+
+```bash
+machbox vm update-agent <uuid-or-name>
+```
+
+In the VM window:
+
+1. Open Finder and select `MachboxGuest` from the sidebar.
+2. Reinstall `machbox-guest.pkg` (overwrite the previous install).
+3. After the checks pass, close the VM window to finish the update.
+
+`machbox vm list` shows the recorded agent protocol version in the `AGENT` column.
