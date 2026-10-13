@@ -268,13 +268,13 @@ func (s *session) run(ctx context.Context, vmi *boxvm.VMInstance) (err error) {
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return fmt.Errorf("timed out after %s waiting for guest agent protocol %q",
-				agentWaitTimeout, agent.ProtocolVersion)
+				agentWaitTimeout, agent.AgentVersion)
 		}
 		return fmt.Errorf("wait for guest agent: %w", err)
 	}
 	defer client.Close()
 
-	if err := agent.CompatibleProtocol(info.AgentVersion); err != nil {
+	if err := agent.CompatibleAgent(info.AgentVersion); err != nil {
 		return fmt.Errorf("%w; re-import the baseline", err)
 	}
 

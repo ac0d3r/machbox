@@ -127,7 +127,7 @@ func UpdateAgent(ctx context.Context, identifier string) (*db.VM, error) {
 		return nil, fmt.Errorf("save baseline after agent update: %w", err)
 	}
 
-	logrus.Infof("baseline %s agent updated to protocol %q", vm.UUID, vm.AgentVersion)
+	logrus.Infof("baseline %s agent updated to version %q", vm.UUID, vm.AgentVersion)
 	return vm, nil
 }
 

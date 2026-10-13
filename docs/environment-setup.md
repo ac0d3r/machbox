@@ -46,7 +46,7 @@ In the VM window:
 ## Update the Guest Agent on an Imported Baseline
 
 When a new Machbox release ships an updated `machbox-guest.pkg` (for example after
-a guest agent / protocol change), reinstall it on an existing baseline without
+a guest agent version change), reinstall it on an existing baseline without
 re-importing the VirtualBuddy bundle:
 
 ```bash
@@ -59,4 +59,4 @@ In the VM window:
 2. Reinstall `machbox-guest.pkg` (overwrite the previous install).
 3. After the checks pass, close the VM window to finish the update.
 
-`machbox vm list` shows the recorded agent protocol version in the `AGENT` column.
+`machbox vm list` shows the recorded agent version in the `AGENT` column.
