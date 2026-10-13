@@ -47,6 +47,54 @@ const executedCommands = computed(() => {
   return out
 })
 
+const scoreItems = computed(() => {
+  const s = summary.value
+  const b = behavior.value
+  const items = [
+    { key: 'verdict', label: 'Verdict', value: s.verdict || 'unknown', kind: 'verdict' },
+    { key: 'risk', label: 'Risk Score', value: s.risk_score ?? '—' },
+  ]
+  if (s.injection_count) items.push({ key: 'inj', label: 'Injections', value: s.injection_count, warn: true })
+  if (s.persistence_count) items.push({ key: 'pers', label: 'Persistence', value: s.persistence_count, warn: true })
+  if (b.has_launchctl_persistence) items.push({ key: 'lctl', label: 'Persistence', value: 'launchctl', warn: true })
+  if (s.privilege_changes) items.push({ key: 'priv', label: 'Privilege', value: s.privilege_changes, warn: true })
+  if (s.code_sig_invalidations) items.push({ key: 'csig', label: 'Code Sig', value: s.code_sig_invalidations, warn: true })
+  if (s.parse_errors) items.push({ key: 'parse', label: 'Parse Errors', value: s.parse_errors, warn: true })
+  if (b.child_processes) items.push({ key: 'child', label: 'Child Processes', value: b.child_processes })
+  return items
+})
+
+const hasNetworkBehavior = computed(() =>
+  behavior.value.has_external_network ||
+  behavior.value.has_bind_all_interfaces ||
+  behavior.value.has_listen_socket ||
+  (behavior.value.network_connections?.length > 0)
+)
+
+const hasFileBehavior = computed(() =>
+  behavior.value.files_written?.length ||
+  behavior.value.files_deleted?.length ||
+  behavior.value.files_modified_perms?.length ||
+  behavior.value.has_sensitive_write ||
+  behavior.value.has_sensitive_delete ||
+  behavior.value.has_sensitive_chmod
+)
+
+const hasCommandBehavior = computed(() =>
+  executedCommands.value.length ||
+  behavior.value.has_shell_execution ||
+  behavior.value.has_script_execution
+)
+
+const hasBehaviorGrid = computed(() =>
+  hasNetworkBehavior.value ||
+  hasFileBehavior.value ||
+  hasCommandBehavior.value ||
+  behavior.value.privilege_escalation ||
+  summary.value.persistence_paths?.length ||
+  summary.value.injected_targets?.length
+)
+
 const verdictClass = (verdict) => {
   if (verdict === 'malicious') return 'verdict-malicious'
   if (verdict === 'suspicious') return 'verdict-suspicious'
@@ -139,7 +187,7 @@ const networkEventDetails = (ev) => {
       parts.push(`${k}=${v}`)
     }
   }
-  return parts.length ? parts.join(' | ') : '-'
+  return parts.length ? parts.join(' · ') : '—'
 }
 
 const formatEventTime = (ts) => {
@@ -186,177 +234,173 @@ const eventDetails = (ev) => {
   if (ev.subject?.path) parts.push(`subject=${ev.subject.path}`)
   if (ev.object?.kind) parts.push(`kind=${ev.object.kind}`)
 
-  let result = parts.length ? parts.join(' | ') : '-'
+  let result = parts.length ? parts.join(' · ') : '—'
   if (envBlock) {
     result = result + '\n\n' + envBlock
   }
   return result
 }
 
+const shortPath = (path) => {
+  if (!path || path === 'unknown' || path === '<root>') return path
+  const parts = path.split('/')
+  if (parts.length <= 3) return path
+  return '…/' + parts.slice(-2).join('/')
+}
+
+// Default collapsed for event tables; expanded for network (usually smaller).
 const collapsed = ref({})
-const isCollapsed = (pid) => collapsed.value[pid]
-const toggle = (pid) => { collapsed.value[pid] = !collapsed.value[pid] }
+const isCollapsed = (key, defaultCollapsed = true) => {
+  if (collapsed.value[key] === undefined) return defaultCollapsed
+  return collapsed.value[key]
+}
+const toggle = (key, defaultCollapsed = true) => {
+  collapsed.value[key] = !isCollapsed(key, defaultCollapsed)
+}
 </script>
 
 <template>
   <div class="tab-panel">
-    <h3 class="section-title">Dynamic Analysis</h3>
-
-    <div v-if="!hasData" class="panel-card empty-state">
-      <div class="empty-content">
-        <p>No dynamic analysis data available</p>
-      </div>
+    <div v-if="!hasData" class="panel empty-state">
+      <p class="empty-title">No dynamic analysis</p>
+      <p class="empty-hint">This report has no process tree or behavioral events. It may be a static-only run, or no executable was launched.</p>
     </div>
 
     <template v-else>
-      <!-- Summary -->
-      <div class="panel-card">
-        <div class="panel-header">
-          <span class="panel-icon">📊</span>
-          <span>Summary</span>
+      <!-- Score strip -->
+      <section class="panel score-panel">
+        <div class="score-strip">
+          <div
+            v-for="item in scoreItems"
+            :key="item.key"
+            class="score-cell"
+          >
+            <div
+              class="score-value"
+              :class="[
+                item.kind === 'verdict' ? verdictClass(item.value) : '',
+                item.warn ? 'warn' : '',
+              ]"
+            >
+              {{ item.value }}
+            </div>
+            <div class="score-label">{{ item.label }}</div>
+          </div>
         </div>
-        <div class="panel-body">
-          <div class="summary-grid">
-            <div class="summary-item">
-              <span class="summary-value" :class="verdictClass(summary.verdict)">{{ summary.verdict || 'unknown' }}</span>
-              <span class="summary-label">Verdict</span>
+
+        <div v-if="summary.risk_factors?.length" class="risk-block">
+          <div class="block-label">Risk factors</div>
+          <ul class="risk-list">
+            <li v-for="(factor, idx) in summary.risk_factors" :key="'rf-' + idx">{{ factor }}</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- Behavior grid -->
+      <section v-if="hasBehaviorGrid" class="behavior-grid">
+        <div v-if="hasNetworkBehavior" class="panel behavior-card">
+          <div class="panel-head">Network</div>
+          <div class="panel-body">
+            <div class="tag-row">
+              <span v-if="behavior.has_external_network" class="tag warn">External</span>
+              <span v-if="behavior.has_bind_all_interfaces" class="tag warn">Bind all</span>
+              <span v-if="behavior.has_listen_socket" class="tag soft">Listen</span>
             </div>
-            <div class="summary-item">
-              <span class="summary-value">{{ summary.risk_score }}</span>
-              <span class="summary-label">Risk Score</span>
-            </div>
-            <div v-if="summary.injection_count" class="summary-item">
-              <span class="summary-value warn">{{ summary.injection_count }}</span>
-              <span class="summary-label">Injections</span>
-            </div>
-            <div v-if="summary.persistence_count" class="summary-item">
-              <span class="summary-value warn">{{ summary.persistence_count }}</span>
-              <span class="summary-label">Persistence</span>
-            </div>
-            <div v-if="behavior.has_launchctl_persistence" class="summary-item">
-              <span class="summary-value warn">launchctl</span>
-              <span class="summary-label">Persistence</span>
-            </div>
-            <div v-if="summary.privilege_changes" class="summary-item">
-              <span class="summary-value warn">{{ summary.privilege_changes }}</span>
-              <span class="summary-label">Privilege Changes</span>
-            </div>
-            <div v-if="summary.code_sig_invalidations" class="summary-item">
-              <span class="summary-value warn">{{ summary.code_sig_invalidations }}</span>
-              <span class="summary-label">Code Sig Invalidated</span>
-            </div>
-            <div v-if="summary.parse_errors" class="summary-item">
-              <span class="summary-value warn">{{ summary.parse_errors }}</span>
-              <span class="summary-label">Parse Errors</span>
-            </div>
-            <div v-if="behavior.child_processes" class="summary-item">
-              <span class="summary-value">{{ behavior.child_processes }}</span>
-              <span class="summary-label">Child Processes</span>
-            </div>
+            <ul v-if="behavior.network_connections?.length" class="mono-list">
+              <li v-for="(conn, idx) in behavior.network_connections" :key="'net-' + idx">{{ conn }}</li>
+            </ul>
           </div>
+        </div>
 
-          <div v-if="summary.risk_factors?.length" class="risk-factors">
-            <div class="behavior-title">⚠️ Risk Factors</div>
-            <div v-for="(factor, idx) in summary.risk_factors" :key="'rf-' + idx" class="risk-factor-item">{{ factor }}</div>
-          </div>
-
-          <!-- Behavior Summary -->
-          <div v-if="Object.keys(behavior).length" class="behavior-summary">
-            <div v-if="behavior.has_external_network || behavior.has_bind_all_interfaces || behavior.has_listen_socket || behavior.network_connections?.length" class="behavior-section">
-              <div class="behavior-title">🌐 Network</div>
-              <div class="behavior-tags">
-                <span v-if="behavior.has_external_network" class="behavior-tag warn">External Connection</span>
-                <span v-if="behavior.has_bind_all_interfaces" class="behavior-tag warn">Bind 0.0.0.0/::</span>
-                <span v-if="behavior.has_listen_socket" class="behavior-tag suspicious">Listen Socket</span>
-              </div>
-              <div v-for="(conn, idx) in behavior.network_connections" :key="'net-' + idx" class="detail-list-item">{{ conn }}</div>
+        <div v-if="hasFileBehavior" class="panel behavior-card">
+          <div class="panel-head">File system</div>
+          <div class="panel-body">
+            <div class="tag-row">
+              <span v-if="behavior.has_sensitive_write" class="tag warn">Sensitive write</span>
+              <span v-if="behavior.has_sensitive_delete" class="tag warn">Sensitive delete</span>
+              <span v-if="behavior.has_sensitive_chmod" class="tag warn">Sensitive chmod</span>
             </div>
-
-            <div v-if="behavior.files_written?.length || behavior.files_deleted?.length || behavior.files_modified_perms?.length || behavior.has_sensitive_write || behavior.has_sensitive_delete || behavior.has_sensitive_chmod" class="behavior-section">
-              <div class="behavior-title">📁 File System</div>
-              <div class="behavior-tags">
-                <span v-if="behavior.has_sensitive_write" class="behavior-tag warn">Sensitive Write</span>
-                <span v-if="behavior.has_sensitive_delete" class="behavior-tag warn">Sensitive Delete</span>
-                <span v-if="behavior.has_sensitive_chmod" class="behavior-tag warn">Sensitive Chmod</span>
-              </div>
-              <div v-if="behavior.files_written?.length" class="detail-list">
-                <div class="detail-list-title">Written</div>
-                <div v-for="(path, idx) in behavior.files_written" :key="'w-' + idx" class="detail-list-item">{{ path }}</div>
-              </div>
-              <div v-if="behavior.files_deleted?.length" class="detail-list">
-                <div class="detail-list-title">Deleted</div>
-                <div v-for="(path, idx) in behavior.files_deleted" :key="'d-' + idx" class="detail-list-item">{{ path }}</div>
-              </div>
-              <div v-if="behavior.files_modified_perms?.length" class="detail-list">
-                <div class="detail-list-title">Permission Changes</div>
-                <div v-for="(path, idx) in behavior.files_modified_perms" :key="'p-' + idx" class="detail-list-item">{{ path }}</div>
-              </div>
+            <div v-if="behavior.files_written?.length" class="path-group">
+              <div class="path-group-label">Written</div>
+              <ul class="mono-list">
+                <li v-for="(path, idx) in behavior.files_written" :key="'w-' + idx">{{ path }}</li>
+              </ul>
             </div>
-
-            <div v-if="executedCommands.length || behavior.has_shell_execution || behavior.has_script_execution" class="behavior-section">
-              <div class="behavior-title">🖥 Command Execution</div>
-              <div class="behavior-tags">
-                <span v-if="behavior.has_shell_execution" class="behavior-tag warn">Shell</span>
-                <span v-if="behavior.has_script_execution" class="behavior-tag suspicious">Script</span>
-              </div>
-              <textarea
-                v-if="executedCommands.length"
-                class="command-lines-textarea"
-                readonly
-                :value="executedCommands.join('\n')"
-              ></textarea>
+            <div v-if="behavior.files_deleted?.length" class="path-group">
+              <div class="path-group-label">Deleted</div>
+              <ul class="mono-list">
+                <li v-for="(path, idx) in behavior.files_deleted" :key="'d-' + idx">{{ path }}</li>
+              </ul>
             </div>
-
-            <div v-if="behavior.privilege_escalation" class="behavior-section">
-              <div class="behavior-title">🔒 Privilege</div>
-              <div class="behavior-tags">
-                <span class="behavior-tag warn">Privilege Escalation</span>
-              </div>
-            </div>
-          </div>
-
-          <div v-if="summary.persistence_paths?.length || summary.injected_targets?.length" class="detail-lists">
-            <div v-if="parsedDynamic.summary.persistence_paths?.length" class="detail-list">
-              <div class="detail-list-title">📝 Persistence Items</div>
-              <div v-for="(path, idx) in parsedDynamic.summary.persistence_paths" :key="idx" class="detail-list-item">{{ path }}</div>
-            </div>
-            <div v-if="parsedDynamic.summary.injected_targets?.length" class="detail-list">
-              <div class="detail-list-title">💉 Injected Targets</div>
-              <div v-for="(target, idx) in parsedDynamic.summary.injected_targets" :key="idx" class="detail-list-item">{{ target }}</div>
+            <div v-if="behavior.files_modified_perms?.length" class="path-group">
+              <div class="path-group-label">Permission changes</div>
+              <ul class="mono-list">
+                <li v-for="(path, idx) in behavior.files_modified_perms" :key="'p-' + idx">{{ path }}</li>
+              </ul>
             </div>
           </div>
         </div>
-      </div>
-      <!-- Process Tree -->
-      <div v-if="parsedDynamic.process_tree" class="panel-card">
-        <div class="panel-header">
-          <span class="panel-icon">🌳</span>
-          <span>Process Tree</span>
+
+        <div v-if="hasCommandBehavior" class="panel behavior-card">
+          <div class="panel-head">Commands</div>
+          <div class="panel-body">
+            <div class="tag-row">
+              <span v-if="behavior.has_shell_execution" class="tag warn">Shell</span>
+              <span v-if="behavior.has_script_execution" class="tag soft">Script</span>
+            </div>
+            <pre v-if="executedCommands.length" class="cmd-block">{{ executedCommands.join('\n') }}</pre>
+          </div>
         </div>
-        <div class="panel-body no-padding">
+
+        <div v-if="behavior.privilege_escalation || summary.persistence_paths?.length || summary.injected_targets?.length" class="panel behavior-card">
+          <div class="panel-head">Persistence &amp; injection</div>
+          <div class="panel-body">
+            <div class="tag-row">
+              <span v-if="behavior.privilege_escalation" class="tag warn">Privilege escalation</span>
+            </div>
+            <div v-if="summary.persistence_paths?.length" class="path-group">
+              <div class="path-group-label">Persistence items</div>
+              <ul class="mono-list">
+                <li v-for="(path, idx) in summary.persistence_paths" :key="'pp-' + idx">{{ path }}</li>
+              </ul>
+            </div>
+            <div v-if="summary.injected_targets?.length" class="path-group">
+              <div class="path-group-label">Injected targets</div>
+              <ul class="mono-list">
+                <li v-for="(target, idx) in summary.injected_targets" :key="'it-' + idx">{{ target }}</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Process tree -->
+      <section v-if="parsedDynamic.process_tree" class="panel">
+        <div class="panel-head">Process tree</div>
+        <div class="panel-body flush tree-wrap">
           <ProcessTree :node="parsedDynamic.process_tree" />
         </div>
-      </div>
+      </section>
 
-      <!-- Network by Process -->
-      <div v-if="networksByProcess.length" class="panel-card">
-        <div class="panel-header">
-          <span class="panel-icon">🌐</span>
-          <span>Network by Process</span>
+      <!-- Network by process -->
+      <section v-if="networksByProcess.length" class="panel">
+        <div class="panel-head">
+          <span>Network by process</span>
+          <span class="head-meta">{{ networksByProcess.length }} processes</span>
         </div>
-        <div class="panel-body no-padding">
+        <div class="panel-body flush">
           <div
             v-for="proc in networksByProcess"
-            :key="proc.pid"
-            class="process-group"
+            :key="'netg-' + proc.pid"
+            class="proc-group"
           >
-            <div class="process-header" @click="toggle('net-' + proc.pid)">
-              <span class="process-toggle">{{ isCollapsed('net-' + proc.pid) ? '▸' : '▾' }}</span>
-              <span class="process-pid">PID {{ proc.pid }}</span>
-              <span class="process-path">{{ proc.path }}</span>
-              <span class="process-count">{{ proc.networks.length }} events</span>
-            </div>
-            <div v-if="!isCollapsed('net-' + proc.pid)" class="process-events">
+            <button type="button" class="proc-header" @click="toggle('net-' + proc.pid, false)">
+              <span class="proc-toggle">{{ isCollapsed('net-' + proc.pid, false) ? '▸' : '▾' }}</span>
+              <span class="proc-pid">{{ proc.pid }}</span>
+              <span class="proc-path" :title="proc.path">{{ shortPath(proc.path) }}</span>
+              <span class="proc-count">{{ proc.networks.length }}</span>
+            </button>
+            <div v-if="!isCollapsed('net-' + proc.pid, false)" class="table-scroll">
               <table class="event-table">
                 <thead>
                   <tr>
@@ -372,7 +416,7 @@ const toggle = (pid) => { collapsed.value[pid] = !collapsed.value[pid] }
                     <td class="col-type">
                       <span class="badge" :class="networkEventBadgeClass(ev.type)">{{ ev.type }}</span>
                     </td>
-                    <td class="col-target">{{ networkEventTarget(ev) }}</td>
+                    <td class="col-target" :title="networkEventTarget(ev)">{{ networkEventTarget(ev) }}</td>
                     <td class="col-details">{{ networkEventDetails(ev) }}</td>
                   </tr>
                 </tbody>
@@ -380,27 +424,27 @@ const toggle = (pid) => { collapsed.value[pid] = !collapsed.value[pid] }
             </div>
           </div>
         </div>
-      </div>
+      </section>
 
-      <!-- Events by Process -->
-      <div v-if="eventsByProcess.length" class="panel-card">
-        <div class="panel-header">
-          <span class="panel-icon">📋</span>
-          <span>Events by Process</span>
+      <!-- Events by process -->
+      <section v-if="eventsByProcess.length" class="panel">
+        <div class="panel-head">
+          <span>Events by process</span>
+          <span class="head-meta">{{ eventsByProcess.length }} processes · collapsed by default</span>
         </div>
-        <div class="panel-body no-padding">
+        <div class="panel-body flush">
           <div
             v-for="proc in eventsByProcess"
-            :key="proc.pid"
-            class="process-group"
+            :key="'evg-' + proc.pid"
+            class="proc-group"
           >
-            <div class="process-header" @click="toggle(proc.pid)">
-              <span class="process-toggle">{{ isCollapsed(proc.pid) ? '▸' : '▾' }}</span>
-              <span class="process-pid">PID {{ proc.pid }}</span>
-              <span class="process-path">{{ proc.path }}</span>
-              <span class="process-count">{{ proc.events.length }} events</span>
-            </div>
-            <div v-if="!isCollapsed(proc.pid)" class="process-events">
+            <button type="button" class="proc-header" @click="toggle(proc.pid, true)">
+              <span class="proc-toggle">{{ isCollapsed(proc.pid, true) ? '▸' : '▾' }}</span>
+              <span class="proc-pid">{{ proc.pid }}</span>
+              <span class="proc-path" :title="proc.path">{{ shortPath(proc.path) }}</span>
+              <span class="proc-count">{{ proc.events.length }}</span>
+            </button>
+            <div v-if="!isCollapsed(proc.pid, true)" class="table-scroll">
               <table class="event-table">
                 <thead>
                   <tr>
@@ -416,7 +460,7 @@ const toggle = (pid) => { collapsed.value[pid] = !collapsed.value[pid] }
                     <td class="col-type">
                       <span class="badge" :class="eventBadgeClass(ev.type)">{{ ev.type }}</span>
                     </td>
-                    <td class="col-target">{{ eventTarget(ev) }}</td>
+                    <td class="col-target" :title="eventTarget(ev)">{{ eventTarget(ev) }}</td>
                     <td class="col-details">{{ eventDetails(ev) }}</td>
                   </tr>
                 </tbody>
@@ -424,247 +468,370 @@ const toggle = (pid) => { collapsed.value[pid] = !collapsed.value[pid] }
             </div>
           </div>
         </div>
-      </div>
+      </section>
     </template>
   </div>
 </template>
 
 <style scoped>
-.section-title {
-  font-size: 16px;
-  font-weight: 600;
-  margin-bottom: 16px;
-  color: #333;
+.tab-panel {
   display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.section-title::before {
-  content: '';
-  display: inline-block;
-  width: 4px;
-  height: 16px;
-  background: #e64a19;
-  border-radius: 2px;
+  flex-direction: column;
+  gap: 14px;
 }
 
-.panel-card {
+.panel {
   background: #fff;
-  border-radius: 8px;
-  margin-bottom: 16px;
+  border: 1px solid #ebebeb;
+  border-radius: 10px;
   overflow: hidden;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
 }
-.panel-header {
+
+.panel-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 14px 20px;
-  font-size: 14px;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  font-size: 13px;
   font-weight: 600;
   color: #333;
   background: #fafafa;
   border-bottom: 1px solid #f0f0f0;
 }
-.panel-icon {
-  font-size: 16px;
+
+.head-meta {
+  font-size: 11px;
+  font-weight: 500;
+  color: #999;
 }
+
 .panel-body {
-  padding: 16px 20px;
+  padding: 14px 16px;
 }
-.panel-body.no-padding {
+
+.panel-body.flush {
   padding: 0;
 }
 
 .empty-state {
+  padding: 48px 24px;
   text-align: center;
-  color: #888;
-  padding: 60px;
-}
-.empty-content p {
-  margin: 0;
 }
 
-/* Summary grid */
-.summary-grid {
+.empty-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #555;
+}
+
+.empty-hint {
+  margin: 0 auto;
+  max-width: 420px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #999;
+}
+
+/* Score strip */
+.score-panel {
+  padding: 0;
+}
+
+.score-strip {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 16px;
-  margin-bottom: 20px;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 0;
+  border-bottom: 1px solid #f0f0f0;
 }
-.summary-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 12px;
-  background: #fafafa;
-  border-radius: 6px;
+
+.score-cell {
+  padding: 16px 12px;
+  text-align: center;
+  border-right: 1px solid #f0f0f0;
 }
-.summary-value {
-  font-size: 24px;
+
+.score-cell:last-child {
+  border-right: none;
+}
+
+.score-value {
+  font-size: 22px;
   font-weight: 700;
-  color: #e64a19;
+  color: #333;
+  line-height: 1.2;
+  text-transform: capitalize;
 }
-.summary-value.warn {
+
+.score-value.warn {
   color: #c62828;
 }
-.summary-label {
-  font-size: 12px;
-  color: #888;
+
+.score-label {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #999;
+  letter-spacing: 0.02em;
 }
 
-/* Event type distribution */
-.event-types {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.event-type-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 13px;
-}
-.event-type-name {
-  width: 140px;
-  color: #555;
-  text-transform: capitalize;
-  flex-shrink: 0;
-}
-.event-type-bar {
-  flex: 1;
-  height: 8px;
-  background: #f0f0f0;
-  border-radius: 4px;
-  overflow: hidden;
-}
-.event-type-fill {
-  display: block;
-  height: 100%;
-  background: #ff7043;
-  border-radius: 4px;
-  transition: width 0.4s ease;
-}
-.event-type-count {
-  width: 40px;
-  text-align: right;
-  color: #666;
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 12px;
+.risk-block {
+  padding: 12px 16px 14px;
+  background: #fff8f0;
 }
 
-/* Detail lists */
-.detail-lists {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  margin-top: 16px;
-}
-.detail-list {
-  background: #fafafa;
-  border-radius: 6px;
-  padding: 12px 16px;
-}
-.detail-list-title {
-  font-size: 12px;
+.block-label {
+  font-size: 11px;
   font-weight: 600;
-  color: #555;
+  color: #b35c00;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
   margin-bottom: 8px;
 }
-.detail-list-item {
-  font-size: 12px;
-  color: #666;
-  font-family: "SFMono-Regular", Consolas, monospace;
-  word-break: break-all;
-  padding: 3px 0;
-  border-bottom: 1px solid #f0f0f0;
-}
-.detail-list-item:last-child {
-  border-bottom: none;
-}
 
-/* Events by Process */
-.process-group {
-  border-bottom: 1px solid #f0f0f0;
-}
-.process-group:last-child {
-  border-bottom: none;
-}
-.process-header {
+.risk-list {
+  margin: 0;
+  padding-left: 18px;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.risk-list li {
+  font-size: 12px;
+  color: #5c4a3a;
+  line-height: 1.4;
+}
+
+/* Behavior grid */
+.behavior-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+@media (max-width: 900px) {
+  .behavior-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.behavior-card .panel-body {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
-  padding: 12px 20px;
-  font-size: 13px;
-  cursor: pointer;
-  background: #fff;
-}
-.process-header:hover {
-  background: #fafafa;
-}
-.process-toggle {
-  width: 14px;
-  color: #888;
-  font-size: 12px;
-}
-.process-pid {
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 12px;
-  color: #666;
-  min-width: 60px;
-}
-.process-path {
-  flex: 1;
-  color: #333;
-  font-weight: 500;
-  word-break: break-all;
-}
-.process-count {
-  font-size: 12px;
-  color: #888;
-  background: #f5f5f5;
-  padding: 2px 8px;
-  border-radius: 10px;
 }
 
-.process-events {
-  padding: 0 20px 16px 20px;
+.tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
-.event-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-.event-table th {
-  text-align: left;
-  padding: 8px 10px;
-  border-bottom: 1px solid #eee;
-  color: #888;
-  font-weight: 600;
-  background: #fafafa;
-}
-.event-table td {
-  padding: 8px 10px;
-  border-bottom: 1px solid #f5f5f5;
-  vertical-align: top;
-}
-.event-table tr:last-child td {
-  border-bottom: none;
-}
-.col-time { width: 90px; white-space: nowrap; color: #666; font-family: "SFMono-Regular", Consolas, monospace; }
-.col-type { width: 100px; }
-.col-target { width: 320px; word-break: break-all; color: #555; }
-.col-details { color: #888; word-break: break-all; white-space: pre-wrap; }
 
-.badge {
+.tag {
   display: inline-block;
   padding: 2px 8px;
   border-radius: 4px;
   font-size: 11px;
   font-weight: 600;
-  text-transform: capitalize;
+  background: #eef2f7;
+  color: #456;
 }
+
+.tag.warn {
+  background: #fdecea;
+  color: #c62828;
+}
+
+.tag.soft {
+  background: #fff3e0;
+  color: #ef6c00;
+}
+
+.path-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #888;
+  margin-bottom: 4px;
+}
+
+.mono-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mono-list li {
+  font-family: "SF Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  color: #555;
+  word-break: break-all;
+  padding: 3px 0;
+  border-bottom: 1px solid #f4f4f4;
+}
+
+.mono-list li:last-child {
+  border-bottom: none;
+}
+
+.cmd-block {
+  margin: 0;
+  padding: 10px 12px;
+  background: #f7f7f8;
+  border-radius: 6px;
+  border: 1px solid #eee;
+  font-family: "SF Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  color: #444;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow: auto;
+  line-height: 1.45;
+}
+
+.tree-wrap {
+  padding: 4px 0;
+  max-height: 360px;
+  overflow: auto;
+}
+
+/* Process groups */
+.proc-group {
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.proc-group:last-child {
+  border-bottom: none;
+}
+
+.proc-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 16px;
+  border: 0;
+  background: #fff;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.proc-header:hover {
+  background: #fafafa;
+}
+
+.proc-toggle {
+  width: 12px;
+  color: #aaa;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.proc-pid {
+  font-family: "SF Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: #e64a19;
+  min-width: 42px;
+  flex-shrink: 0;
+}
+
+.proc-path {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #333;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proc-count {
+  font-size: 11px;
+  color: #888;
+  background: #f3f3f3;
+  padding: 1px 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.table-scroll {
+  max-height: 280px;
+  overflow: auto;
+  border-top: 1px solid #f0f0f0;
+  background: #fcfcfc;
+}
+
+.event-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  table-layout: fixed;
+}
+
+.event-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid #eee;
+  color: #888;
+  font-weight: 600;
+  background: #f7f7f8;
+}
+
+.event-table td {
+  padding: 7px 12px;
+  border-bottom: 1px solid #f2f2f2;
+  vertical-align: top;
+}
+
+.event-table tr:last-child td {
+  border-bottom: none;
+}
+
+.col-time {
+  width: 96px;
+  white-space: nowrap;
+  color: #666;
+  font-family: "SF Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.col-type {
+  width: 120px;
+}
+
+.col-target {
+  width: 34%;
+  word-break: break-all;
+  color: #555;
+  font-family: "SF Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.col-details {
+  color: #888;
+  word-break: break-all;
+  white-space: pre-wrap;
+  font-size: 11px;
+}
+
+.badge {
+  display: inline-block;
+  max-width: 100%;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .badge-clean { background: #e8f5e9; color: #2e7d32; }
 .badge-suspicious { background: #fff3e0; color: #ef6c00; }
 .badge-malicious { background: #ffebee; color: #c62828; }
@@ -672,85 +839,8 @@ const toggle = (pid) => { collapsed.value[pid] = !collapsed.value[pid] }
 .badge-network-medium { background: #fff8e1; color: #f57f17; }
 .badge-network-high { background: #ffebee; color: #c62828; }
 
-/* Verdict colors */
 .verdict-malicious { color: #c62828; }
 .verdict-suspicious { color: #ef6c00; }
 .verdict-clean { color: #2e7d32; }
 .verdict-unknown { color: #757575; }
-
-/* Behavior summary */
-.behavior-summary {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  margin-top: 16px;
-}
-.behavior-section {
-  background: #fafafa;
-  border-radius: 6px;
-  padding: 12px 16px;
-}
-.behavior-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: #555;
-  margin-bottom: 8px;
-}
-.behavior-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 8px;
-}
-.behavior-tag {
-  display: inline-block;
-  padding: 3px 8px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  background: #e3f2fd;
-  color: #1565c0;
-}
-.behavior-tag.warn {
-  background: #ffebee;
-  color: #c62828;
-}
-.behavior-tag.suspicious {
-  background: #fff3e0;
-  color: #ef6c00;
-}
-
-/* Risk factors */
-.risk-factors {
-  background: #fff3e0;
-  border-radius: 6px;
-  padding: 12px 16px;
-  margin-top: 16px;
-}
-.risk-factor-item {
-  font-size: 12px;
-  color: #555;
-  padding: 3px 0;
-  border-bottom: 1px solid #ffe0b2;
-}
-.risk-factor-item:last-child {
-  border-bottom: none;
-}
-
-.command-lines-textarea {
-  width: 100%;
-  min-height: 120px;
-  margin-top: 10px;
-  font-size: 12px;
-  color: #555;
-  font-family: "SFMono-Regular", Consolas, monospace;
-  background: #fff;
-  border: 1px solid #eee;
-  border-radius: 4px;
-  padding: 8px;
-  resize: vertical;
-  white-space: pre;
-  overflow-wrap: normal;
-  overflow-x: auto;
-}
 </style>

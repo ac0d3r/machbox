@@ -12,7 +12,7 @@ const props = defineProps({
   depth: { type: Number, default: 0 }
 })
 
-const expanded = ref(props.depth < 2)
+const expanded = ref(props.depth < 1)
 
 const hasChildren = computed(() => props.node?.children && props.node.children.length > 0)
 const nodeData = computed(() => props.node?.data)
@@ -48,9 +48,8 @@ const canExpand = computed(() => hasChildren.value || isMacho.value || isAppBund
     >
       <span v-if="canExpand" class="arrow" :class="{ open: expanded }">▸</span>
       <span v-else class="arrow-placeholder"></span>
-      <span class="node-name">{{ node.base?.name }}</span>
+      <span class="node-name" :title="node.base?.path">{{ node.base?.name }}</span>
       <span class="badge" :class="'badge-' + displayType">{{ displayType }}</span>
-      <span class="node-path">{{ node.base?.path }}</span>
       <span v-if="node.base?.size && !isDir" class="node-size">{{ formatSize(node.base.size) }}</span>
     </div>
 
@@ -90,10 +89,9 @@ const canExpand = computed(() => hasChildren.value || isMacho.value || isAppBund
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 0;
+  padding: 9px 14px;
   border-bottom: 1px solid #f5f5f5;
   transition: background 0.15s;
-  border-radius: 4px;
 }
 .node-header.clickable {
   cursor: pointer;
@@ -106,13 +104,8 @@ const canExpand = computed(() => hasChildren.value || isMacho.value || isAppBund
   color: #333;
   word-break: break-all;
 }
-.node-path {
-  font-size: 12px;
-  color: #888;
-  flex: 1;
-  word-break: break-all;
-}
 .node-size {
+  margin-left: auto;
   font-size: 12px;
   color: #999;
   white-space: nowrap;

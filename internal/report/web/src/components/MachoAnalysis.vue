@@ -15,17 +15,18 @@ watch(() => props.data, (data) => {
     const archs = Object.keys(data)
     archs.forEach((arch, idx) => {
       if (!archExpanded.value[arch]) {
+        // First slice open; keep header + signature visible, collapse noisy tables.
         archExpanded.value[arch] = {
           collapsed: idx !== 0,
           header: true,
-          load_commands: true,
-          sections: true,
+          load_commands: false,
+          sections: false,
           code_signature: true,
-          symbols: true,
-          imports: true,
-          exports: true,
-          locals: true,
-          strings: true,
+          symbols: false,
+          imports: false,
+          exports: false,
+          locals: false,
+          strings: false,
         }
       }
     })
