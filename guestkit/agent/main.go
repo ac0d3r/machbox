@@ -47,7 +47,7 @@ func run() int {
 func collectGuestInfo() agent.GuestInfo {
 	info := agent.GuestInfo{
 		OSName:   "macOS",
-		AgentVersion: agent.ProtocolVersion,
+		AgentVersion: agent.AgentVersion,
 		Username: "root",
 	}
 	if h, err := os.Hostname(); err == nil {

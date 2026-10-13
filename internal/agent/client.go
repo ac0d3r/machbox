@@ -14,22 +14,24 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// ProtocolVersion is the host↔guest agent protocol revision. Bump only when the
-// RPC contract changes incompatibly. Host releases that keep this value do not
-// require reinstalling machbox-guest.pkg or re-importing the baseline.
-const ProtocolVersion = "1"
+// AgentVersion is the host↔guest agent revision shared by both sides.
+// Kept in this package (not guestkit/agent) so host and guest can import the
+// same constant without a circular dependency. Bump when the RPC contract
+// changes incompatibly; unchanged values do not require reinstalling
+// machbox-guest.pkg or re-importing the baseline.
+const AgentVersion = "1"
 
 // DialFunc opens one vsock connection to the guest agent.
 type DialFunc func(ctx context.Context) (net.Conn, error)
 
-// CompatibleProtocol reports whether a guest handshake is usable with this host.
-func CompatibleProtocol(agentVersion string) error {
-	if agentVersion == "" {
+// CompatibleAgent reports whether a guest handshake is usable with this host.
+func CompatibleAgent(version string) error {
+	if version == "" {
 		return fmt.Errorf("guest agent did not report agent_version; reinstall machbox-guest.pkg")
 	}
-	if agentVersion != ProtocolVersion {
-		return fmt.Errorf("guest agent version %q incompatible with host protocol %q; reinstall machbox-guest.pkg",
-			agentVersion, ProtocolVersion)
+	if version != AgentVersion {
+		return fmt.Errorf("guest agent version %q incompatible with host agent %q; reinstall machbox-guest.pkg",
+			version, AgentVersion)
 	}
 	return nil
 }

@@ -42,11 +42,14 @@ type Options struct {
 	DisplayHeight int64
 	Headless      bool
 	Network       config.Network
+
+	// StaticOnly skips dynamic analysis (no sample launch / EndpointSecurity / DTrace).
+	StaticOnly bool
 }
 
-// Run prepares the share/snapshot, boots the VM, runs static then dynamic
-// analysis, and saves the report. Must be called from the process main
-// goroutine when Headless is false (ShowGraphic / AppKit).
+// Run prepares the share/snapshot, boots the VM, runs static then (unless
+// StaticOnly) dynamic analysis, and saves the report. Must be called from the
+// process main goroutine when Headless is false (ShowGraphic / AppKit).
 func Run(ctx context.Context, opts Options) error {
 	if opts.Timeout <= 0 {
 		opts.Timeout = 60
@@ -69,8 +72,13 @@ func Run(ctx context.Context, opts Options) error {
 	vbvmPath := assets.VMPath(baseline.UUID)
 	logrus.Infof("using baseline %s (%s)", baseline.Name, baseline.UUID)
 
-	shared, err := assets.NewShareDir(sampleName,
-		samplePath, "statictool", "dynamictool", "DTrace/network.d")
+	shareFiles := []string{"statictool"}
+	if !opts.StaticOnly {
+		shareFiles = append(shareFiles, "dynamictool", "DTrace/network.d")
+	} else if len(opts.SampleArgs) > 0 {
+		logrus.Warn("ignoring sample args with --static-only")
+	}
+	shared, err := assets.NewShareDir(sampleName, samplePath, shareFiles...)
 	if err != nil {
 		return fmt.Errorf("prepare shared directory: %w", err)
 	}
@@ -113,6 +121,7 @@ func Run(ctx context.Context, opts Options) error {
 		sampleArgs: opts.SampleArgs,
 		password:   opts.SamplePassword,
 		timeout:    opts.Timeout,
+		staticOnly: opts.StaticOnly,
 	}
 	return runVM(ctx, opts, vmcfg, sess.run)
 }
@@ -141,6 +150,7 @@ type session struct {
 	sampleArgs []string
 	password   string
 	timeout    int
+	staticOnly bool
 
 	wd agent.WorkDir
 }
@@ -258,13 +268,13 @@ func (s *session) run(ctx context.Context, vmi *boxvm.VMInstance) (err error) {
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return fmt.Errorf("timed out after %s waiting for guest agent protocol %q",
-				agentWaitTimeout, agent.ProtocolVersion)
+				agentWaitTimeout, agent.AgentVersion)
 		}
 		return fmt.Errorf("wait for guest agent: %w", err)
 	}
 	defer client.Close()
 
-	if err := agent.CompatibleProtocol(info.AgentVersion); err != nil {
+	if err := agent.CompatibleAgent(info.AgentVersion); err != nil {
 		return fmt.Errorf("%w; re-import the baseline", err)
 	}
 
@@ -280,9 +290,14 @@ func (s *session) run(ctx context.Context, vmi *boxvm.VMInstance) (err error) {
 		return fmt.Errorf("static analysis: %w", err)
 	}
 
-	dynErr := s.runDynamic(ctx, client, retp)
-	if dynErr != nil {
-		logrus.Errorf("dynamic analysis: %v", dynErr)
+	var dynErr error
+	if s.staticOnly {
+		logrus.Info("skipping dynamic analysis (--static-only)")
+	} else {
+		dynErr = s.runDynamic(ctx, client, retp)
+		if dynErr != nil {
+			logrus.Errorf("dynamic analysis: %v", dynErr)
+		}
 	}
 
 	if err := retp.Save(); err != nil {

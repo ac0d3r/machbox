@@ -2,14 +2,14 @@ package agent
 
 import "testing"
 
-func TestCompatibleProtocol(t *testing.T) {
-	if err := CompatibleProtocol(ProtocolVersion); err != nil {
-		t.Fatalf("matching protocol: %v", err)
+func TestCompatibleAgent(t *testing.T) {
+	if err := CompatibleAgent(AgentVersion); err != nil {
+		t.Fatalf("matching agent version: %v", err)
 	}
-	if CompatibleProtocol("") == nil {
-		t.Fatal("empty protocol should fail")
+	if CompatibleAgent("") == nil {
+		t.Fatal("empty agent version should fail")
 	}
-	if CompatibleProtocol(ProtocolVersion + ".x") == nil {
-		t.Fatal("mismatched protocol should fail")
+	if CompatibleAgent(AgentVersion + ".x") == nil {
+		t.Fatal("mismatched agent version should fail")
 	}
 }

@@ -5,7 +5,7 @@ defineProps({
   data: { type: Object, required: true },
 })
 
-const expanded = ref({ meta: true, scripts: true, components: true, signature: true })
+const expanded = ref({ meta: true, scripts: false, components: false, signature: true })
 </script>
 
 <template>

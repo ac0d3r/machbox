@@ -17,11 +17,18 @@ Common options:
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-m, --vm` | Baseline UUID or unique name. Required when more than one baseline is imported | — |
-| `--timeout` | Dynamic analysis timeout (seconds) | `120` |
+| `--timeout` | Guest task timeout (seconds) | `120` |
 | `--password` | Password for encrypted archives | — |
+| `--static-only` | Run static analysis only; skip launching the sample / dynamic analysis | `false` |
 | `--headless` | Run without a GUI window (auto-shutdown after analysis) | `true` |
 | `--display` | Display resolution | `1920x1200` |
 | `--network-mode` | Network mode (`NAT`) | Disabled |
+
+Static-only example (still runs inside the sandbox baseline; no sample execution):
+
+```bash
+machbox analyze --static-only /path/to/sample
+```
 
 Supports passing command-line arguments to the sample:
 

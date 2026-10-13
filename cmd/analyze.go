@@ -16,6 +16,7 @@ func newAnalyzeCommand() *cobra.Command {
 		vmID           string
 		samplePassword string
 		timeout        int
+		staticOnly     bool
 	)
 
 	cmd := &cobra.Command{
@@ -52,6 +53,7 @@ func newAnalyzeCommand() *cobra.Command {
 				DisplayHeight:  opts.height,
 				Headless:       opts.headless,
 				Network:        opts.parseNetwork(),
+				StaticOnly:     staticOnly,
 			})
 		},
 	}
@@ -59,7 +61,8 @@ func newAnalyzeCommand() *cobra.Command {
 	bindVMFlags(cmd, opts)
 	cmd.Flags().StringVarP(&vmID, "vm", "m", "", "baseline UUID or unique name")
 	cmd.Flags().StringVar(&samplePassword, "password", "", "password for encrypted archives")
-	cmd.Flags().IntVar(&timeout, "timeout", 120, "")
+	cmd.Flags().IntVar(&timeout, "timeout", 120, "guest task timeout in seconds")
+	cmd.Flags().BoolVar(&staticOnly, "static-only", false, "run static analysis only (skip dynamic)")
 	cmd.Flags().SetInterspersed(false)
 	return cmd
 }
