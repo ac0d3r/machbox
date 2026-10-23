@@ -34,8 +34,8 @@ chmod +x machbox
 
 ## Build from Source
 
-- Go 1.25+
-- Node.js 20+ (includes npm)
+- Go 1.27+
+- Bun 1.4+
 - Swift 5.9+
 - Xcode, for the macOS SDK, `codesign`, `pkgbuild`, and `hdiutil`
 
