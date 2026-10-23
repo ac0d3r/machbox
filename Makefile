@@ -60,7 +60,7 @@ build-tools:
 	$(MAKE) -C guestkit/dynamictool build
 
 build-report-web:
-	cd "$(REPORT_WEB_DIR)" && npm install && npm run build
+	cd "$(REPORT_WEB_DIR)" && bun install --frozen-lockfile && bun run build
 
 clean:
 	rm -f $(BINFILE)
