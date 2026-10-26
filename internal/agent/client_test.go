@@ -248,3 +248,70 @@ func waitExited(t *testing.T, pid int) {
 	}
 	t.Fatalf("task process %d still running after cancel", pid)
 }
+
+func TestCopyTask(t *testing.T) {
+	ta := startAgent(t)
+	ctx := context.Background()
+
+	var out strings.Builder
+	if err := ta.client.CopyTask(ctx, &Task{Command: "sh", Args: []string{"-c", "echo hi"}}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != "hi\n" {
+		t.Errorf("output = %q", out.String())
+	}
+
+	out.Reset()
+	err := ta.client.CopyTask(ctx, &Task{Command: "sh", Args: []string{"-c", "echo partial; exit 3"}}, &out)
+	if err == nil || errors.Is(err, ErrTaskTimedOut) || out.String() != "partial\n" {
+		t.Errorf("failing task: err=%v output=%q", err, out.String())
+	}
+
+	out.Reset()
+	err = ta.client.CopyTask(ctx, &Task{Command: "sh", Args: []string{"-c", "echo started; sleep 30"}, Timeout: 1}, &out)
+	if !errors.Is(err, ErrTaskTimedOut) || out.String() != "started\n" {
+		t.Errorf("timed-out task: err=%v output=%q", err, out.String())
+	}
+}
+
+func TestOpenFile(t *testing.T) {
+	ta := startAgent(t)
+	ctx := context.Background()
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "out"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "out", "r.json"), []byte(`{"ok":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+		t.Fatal(err)
+	}
+
+	rc, err := ta.client.OpenFile(ctx, root, "out/r.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(rc)
+	_ = rc.Close()
+	if err != nil || string(got) != `{"ok":true}` {
+		t.Errorf("content = %q, %v", got, err)
+	}
+
+	if _, err := ta.client.OpenFile(ctx, root, "missing.json"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing file: err = %v, want ErrNotFound", err)
+	}
+	for _, name := range []string{"escape", "../secret", "out", "/etc/hosts"} {
+		if rc, err := ta.client.OpenFile(ctx, root, name); err == nil {
+			_ = rc.Close()
+			t.Errorf("OpenFile(%q) succeeded", name)
+		}
+	}
+	if _, err := ta.client.OpenFile(ctx, "relative", "x"); err == nil {
+		t.Error("relative root accepted")
+	}
+}

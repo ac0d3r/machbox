@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -20,8 +22,8 @@ const (
 	defaultTaskTimeout = 60 * time.Second
 	// After a task is killed, Wait gives up on its stdout/stderr pipes after
 	// this long; children it spawned (e.g. a sample's) may still hold them.
-	taskWaitDelay = 2 * time.Second
-	maxRequestBody     = 1 << 20
+	taskWaitDelay  = 2 * time.Second
+	maxRequestBody = 1 << 20
 )
 
 // Server is the guest-agent HTTP API.
@@ -56,7 +58,56 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+pathWorkDir, s.handleWorkDir)
 	mux.HandleFunc("POST "+pathExec, s.handleExec)
 	mux.HandleFunc("POST "+pathExecStream, s.handleExecStream)
+	mux.HandleFunc("GET "+pathFiles, s.handleFile)
 	return mux
+}
+
+// handleFile serves the regular file at path inside root. Tasks that touch
+// a sample may have rewritten root, so the file is opened through os.Root:
+// symlinks and ".." cannot reach outside it.
+func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	rootPath, name := q.Get("root"), q.Get("path")
+	if !filepath.IsAbs(rootPath) || !filepath.IsLocal(name) {
+		writeError(w, http.StatusBadRequest,
+			fmt.Errorf("root must be absolute and path relative inside it (root=%q path=%q)", rootPath, name))
+		return
+	}
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		writeFileError(w, err)
+		return
+	}
+	defer root.Close()
+
+	f, err := root.Open(name)
+	if err != nil {
+		writeFileError(w, err)
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		writeFileError(w, err)
+		return
+	}
+	if !info.Mode().IsRegular() {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("%s is not a regular file", name))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, f)
+}
+
+func writeFileError(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	if errors.Is(err, fs.ErrNotExist) {
+		status = http.StatusNotFound
+	}
+	writeError(w, status, err)
 }
 
 func (s *Server) handleInfo(w http.ResponseWriter, _ *http.Request) {

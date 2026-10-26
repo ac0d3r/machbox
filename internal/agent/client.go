@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -21,11 +22,18 @@ import (
 // same constant without a circular dependency. Bump when the API changes
 // incompatibly; unchanged values do not require reinstalling
 // machbox-guest.pkg or re-importing the baseline.
-const AgentVersion = "2"
+const AgentVersion = "3"
 
 // baseURL is the authority used for requests; the transport ignores it and
 // always dials the guest over vsock.
 const baseURL = "http://machbox-guest"
+
+var (
+	// ErrNotFound is returned when the guest has no such file.
+	ErrNotFound = errors.New("not found")
+	// ErrTaskTimedOut is returned by CopyTask when the task hit its timeout.
+	ErrTaskTimedOut = errors.New("task timed out")
+)
 
 // DialFunc opens one vsock connection to the guest agent.
 type DialFunc func(ctx context.Context) (net.Conn, error)
@@ -144,6 +152,40 @@ func (c *Client) RunStreamTask(ctx context.Context, task *Task) (io.ReadCloser, 
 	return &streamReader{resp: resp}, nil
 }
 
+// CopyTask runs a task to completion, copying its stdout to w as it is
+// produced. Unlike RunStreamTask, reaching the timeout is an error
+// (ErrTaskTimedOut); output written before it is kept. Cancelling ctx kills
+// the task in the guest.
+func (c *Client) CopyTask(ctx context.Context, task *Task, w io.Writer) error {
+	resp, err := c.do(ctx, http.MethodPost, pathExecStream, task)
+	if err != nil {
+		return fmt.Errorf("start task: %w", err)
+	}
+	defer resp.Body.Close()
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		return fmt.Errorf("task output: %w", err)
+	}
+	t := resp.Trailer
+	if t.Get(trailerTaskTimedOut) == "true" {
+		return ErrTaskTimedOut
+	}
+	if msg := t.Get(trailerTaskError); msg != "" {
+		return fmt.Errorf("task failed: %s", msg)
+	}
+	return nil
+}
+
+// OpenFile returns the contents of the regular file name (relative) inside
+// the guest directory root. A missing file is reported as ErrNotFound.
+func (c *Client) OpenFile(ctx context.Context, root, name string) (io.ReadCloser, error) {
+	q := url.Values{"root": {root}, "path": {name}}
+	resp, err := c.do(ctx, http.MethodGet, pathFiles+"?"+q.Encode(), nil) //nolint:bodyclose // returned to the caller
+	if err != nil {
+		return nil, fmt.Errorf("open guest file %s: %w", name, err)
+	}
+	return resp.Body, nil
+}
+
 type streamReader struct {
 	resp *http.Response
 }
@@ -204,11 +246,15 @@ func (c *Client) do(ctx context.Context, method, path string, in any) (*http.Res
 		return resp, nil
 	}
 	defer resp.Body.Close()
+	msg := resp.Status
 	var ae apiError
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxRequestBody)).Decode(&ae); err != nil || ae.Error == "" {
-		return nil, fmt.Errorf("guest agent: %s", resp.Status)
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxRequestBody)).Decode(&ae); err == nil && ae.Error != "" {
+		msg = ae.Error
 	}
-	return nil, fmt.Errorf("guest agent: %s", ae.Error)
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("guest agent: %s: %w", msg, ErrNotFound)
+	}
+	return nil, fmt.Errorf("guest agent: %s", msg)
 }
 
 // LogGuest logs a successful guest handshake.
