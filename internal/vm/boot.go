@@ -108,7 +108,6 @@ func (r *Run) withGuest(ctx context.Context, inst *boxvm.VMInstance, fn GuestFun
 		}
 		return fmt.Errorf("wait for guest agent: %w", err)
 	}
-	defer client.Close()
 
 	if err := agent.CompatibleAgent(info.AgentVersion); err != nil {
 		return fmt.Errorf("%w; run: machbox vm update-agent %s", err, r.Baseline.UUID)

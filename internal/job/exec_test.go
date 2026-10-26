@@ -199,7 +199,6 @@ func startAgent(t *testing.T) *agent.Client {
 		return d.DialContext(ctx, "tcp", ln.Addr().String())
 	})
 	t.Cleanup(func() {
-		_ = c.Close()
 		cancel()
 		if err := <-done; err != nil {
 			t.Errorf("Serve: %v", err)

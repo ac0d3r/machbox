@@ -147,8 +147,9 @@ func waitGuest(ctx context.Context, inst *boxvm.VMInstance, purpose setupPurpose
 	sawDown := !requireRestart
 	loggedWaitingReinstall := false
 
+	c := agent.NewClient(dial)
 	for {
-		info, err := agent.Probe(ctx, dial)
+		info, err := c.Info(ctx)
 		if err != nil {
 			if requireRestart && !sawDown {
 				logrus.Debugf("guest agent unreachable (waiting for reinstall cycle): %v", err)

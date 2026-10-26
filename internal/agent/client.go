@@ -51,7 +51,9 @@ func CompatibleAgent(version string) error {
 }
 
 // Client talks to the guest agent's HTTP API over vsock. It is safe for
-// concurrent use; each in-flight request uses its own connection.
+// concurrent use. Every request opens its own connection: dialing vsock is
+// cheap, and nothing outlives a request (an agent restart, a cancelled
+// context).
 type Client struct {
 	hc *http.Client
 }
@@ -62,26 +64,9 @@ func NewClient(dial DialFunc) *Client {
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return dial(ctx)
 		},
-		DisableCompression:  true,
-		MaxIdleConnsPerHost: 2,
+		DisableCompression: true,
+		DisableKeepAlives:  true,
 	}}}
-}
-
-// Close drops idle connections to the guest.
-func (c *Client) Close() error {
-	if c != nil && c.hc != nil {
-		c.hc.CloseIdleConnections()
-	}
-	return nil
-}
-
-// Probe asks the guest for its info over a fresh connection that is closed
-// afterwards, so it observes the agent currently listening (e.g. after a
-// reinstall) rather than a kept-alive connection to a previous one.
-func Probe(ctx context.Context, dial DialFunc) (GuestInfo, error) {
-	c := NewClient(dial)
-	defer c.Close()
-	return c.Info(ctx)
 }
 
 // WaitReady polls the guest until its agent answers or ctx is cancelled.
@@ -98,7 +83,6 @@ func WaitReady(ctx context.Context, dial DialFunc, interval time.Duration) (*Cli
 		logrus.Debugf("guest agent not ready: %v", err)
 		select {
 		case <-ctx.Done():
-			_ = c.Close()
 			return nil, GuestInfo{}, fmt.Errorf("%w (last: %w)", ctx.Err(), last)
 		case <-time.After(interval):
 		}

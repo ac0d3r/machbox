@@ -63,11 +63,10 @@ func startAgent(t *testing.T) *testAgent {
 		return d.DialContext(ctx, "tcp", ln.Addr().String())
 	}
 	ta.client = NewClient(ta.dial)
-	t.Cleanup(func() { _ = ta.client.Close() })
 	return ta
 }
 
-func TestInfoAndProbe(t *testing.T) {
+func TestInfoAndWaitReady(t *testing.T) {
 	ta := startAgent(t)
 	ctx := context.Background()
 
@@ -78,15 +77,9 @@ func TestInfoAndProbe(t *testing.T) {
 	if info.AgentVersion != AgentVersion || info.OSName != "macOS" {
 		t.Errorf("info = %+v", info)
 	}
-	if _, err := Probe(ctx, ta.dial); err != nil {
-		t.Errorf("Probe: %v", err)
-	}
-
-	c, _, err := WaitReady(ctx, ta.dial, 10*time.Millisecond)
-	if err != nil {
+	if _, _, err := WaitReady(ctx, ta.dial, 10*time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
-	_ = c.Close()
 }
 
 func TestWaitReadyTimesOut(t *testing.T) {
