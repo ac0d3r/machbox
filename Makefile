@@ -33,8 +33,6 @@ prepare-assets: build-agent
 	@mkdir -p $(EMBED_DIR)
 	@mv "$(GUEST_DMG)" $(EMBED_DIR)/
 
-	@shasum -a 256 $(EMBED_DIR)/guest.dmg | awk '{print $$1}' > $(EMBED_DIR)/guest.dmg.sha256
-
 build-agent:
 	rm -f $(GUEST_DMG)
 	$(MAKE) -C guest-agent package VERSION=$(VERSION)

@@ -46,10 +46,15 @@ func setup(ctx context.Context, dir string, purpose setupPurpose) (*agent.GuestI
 		return nil, fmt.Errorf("load baseline bundle: %w", err)
 	}
 
+	guestDMG, err := assets.GuestDMG()
+	if err != nil {
+		return nil, err
+	}
+
 	vmcfg, err := config.NewMacVMConf(bundle, &config.VMOptions{
 		DisplayWidth:  config.DefaultDisplayWidth,
 		DisplayHeight: config.DefaultDisplayHeight,
-		Disks:         []config.StorageDisk{{Path: assets.GuestDMGPath(), ReadOnly: true}},
+		Disks:         []config.StorageDisk{{Path: guestDMG, ReadOnly: true}},
 		Network:       config.Network{Enable: true, Mode: config.NetworkNAT},
 	})
 	if err != nil {
