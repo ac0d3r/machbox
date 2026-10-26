@@ -44,6 +44,11 @@ type Task struct {
 	Args    []string `json:"args"`
 	WorkDir string   `json:"work_dir,omitempty"`
 	Timeout int      `json:"timeout,omitempty"` // seconds; default 60
+	// Env (KEY=VALUE) is added to the agent's environment. A PATH here is
+	// also where a Command without a slash is looked up.
+	Env []string `json:"env,omitempty"`
+	// CombinedOutput sends stderr to the same stream as stdout.
+	CombinedOutput bool `json:"combined_output,omitempty"`
 }
 
 // TaskResult is returned for a finished non-streaming Task. A task that ran

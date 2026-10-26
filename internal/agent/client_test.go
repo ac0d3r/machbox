@@ -315,3 +315,55 @@ func TestOpenFile(t *testing.T) {
 		t.Error("relative root accepted")
 	}
 }
+
+func TestTaskEnvAndPath(t *testing.T) {
+	ta := startAgent(t)
+	ctx := context.Background()
+
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "hello-tool"), []byte("#!/bin/sh\necho \"tool $GREETING\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{"PATH=" + bin + ":/usr/bin:/bin", "GREETING=hi"}
+
+	out, err := ta.client.RunTask(ctx, &Task{Command: "hello-tool", Env: env})
+	if err != nil || out != "tool hi" {
+		t.Errorf("task PATH lookup: %q, %v", out, err)
+	}
+	// Commands still see the task PATH.
+	out, err = ta.client.RunTask(ctx, &Task{Command: "sh", Args: []string{"-c", "hello-tool"}, Env: env})
+	if err != nil || out != "tool hi" {
+		t.Errorf("child PATH: %q, %v", out, err)
+	}
+	if _, err := ta.client.RunTask(ctx, &Task{Command: "sh", Env: []string{"PATH=" + bin}}); err == nil ||
+		!strings.Contains(err.Error(), "not found in task PATH") {
+		t.Errorf("command outside task PATH: %v", err)
+	}
+}
+
+func TestCombinedOutput(t *testing.T) {
+	ta := startAgent(t)
+	ctx := context.Background()
+	script := []string{"-c", "echo out; echo err >&2"}
+
+	var out strings.Builder
+	if err := ta.client.CopyTask(ctx, &Task{Command: "sh", Args: script, CombinedOutput: true}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != "out\nerr\n" {
+		t.Errorf("combined stream = %q", out.String())
+	}
+
+	out.Reset()
+	if err := ta.client.CopyTask(ctx, &Task{Command: "sh", Args: script}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != "out\n" {
+		t.Errorf("stdout-only stream = %q", out.String())
+	}
+
+	got, err := ta.client.RunTask(ctx, &Task{Command: "sh", Args: script, CombinedOutput: true})
+	if err != nil || got != "out\nerr" {
+		t.Errorf("combined RunTask = %q, %v", got, err)
+	}
+}

@@ -151,7 +151,7 @@ func (j *Job) finish(err error) {
 	j.Status = StatusSucceeded
 	if err != nil {
 		j.Status = StatusFailed
-		j.Error = err.Error()
+		j.Error = sanitize(err.Error())
 	}
 	for _, s := range j.Steps {
 		if s.Status == StatusPending {

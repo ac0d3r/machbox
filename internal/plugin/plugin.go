@@ -26,7 +26,10 @@ const (
 	DefaultStepTimeout = 10 * time.Minute
 )
 
-var identRe = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
+var (
+	identRe  = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
+	envKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+)
 
 // Plugin is a loaded and validated plugin.
 type Plugin struct {
@@ -42,9 +45,11 @@ type Plugin struct {
 
 // Workflow is a named sequence of steps run in one guest.
 type Workflow struct {
-	Name   string  `yaml:"-"`
-	Inputs Inputs  `yaml:"inputs"`
-	Steps  []*Step `yaml:"steps"`
+	Name   string `yaml:"-"`
+	Inputs Inputs `yaml:"inputs"`
+	// Env is set for every step; a step's own env overrides it.
+	Env   map[string]string `yaml:"env"`
+	Steps []*Step           `yaml:"steps"`
 }
 
 // InputType is the kind of value an input takes.
@@ -131,10 +136,12 @@ type Step struct {
 	Run []string `yaml:"run"`
 	// Output is a file the step writes, relative to the workdir. It is
 	// copied back to the job directory after the step.
-	Output          string        `yaml:"output"`
-	Timeout         time.Duration `yaml:"timeout"`
-	ContinueOnError bool          `yaml:"continue_on_error"`
-	When            When          `yaml:"when"`
+	Output string `yaml:"output"`
+	// Env values are templates like run arguments.
+	Env             map[string]string `yaml:"env"`
+	Timeout         time.Duration     `yaml:"timeout"`
+	ContinueOnError bool              `yaml:"continue_on_error"`
+	When            When              `yaml:"when"`
 }
 
 // Load reads and validates the plugin in dir.
@@ -229,6 +236,9 @@ func (wf *Workflow) validate() error {
 		}
 	}
 
+	if err := validateEnv(wf.Env); err != nil {
+		return err
+	}
 	if len(wf.Steps) == 0 {
 		return errors.New("no steps")
 	}
@@ -262,7 +272,7 @@ func (st *Step) validate(wf *Workflow, earlier map[string]*Step) error {
 	if len(st.Run) == 0 || st.Run[0] == "" {
 		return errors.New("run is empty")
 	}
-	if st.Output != "" && !filepath.IsLocal(st.Output) {
+	if st.Output != "" && (!filepath.IsLocal(st.Output) || filepath.Clean(st.Output) == ".") {
 		return fmt.Errorf("output %q must be a relative path inside the workdir", st.Output)
 	}
 	if st.Timeout < 0 {
@@ -286,8 +296,23 @@ func (st *Step) validate(wf *Workflow, earlier map[string]*Step) error {
 			vars.Outputs[id] = prev.Output
 		}
 	}
-	_, err := st.Args(vars)
+	if err := validateEnv(st.Env); err != nil {
+		return err
+	}
+	if _, err := st.Args(vars); err != nil {
+		return err
+	}
+	_, err := st.Environ(wf.Env, vars)
 	return err
+}
+
+func validateEnv(env map[string]string) error {
+	for k := range env {
+		if !envKeyRe.MatchString(k) {
+			return fmt.Errorf("env name %q must match %s", k, envKeyRe)
+		}
+	}
+	return nil
 }
 
 // TimeoutOrDefault returns the step timeout, or DefaultStepTimeout.

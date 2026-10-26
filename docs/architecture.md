@@ -91,6 +91,8 @@ workflows:
     inputs:                 # declaration order = positional argument order
       sample:  { type: file, required: true }   # file: copied into the guest workdir
       timeout: { default: 5m }                  # string (default type)
+    env:                    # every step; a step's env overrides it; values are templates
+      PYTHONPATH: "${{ plugin_dir }}/lib"
     steps:
       - id: static
         run: [tools/statictool, -o, "${{ output }}", "${{ inputs.sample }}"]
@@ -106,7 +108,9 @@ workflows:
         output: report.json
 ```
 
-Templates only substitute: `${{ inputs.<name> }}`, `${{ output }}`, `${{ steps.<id>.output }}` (an earlier step), `${{ plugin_dir }}`. A command with a slash (`tools/x`) is resolved in the plugin directory; a bare name in the guest `PATH`.
+Templates only substitute: `${{ inputs.<name> }}`, `${{ output }}`, `${{ steps.<id>.output }}` (an earlier step), `${{ plugin_dir }}`. A command with a slash (`tools/x`) is resolved in the plugin directory; a bare name in the guest `PATH` (the agent's includes Homebrew and `/usr/local/bin`; an `env` PATH replaces it).
+
+Once a sample runs, it controls the guest, agent included, so the host trusts nothing the guest sends to be small or timely: it enforces every timeout itself (plus a 30 s grace), caps step logs at 64 MiB and outputs at 512 MiB, and strips control characters from guest error text before storing or printing it.
 
 In the guest, the plugin directory and file inputs are on the read-only share (`plugin/`, `inputs/<input>/<file name>`). Every step runs with the same writable workdir as cwd; file inputs are copied there first, so `${{ inputs.sample }}` is `inputs/sample/<file name>` relative to it. The guest never writes to the host: after each step the host pulls its declared output through `GET /v1/files` (capped at `job.MaxOutputSize`).
 
@@ -115,7 +119,7 @@ On the host, a job keeps only `~/.machbox/jobs/<id>/`:
 | Path | Purpose |
 |------|---------|
 | `job.json` | plugin, inputs, baseline, guest info, status/error/timing of every step |
-| `logs/<step>.log` | step stdout (stderr is in the step error) |
+| `logs/<step>.log` | step stdout and stderr |
 | `outputs/<output>` | each step's output, including partial output of a failed step |
 
 ## Packages

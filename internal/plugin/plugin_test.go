@@ -91,6 +91,9 @@ func TestParseManifestErrors(t *testing.T) {
 		"file default":   base + "    inputs: {f: {type: file, default: x}}\n    steps: [{id: a, run: [x]}]",
 		"bad input type": base + "    inputs: {f: {type: int}}\n    steps: [{id: a, run: [x]}]",
 		"bad constraint": "api: 1\nname: p\nrequires: {macos: '14'}\nworkflows: {w: {steps: [{id: a, run: [x]}]}}",
+		"bad env name":   base + "    env: {1BAD: x}\n    steps: [{id: a, run: [x]}]",
+		"bad env tmpl":   base + "    steps: [{id: a, run: [x], env: {A: '${{ inputs.nope }}'}}]",
+		"dot output":     base + "    steps: [{id: a, run: [x], output: ./.}]",
 		"bad sip":        "api: 1\nname: p\nrequires: {sip: off}\nworkflows: {w: {steps: [{id: a, run: [x]}]}}",
 	}
 	for name, manifest := range tests {
@@ -164,5 +167,38 @@ func TestRequires(t *testing.T) {
 	}
 	if (Requires{}).Check("", false) != nil {
 		t.Error("empty requirements should accept anything")
+	}
+}
+
+func TestStepEnviron(t *testing.T) {
+	p, err := Parse([]byte(`
+api: 1
+name: p
+workflows:
+  w:
+    inputs: {mode: {default: fast}}
+    env: {PATH: /opt/homebrew/bin:/usr/bin:/bin, MODE: "${{ inputs.mode }}"}
+    steps:
+      - id: a
+        run: [python3, tool.py]
+        env: {PYTHONPATH: "${{ plugin_dir }}/lib", MODE: slow}
+      - id: b
+        run: [x]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wf, _ := p.Workflow("w")
+	vars := Vars{Inputs: map[string]string{"mode": "fast"}, PluginDir: "/s/plugin"}
+	env, err := wf.Steps[0].Environ(wf.Env, vars)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"MODE=slow", "PATH=/opt/homebrew/bin:/usr/bin:/bin", "PYTHONPATH=/s/plugin/lib"}
+	if !reflect.DeepEqual(env, want) {
+		t.Errorf("step a env = %q", env)
+	}
+	if env, _ := wf.Steps[1].Environ(wf.Env, vars); !reflect.DeepEqual(env, []string{"MODE=fast", "PATH=/opt/homebrew/bin:/usr/bin:/bin"}) {
+		t.Errorf("step b env = %q", env)
 	}
 }

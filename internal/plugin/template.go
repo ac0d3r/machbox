@@ -2,7 +2,9 @@ package plugin
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -34,6 +36,25 @@ func (st *Step) Args(v Vars) ([]string, error) {
 		args[i] = s
 	}
 	return args, nil
+}
+
+// Environ merges the workflow env with the step's own (which wins),
+// expands templates, and returns sorted KEY=VALUE entries.
+func (st *Step) Environ(workflowEnv map[string]string, v Vars) ([]string, error) {
+	env := maps.Clone(workflowEnv)
+	if env == nil {
+		env = map[string]string{}
+	}
+	maps.Copy(env, st.Env)
+	out := make([]string, 0, len(env))
+	for _, k := range slices.Sorted(maps.Keys(env)) {
+		val, err := expand(env[k], func(ref string) (string, error) { return v.resolve(st, ref) })
+		if err != nil {
+			return nil, fmt.Errorf("env %s: %w", k, err)
+		}
+		out = append(out, k+"="+val)
+	}
+	return out, nil
 }
 
 func (v Vars) resolve(st *Step, ref string) (string, error) {

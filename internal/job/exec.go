@@ -24,9 +24,25 @@ const (
 	shareInputs = "inputs"
 )
 
-// MaxOutputSize caps a step output copied back from the guest; a sample
-// controls the guest and could otherwise fill the host disk.
-const MaxOutputSize = 512 << 20
+// A sample controls the guest once it runs, including the agent: nothing
+// the guest sends is trusted to be small or to arrive in time.
+const (
+	// MaxOutputSize caps a step output copied back from the guest.
+	MaxOutputSize = 512 << 20
+
+	inputCopyTimeout = 30 * time.Minute
+	mkdirTimeout     = time.Minute
+	pullTimeout      = 10 * time.Minute
+	maxErrorLen      = 4 << 10
+)
+
+var (
+	// maxLogSize caps a step log; output beyond it is dropped.
+	maxLogSize int64 = 64 << 20
+	// hostGrace is how long past a task's timeout the host waits for the
+	// guest agent to end it before giving up itself.
+	hostGrace = 30 * time.Second
+)
 
 // Guest is the part of the guest agent a job uses; *agent.Client
 // implements it.
@@ -109,10 +125,11 @@ func (j *Job) execute(ctx context.Context, g Guest, wd agent.WorkDir, echo io.Wr
 func (j *Job) prepare(ctx context.Context, g Guest, wd agent.WorkDir) error {
 	for _, in := range j.workflow.Inputs {
 		if in.Type == plugin.InputFile && j.Inputs[in.Name] != "" {
-			if _, err := g.RunTask(ctx, &agent.Task{
+			if err := runTask(ctx, g, &agent.Task{
 				Command: "/bin/sh",
 				Args:    []string{"-c", `/bin/cp -R "$0" . && /bin/chmod -R u+w ` + shareInputs, path.Join(wd.SharePath, shareInputs)},
 				WorkDir: wd.WorkPath,
+				Timeout: int(inputCopyTimeout / time.Second),
 			}); err != nil {
 				return fmt.Errorf("copy inputs into the workdir: %w", err)
 			}
@@ -127,10 +144,11 @@ func (j *Job) prepare(ctx context.Context, g Guest, wd agent.WorkDir) error {
 		}
 	}
 	if len(dirs) > 0 {
-		if _, err := g.RunTask(ctx, &agent.Task{
+		if err := runTask(ctx, g, &agent.Task{
 			Command: "/bin/mkdir",
 			Args:    append([]string{"-p", "--"}, dirs...),
 			WorkDir: wd.WorkPath,
+			Timeout: int(mkdirTimeout / time.Second),
 		}); err != nil {
 			return fmt.Errorf("create output directories: %w", err)
 		}
@@ -156,13 +174,19 @@ func (j *Job) runStep(ctx context.Context, g Guest, wd agent.WorkDir, st *plugin
 			rec.Status = StatusFailed
 		}
 		if err != nil {
-			rec.Error = err.Error()
-			logrus.Errorf("step %s: %s: %v", st.ID, rec.Status, err)
+			// Error text can carry guest output (stderr).
+			rec.Error = sanitize(err.Error())
+			err = errors.New(rec.Error)
+			logrus.Errorf("step %s: %s: %s", st.ID, rec.Status, rec.Error)
 		}
 		j.trySave()
 	}()
 
 	args, err := st.Args(vars)
+	if err != nil {
+		return err
+	}
+	env, err := st.Environ(j.workflow.Env, vars)
 	if err != nil {
 		return err
 	}
@@ -182,15 +206,28 @@ func (j *Job) runStep(ctx context.Context, g Guest, wd agent.WorkDir, st *plugin
 	if echo != nil {
 		stdout = io.MultiWriter(logf, echo)
 	}
+	capped := &capWriter{w: stdout, n: maxLogSize}
 	j.trySave()
 
 	logrus.Infof("step %s: %s", st.ID, strings.Join(args, " "))
-	err = g.CopyTask(ctx, &agent.Task{
-		Command: cmd,
-		Args:    args[1:],
-		WorkDir: wd.WorkPath,
-		Timeout: int((st.TimeoutOrDefault() + time.Second - 1) / time.Second),
-	}, stdout)
+	timeout := (st.TimeoutOrDefault() + time.Second - 1) / time.Second * time.Second
+	taskCtx, cancel := context.WithTimeout(ctx, timeout+hostGrace)
+	err = g.CopyTask(taskCtx, &agent.Task{
+		Command:        cmd,
+		Args:           args[1:],
+		WorkDir:        wd.WorkPath,
+		Timeout:        int(timeout / time.Second),
+		Env:            env,
+		CombinedOutput: true,
+	}, capped)
+	if err != nil && ctx.Err() == nil && errors.Is(taskCtx.Err(), context.DeadlineExceeded) {
+		err = fmt.Errorf("%w: the guest did not end the task within %s", agent.ErrTaskTimedOut, timeout+hostGrace)
+	}
+	cancel()
+	if capped.dropped > 0 {
+		fmt.Fprintf(logf, "\n[machbox: log truncated at %d bytes, %d bytes dropped]\n", maxLogSize, capped.dropped)
+		logrus.Warnf("step %s: log truncated at %d bytes", st.ID, maxLogSize)
+	}
 
 	// A failed step may still have written (part of) its output; it is
 	// collected so later steps and the user can look at it.
@@ -211,6 +248,8 @@ func (j *Job) runStep(ctx context.Context, g Guest, wd agent.WorkDir, st *plugin
 // pullOutput copies the guest file name (relative to the workdir) to the
 // job's outputs directory and returns its path relative to the job dir.
 func (j *Job) pullOutput(ctx context.Context, g Guest, wd agent.WorkDir, name string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, pullTimeout)
+	defer cancel()
 	rc, err := g.OpenFile(ctx, wd.WorkPath, name)
 	if err != nil {
 		return "", fmt.Errorf("collect output: %w", err)
@@ -242,6 +281,51 @@ func (j *Job) pullOutput(ctx context.Context, g Guest, wd agent.WorkDir, name st
 		return "", err
 	}
 	return rel, nil
+}
+
+// runTask runs a short preparation task, also enforcing its timeout on
+// the host.
+func runTask(ctx context.Context, g Guest, task *agent.Task) error {
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(task.Timeout)*time.Second+hostGrace)
+	defer cancel()
+	_, err := g.RunTask(ctx, task)
+	return err
+}
+
+// capWriter passes the first n bytes to w and drops the rest, so a task
+// flooding its output keeps running but cannot fill the host disk.
+type capWriter struct {
+	w       io.Writer
+	n       int64
+	dropped int64
+}
+
+func (c *capWriter) Write(p []byte) (int, error) {
+	keep := p
+	if int64(len(keep)) > c.n {
+		keep = keep[:max(c.n, 0)]
+	}
+	k, err := c.w.Write(keep)
+	c.n -= int64(k)
+	if err != nil {
+		return k, err
+	}
+	c.dropped += int64(len(p) - len(keep))
+	return len(p), nil
+}
+
+// sanitize makes guest-controlled text safe to store and print: control
+// characters (terminal escapes) are replaced and the length is capped.
+func sanitize(s string) string {
+	if len(s) > maxErrorLen {
+		s = s[:maxErrorLen] + "… (truncated)"
+	}
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 && r != '\n' && r != '\t' || r == 0x7f || r >= 0x80 && r < 0xa0 {
+			return '?'
+		}
+		return r
+	}, strings.ToValidUTF8(s, "?"))
 }
 
 func (j *Job) trySave() {

@@ -99,7 +99,8 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
 	w.WriteHeader(http.StatusOK)
-	_, _ = io.Copy(w, f)
+	// The file may change meanwhile; never send more than announced.
+	_, _ = io.CopyN(w, f, info.Size())
 }
 
 func writeFileError(w http.ResponseWriter, err error) {
@@ -148,9 +149,16 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	cmd := taskCommand(ctx, &task)
 
+	run := cmd.Output
+	if task.CombinedOutput {
+		run = cmd.CombinedOutput
+	}
 	var ret TaskResult
-	if out, err := cmd.Output(); err != nil {
+	if out, err := run(); err != nil {
 		ret.Error = execErr(err)
+		if task.CombinedOutput {
+			ret.Error = fmt.Sprintf("%s (output: %s)", ret.Error, strings.TrimSpace(string(out)))
+		}
 	} else {
 		ret.OK = true
 		ret.Output = string(out)
@@ -171,11 +179,14 @@ func (s *Server) handleExecStream(w http.ResponseWriter, r *http.Request) {
 
 	cmd := taskCommand(ctx, &task)
 	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
+	}
+	cmd.Stderr = &stderr
+	if task.CombinedOutput {
+		cmd.Stderr = cmd.Stdout // the pipe's write end
 	}
 	if err := cmd.Start(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -245,11 +256,50 @@ func taskContext(parent context.Context, task *Task) (context.Context, context.C
 }
 
 func taskCommand(ctx context.Context, task *Task) *exec.Cmd {
+	name := task.Command
+	pathEnv, hasPath := lookupEnv(task.Env, "PATH")
+	var lookErr error
+	if hasPath && !strings.Contains(name, "/") {
+		name, lookErr = lookPath(name, pathEnv)
+	}
 	// #nosec G204 -- guest-agent executes commands from the trusted host.
-	cmd := exec.CommandContext(ctx, task.Command, task.Args...)
+	cmd := exec.CommandContext(ctx, name, task.Args...)
+	if lookErr != nil {
+		cmd.Err = lookErr
+	}
+	if len(task.Env) > 0 {
+		// Later entries win, so the task's values override the agent's.
+		cmd.Env = append(os.Environ(), task.Env...)
+	}
 	cmd.Dir = task.WorkDir
 	cmd.WaitDelay = taskWaitDelay
 	return cmd
+}
+
+// lookupEnv returns the last value of key in env (KEY=VALUE entries).
+func lookupEnv(env []string, key string) (string, bool) {
+	val, found := "", false
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == key {
+			val, found = v, true
+		}
+	}
+	return val, found
+}
+
+// lookPath finds an executable name in the directories of pathEnv;
+// exec.Command only searches the agent's own PATH.
+func lookPath(name, pathEnv string) (string, error) {
+	for _, dir := range filepath.SplitList(pathEnv) {
+		if dir == "" {
+			continue
+		}
+		p := filepath.Join(dir, name)
+		if info, err := os.Stat(p); err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0 {
+			return p, nil
+		}
+	}
+	return name, fmt.Errorf("%s: executable file not found in task PATH %q", name, pathEnv)
 }
 
 func execErr(err error) string {

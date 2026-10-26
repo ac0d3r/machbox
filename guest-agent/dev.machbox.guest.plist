@@ -17,6 +17,13 @@
     <key>UserName</key>
     <string>root</string>
 
+    <!-- launchd's default PATH lacks /usr/local/bin and Homebrew; tasks inherit this. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
     <key>StandardOutPath</key>
     <string>/var/log/machbox-guest.log</string>
 
