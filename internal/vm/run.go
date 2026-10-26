@@ -109,14 +109,26 @@ func (r *Run) ShareFile(name string, src io.Reader, mode os.FileMode) error {
 // base name and returns that name.
 func (r *Run) SharePath(hostPath string) (string, error) {
 	name := filepath.Base(hostPath)
-	dst, err := r.sharePath(name)
-	if err != nil {
+	if err := r.ShareCopy(hostPath, name); err != nil {
 		return "", err
 	}
-	if err := copyPath(hostPath, dst); err != nil {
-		return "", fmt.Errorf("share %s: %w", hostPath, err)
-	}
 	return name, nil
+}
+
+// ShareCopy copies a host file or directory into the share at name (a
+// relative path).
+func (r *Run) ShareCopy(hostPath, name string) error {
+	dst, err := r.sharePath(name)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+		return err
+	}
+	if err := copyPath(hostPath, dst); err != nil {
+		return fmt.Errorf("share %s: %w", hostPath, err)
+	}
+	return nil
 }
 
 func (r *Run) sharePath(name string) (string, error) {

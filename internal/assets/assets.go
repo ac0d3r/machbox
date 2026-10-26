@@ -25,6 +25,7 @@ const (
 
 	vmsDirName   = "vms"
 	runsDirName  = "runs"
+	jobsDirName  = "jobs"
 	dataDirName  = "data"
 	guestDMGName = "guest.dmg"
 
@@ -38,6 +39,7 @@ var (
 	dataDir string
 	vmsDir  string
 	runsDir string
+	jobsDir string
 
 	initOnce sync.Once
 )
@@ -47,6 +49,7 @@ func init() {
 	dataDir = filepath.Join(appDir, dataDirName)
 	vmsDir = filepath.Join(appDir, vmsDirName)
 	runsDir = filepath.Join(appDir, runsDirName)
+	jobsDir = filepath.Join(appDir, jobsDirName)
 }
 
 func resolveAppDir() string {
@@ -62,7 +65,7 @@ func Init() (err error) {
 }
 
 func doInit() error {
-	for _, dir := range []string{appDir, dataDir, vmsDir, runsDir} {
+	for _, dir := range []string{appDir, dataDir, vmsDir, runsDir, jobsDir} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return fmt.Errorf("create dir %s: %w", dir, err)
 		}
@@ -181,3 +184,7 @@ func VMPath(uuid string) string { return filepath.Join(VMsDir(), uuid) }
 // (~/.machbox/runs). It is on the same volume as VMsDir so snapshots can be
 // APFS-cloned from baselines.
 func RunsDir() string { return runsDir }
+
+// JobsDir returns the directory that holds workflow job records
+// (~/.machbox/jobs/<id>/).
+func JobsDir() string { return jobsDir }
