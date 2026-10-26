@@ -12,6 +12,7 @@ package vsock
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"syscall"
@@ -33,8 +34,28 @@ type conn struct {
 func (c *conn) LocalAddr() net.Addr  { return addr{c.localPort} }
 func (c *conn) RemoteAddr() net.Addr { return addr{c.remotePort} }
 
-// *os.File provides Read/Write/Close and the deadline methods; a deadline
-// error is a *PathError, which implements Timeout() as net/http expects.
+// Read and Write return errors as *net.OpError. net/http only recognizes a
+// deadline error as a net.Error; the *PathError from *os.File lacks
+// Temporary, and net/http would then cancel the context of every later
+// request on the kept-alive connection.
+func (c *conn) Read(b []byte) (int, error) {
+	n, err := c.File.Read(b)
+	return n, c.opError("read", err)
+}
+
+func (c *conn) Write(b []byte) (int, error) {
+	n, err := c.File.Write(b)
+	return n, c.opError("write", err)
+}
+
+func (c *conn) opError(op string, err error) error {
+	if err == nil || errors.Is(err, io.EOF) {
+		return err
+	}
+	return &net.OpError{Op: op, Net: "vsock", Source: c.LocalAddr(), Addr: c.RemoteAddr(), Err: err}
+}
+
+// *os.File provides Close and the deadline methods.
 var _ net.Conn = (*conn)(nil)
 
 type listener struct {
