@@ -3,21 +3,21 @@
 // The host cannot dial AF_VSOCK directly; it uses Virtualization.framework
 // via pkg/vm.VMInstance.ConnectVsock instead. Port number lives in
 // internal/agent.DefaultVsockPort.
+//
+// Sockets are non-blocking and wrapped in *os.File, so they are driven by the
+// Go netpoller: connections support deadlines (needed by net/http), and
+// closing the listener unblocks a pending Accept.
 package vsock
 
 import (
 	"errors"
 	"fmt"
-	"io"
-	"math"
 	"net"
+	"os"
 	"syscall"
-	"time"
 
 	"golang.org/x/sys/unix"
 )
-
-var errNoDeadline = errors.New("vsock: deadlines not supported")
 
 type addr struct{ port uint32 }
 
@@ -25,51 +25,29 @@ func (a addr) Network() string { return "vsock" }
 func (a addr) String() string  { return fmt.Sprintf("%d", a.port) }
 
 type conn struct {
-	fd         int
+	*os.File
 	localPort  uint32
 	remotePort uint32
 }
 
-func (c *conn) Read(b []byte) (int, error) {
-	n, err := unix.Read(c.fd, b)
-	if err != nil {
-		return 0, err
-	}
-	if n == 0 {
-		return 0, io.EOF
-	}
-	return n, nil
-}
+func (c *conn) LocalAddr() net.Addr  { return addr{c.localPort} }
+func (c *conn) RemoteAddr() net.Addr { return addr{c.remotePort} }
 
-func (c *conn) Write(b []byte) (int, error) {
-	return unix.Write(c.fd, b)
-}
-
-func (c *conn) Close() error {
-	if c.fd < 0 {
-		return nil
-	}
-	err := unix.Close(c.fd)
-	c.fd = -1
-	return err
-}
-
-func (c *conn) LocalAddr() net.Addr              { return addr{c.localPort} }
-func (c *conn) RemoteAddr() net.Addr             { return addr{c.remotePort} }
-func (c *conn) SetDeadline(time.Time) error      { return errNoDeadline }
-func (c *conn) SetReadDeadline(time.Time) error  { return errNoDeadline }
-func (c *conn) SetWriteDeadline(time.Time) error { return errNoDeadline }
+// *os.File provides Read/Write/Close and the deadline methods; a deadline
+// error is a *PathError, which implements Timeout() as net/http expects.
+var _ net.Conn = (*conn)(nil)
 
 type listener struct {
-	fd   int
+	f    *os.File
+	rc   syscall.RawConn
 	port uint32
 }
 
 // Listen binds AF_VSOCK on port (VMADDR_CID_ANY) and accepts host connections.
 func Listen(port uint32) (net.Listener, error) {
-	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM, 0)
+	fd, err := socket()
 	if err != nil {
-		return nil, fmt.Errorf("socket: %w", err)
+		return nil, err
 	}
 	if err := unix.Bind(fd, &unix.SockaddrVM{CID: unix.VMADDR_CID_ANY, Port: port}); err != nil {
 		_ = unix.Close(fd)
@@ -79,95 +57,79 @@ func Listen(port uint32) (net.Listener, error) {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("listen: %w", err)
 	}
-	// Nonblocking listen fd: Accept polls without holding ForkLock.
-	// A blocking Accept that held ForkLock deadlocked later exec/fork.
+
+	f := os.NewFile(uintptr(fd), "vsock-listener")
+	rc, err := f.SyscallConn()
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return &listener{f: f, rc: rc, port: port}, nil
+}
+
+func socket() (int, error) {
+	// Hold ForkLock so the fd cannot leak into a concurrently forked child
+	// before it is marked close-on-exec.
+	syscall.ForkLock.RLock()
+	defer syscall.ForkLock.RUnlock()
+	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM, 0)
+	if err != nil {
+		return -1, fmt.Errorf("socket: %w", err)
+	}
+	unix.CloseOnExec(fd)
 	if err := unix.SetNonblock(fd, true); err != nil {
 		_ = unix.Close(fd)
-		return nil, fmt.Errorf("set nonblock: %w", err)
+		return -1, fmt.Errorf("set nonblock: %w", err)
 	}
-	return &listener{fd: fd, port: port}, nil
+	return fd, nil
 }
 
 func (l *listener) Accept() (net.Conn, error) {
-	nfd, err := accept(l.fd)
+	var (
+		nfd  int
+		peer unix.Sockaddr
+		aerr error
+	)
+	err := l.rc.Read(func(fd uintptr) bool {
+		// ForkLock is held only for the non-blocking accept itself; waiting
+		// for readiness happens in the netpoller without it.
+		syscall.ForkLock.RLock()
+		nfd, peer, aerr = unix.Accept(int(fd))
+		if aerr == nil {
+			unix.CloseOnExec(nfd)
+		}
+		syscall.ForkLock.RUnlock()
+		// false: not ready yet, wait for the listener to become readable.
+		return !errors.Is(aerr, unix.EAGAIN) && !errors.Is(aerr, unix.EINTR)
+	})
 	if err != nil {
+		if errors.Is(err, os.ErrClosed) {
+			return nil, net.ErrClosed
+		}
 		return nil, err
 	}
-	// Darwin inherits O_NONBLOCK from the listen socket; clear it so
-	// subsequent reads block until the peer sends data.
-	if err := unix.SetNonblock(nfd, false); err != nil {
-		_ = unix.Close(nfd)
-		return nil, err
+	if aerr != nil {
+		return nil, fmt.Errorf("accept: %w", aerr)
 	}
 
-	peer, err := unix.Getpeername(nfd)
-	if err != nil {
-		_ = unix.Close(nfd)
-		return nil, fmt.Errorf("getpeername: %w", err)
-	}
 	vm, ok := peer.(*unix.SockaddrVM)
 	if !ok {
 		_ = unix.Close(nfd)
 		return nil, fmt.Errorf("peer is not SockaddrVM: %T", peer)
 	}
+	// Darwin inherits O_NONBLOCK from the listening socket; set it
+	// explicitly so os.NewFile registers the fd with the netpoller.
+	if err := unix.SetNonblock(nfd, true); err != nil {
+		_ = unix.Close(nfd)
+		return nil, err
+	}
 	return &conn{
-		fd:         nfd,
+		File:       os.NewFile(uintptr(nfd), "vsock"),
 		localPort:  l.port,
 		remotePort: vm.Port,
 	}, nil
 }
 
-func accept(fd int) (int, error) {
-	for {
-		if err := waitReadable(fd); err != nil {
-			return -1, err
-		}
-		syscall.ForkLock.RLock()
-		nfd, _, err := unix.Accept(fd)
-		if err == nil {
-			unix.CloseOnExec(nfd)
-		}
-		syscall.ForkLock.RUnlock()
-		if err == unix.EINTR || err == unix.EAGAIN || err == unix.EWOULDBLOCK {
-			continue
-		}
-		if err != nil {
-			return -1, err
-		}
-		return nfd, nil
-	}
-}
-
-func waitReadable(fd int) error {
-	if fd < 0 || fd > math.MaxInt32 {
-		return net.ErrClosed
-	}
-	for {
-		fds := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
-		_, err := unix.Poll(fds, -1)
-		if err == unix.EINTR {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		re := fds[0].Revents
-		if re&unix.POLLIN != 0 {
-			return nil
-		}
-		if re&(unix.POLLERR|unix.POLLHUP|unix.POLLNVAL) != 0 {
-			return net.ErrClosed
-		}
-	}
-}
-
 func (l *listener) Addr() net.Addr { return addr{l.port} }
 
-func (l *listener) Close() error {
-	if l.fd < 0 {
-		return nil
-	}
-	err := unix.Close(l.fd)
-	l.fd = -1
-	return err
-}
+func (l *listener) Close() error { return l.f.Close() }

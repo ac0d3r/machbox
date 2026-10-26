@@ -154,7 +154,7 @@ func waitGuest(ctx context.Context, inst *boxvm.VMInstance, purpose setupPurpose
 	loggedWaitingReinstall := false
 
 	for {
-		client, info, err := agent.Dial(ctx, dial)
+		info, err := agent.Probe(ctx, dial)
 		if err != nil {
 			if requireRestart && !sawDown {
 				logrus.Debugf("guest agent unreachable (waiting for reinstall cycle): %v", err)
@@ -169,8 +169,6 @@ func waitGuest(ctx context.Context, inst *boxvm.VMInstance, purpose setupPurpose
 			}
 			continue
 		}
-		_ = client.Close()
-
 		if info.OSName == "" {
 			info.OSName = "macOS"
 		}
