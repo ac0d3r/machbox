@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -33,7 +34,11 @@ func run() int {
 	defer ln.Close()
 
 	srv := &agent.Server{
-		Info:       func() (agent.GuestInfo, error) { return info, nil },
+		Info: func() (agent.GuestInfo, error) {
+			live := info
+			live.ConsoleUser = consoleUser()
+			return live, nil
+		},
 		MountShare: mountVirtioFS,
 	}
 	fmt.Printf("[agent] listening on vsock %d\n", agent.DefaultVsockPort)
@@ -70,9 +75,36 @@ func collectGuestInfo() agent.GuestInfo {
 		info.BuildVersion = v
 	}
 	if csr, err := runTrim(exec.Command("csrutil", "status")); err == nil {
-		info.SIPDisabled = strings.Contains(strings.ToLower(csr), "disabled")
+		info.SIPDisabled = sipDisabled(csr)
 	}
 	return info
+}
+
+func consoleUser() string {
+	fi, err := os.Stat("/dev/console")
+	if err != nil {
+		return ""
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || st.Uid == 0 { // root owns the console at the login window
+		return ""
+	}
+	uid := strconv.FormatUint(uint64(st.Uid), 10)
+	// #nosec G204 -- uid is numeric, from stat.
+	if exec.Command("pgrep", "-x", "-U", uid, "Finder").Run() != nil {
+		return ""
+	}
+	u, err := user.LookupId(uid)
+	if err != nil {
+		return ""
+	}
+	return u.Username
+}
+
+func sipDisabled(csrutilStatus string) bool {
+	line, _, _ := strings.Cut(csrutilStatus, "\n")
+	_, state, ok := strings.Cut(line, "status:")
+	return ok && strings.HasPrefix(strings.TrimSpace(strings.ToLower(state)), "disabled")
 }
 
 func mountVirtioFS(mountpoint string) error {

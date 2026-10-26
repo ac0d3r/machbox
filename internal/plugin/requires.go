@@ -36,7 +36,7 @@ func (r Requires) validate() error {
 }
 
 // CheckOS reports whether a guest running osVersion satisfies the macOS
-// constraint. Baseline records carry the version, so this works before boot.
+// constraint.
 func (r Requires) CheckOS(osVersion string) error {
 	cs, err := parseConstraints(r.MacOS)
 	if err != nil {
@@ -54,7 +54,8 @@ func (r Requires) CheckOS(osVersion string) error {
 	return nil
 }
 
-// Check verifies a running guest against all requirements.
+// Check verifies a guest against all requirements. Baseline records carry
+// both values, so this works before boot; after boot it confirms them.
 func (r Requires) Check(osVersion string, sipDisabled bool) error {
 	if err := r.CheckOS(osVersion); err != nil {
 		return err
@@ -66,6 +67,21 @@ func (r Requires) Check(osVersion string, sipDisabled bool) error {
 		return errors.New("guest SIP is disabled; plugin requires it enabled")
 	}
 	return nil
+}
+
+// String describes the requirements, e.g. "macOS >=14.0, SIP disabled".
+func (r Requires) String() string {
+	var parts []string
+	if r.MacOS != "" {
+		parts = append(parts, "macOS "+r.MacOS)
+	}
+	if r.SIP != SIPAny {
+		parts = append(parts, "SIP "+string(r.SIP))
+	}
+	if len(parts) == 0 {
+		return "none"
+	}
+	return strings.Join(parts, ", ")
 }
 
 type constraint struct {

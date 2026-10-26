@@ -265,7 +265,4 @@ func LogGuest(info GuestInfo) {
 	if info.Username != "root" {
 		logrus.Warnf("guest agent running as non-root user: %s", info.Username)
 	}
-	if !info.SIPDisabled {
-		logrus.Warnln("guest SIP is still enabled; EndpointSecurity.framework features may not work correctly")
-	}
 }

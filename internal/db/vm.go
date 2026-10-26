@@ -13,6 +13,7 @@ type VM struct {
 	OSBuild   string `json:"os_build"`
 
 	AgentVersion string `json:"agent_version"`
+	SIPDisabled  bool   `gorm:"column:sip_disabled" json:"sip_disabled"`
 
 	Error string `json:"error,omitempty"`
 

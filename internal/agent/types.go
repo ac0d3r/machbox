@@ -30,6 +30,9 @@ type GuestInfo struct {
 	// AgentVersion is the guest agent revision used for host compatibility checks.
 	AgentVersion string `json:"agent_version"`
 	SIPDisabled  bool   `json:"sip_disabled"`
+	// ConsoleUser is the user logged in at the console once their desktop
+	// (Finder) is up; empty at the login window. Read on every request.
+	ConsoleUser string `json:"console_user,omitempty"`
 }
 
 // WorkDir tells the guest where to store files and run tasks.

@@ -87,6 +87,7 @@ func Import(ctx context.Context, opts ImportOptions) (vm *db.VM, err error) {
 		OSVersion:    info.OSVersion,
 		OSBuild:      info.BuildVersion,
 		AgentVersion: info.AgentVersion,
+		SIPDisabled:  info.SIPDisabled,
 	}
 	if err = db.CreateVM(vm); err != nil {
 		return nil, fmt.Errorf("save baseline: %w", err)
@@ -123,6 +124,7 @@ func UpdateAgent(ctx context.Context, identifier string) (*db.VM, error) {
 	vm.OSVersion = info.OSVersion
 	vm.OSBuild = info.BuildVersion
 	vm.AgentVersion = info.AgentVersion
+	vm.SIPDisabled = info.SIPDisabled
 	vm.Error = ""
 	if err := db.SaveVM(vm); err != nil {
 		return nil, fmt.Errorf("save baseline after agent update: %w", err)

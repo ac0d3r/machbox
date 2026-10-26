@@ -16,8 +16,24 @@ func InitDB() (err error) {
 	if err != nil {
 		return err
 	}
+	return migrate(_db)
+}
 
-	return _db.AutoMigrate(&VM{})
+func migrate(db *gorm.DB) error {
+	m := db.Migrator()
+	addsSIP := m.HasTable(&VM{}) && !m.HasColumn(&VM{}, "SIPDisabled")
+	if err := db.AutoMigrate(&VM{}); err != nil {
+		return err
+	}
+	if addsSIP {
+		// Imports used to require SIP disabled, so every existing baseline has it.
+		err := db.Session(&gorm.Session{AllowGlobalUpdate: true}).
+			Model(&VM{}).UpdateColumn("SIPDisabled", true).Error
+		if err != nil {
+			return fmt.Errorf("migrate baselines: %w", err)
+		}
+	}
+	return nil
 }
 
 func CloseDB() error {

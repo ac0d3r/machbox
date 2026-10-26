@@ -19,6 +19,72 @@ chmod 755 "${AGENT}"
 launchctl bootstrap system "${PLIST_PATH}"
 launchctl kickstart -k "${SERVICE}"
 
+# Runs are headless, so samples only get a logged-in GUI session if the
+# guest logs in by itself. macOS needs the user's password for that, which
+# is asked in a dialog on the user's desktop. Never fails the install.
+configure_autologin() {
+    local loginwindow="/Library/Preferences/com.apple.loginwindow"
+    local user uid answer password tries
+
+    if [ -n "$(defaults read "${loginwindow}" autoLoginUser 2>/dev/null)" ]; then
+        echo "automatic login already enabled"
+        return 0
+    fi
+    user=$(stat -f%Su /dev/console)
+    if [ -z "${user}" ] || [ "${user}" = "root" ] || [ "${user}" = "loginwindow" ]; then
+        echo "no user logged in; skipping automatic login"
+        return 0
+    fi
+    uid=$(id -u "${user}")
+
+    # $1: dialog text; $2: "password" for a hidden input field.
+    # Prints the answer; fails if the user cancels or the dialog times out.
+    ask() {
+        local field=()
+        if [ "$2" = "password" ]; then
+            field=(-e 'set d to display dialog msg default answer "" with hidden answer buttons {"Skip", "Enable"} default button "Enable" cancel button "Skip" with title "Machbox" giving up after 600' \
+                   -e 'if gave up of d then error number -128' \
+                   -e 'text returned of d')
+        else
+            field=(-e 'display dialog msg buttons {"OK"} default button "OK" with title "Machbox" giving up after 600')
+        fi
+        launchctl asuser "${uid}" sudo -u "${user}" /usr/bin/osascript \
+            -e "on run argv" -e "set msg to item 1 of argv" "${field[@]}" -e "end run" "$1"
+    }
+
+    if [ "$(fdesetup isactive 2>/dev/null)" = "true" ]; then
+        ask "Automatic login is not possible while FileVault is on. Turn FileVault off in System Settings, then reinstall machbox-guest.pkg." info || true
+        return 0
+    fi
+
+    for tries in 1 2 3; do
+        answer=$(ask "Machbox runs samples in a logged-in session, so this VM has to log in automatically.
+
+Enter the password of \"${user}\" to enable automatic login:" password) || {
+            echo "automatic login skipped by the user"
+            return 0
+        }
+        password=${answer}
+        if dscl /Search -authonly "${user}" "${password}" >/dev/null 2>&1; then
+            break
+        fi
+        password=""
+        echo "wrong password for ${user} (attempt ${tries})"
+    done
+    if [ -z "${password}" ]; then
+        ask "Wrong password; automatic login was not enabled." info || true
+        return 0
+    fi
+
+    if sysadminctl -autologin set -userName "${user}" -password "${password}" >/dev/null 2>&1 &&
+        [ "$(defaults read "${loginwindow}" autoLoginUser 2>/dev/null)" = "${user}" ]; then
+        echo "automatic login enabled for ${user}"
+    else
+        ask "Enabling automatic login failed. Set it in System Settings → Users & Groups." info || true
+    fi
+}
+configure_autologin || true
+
 # Install Rosetta 2 on Apple Silicon if not already present.
 if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ] && \
    ! pkgutil --pkg-info com.apple.pkg.RosettaUpdateAuto >/dev/null 2>&1; then

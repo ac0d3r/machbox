@@ -27,15 +27,9 @@ const (
 	purposeUpdateAgent
 )
 
-// ErrSIPEnabled is returned when the guest still has System Integrity
-// Protection enabled.
-var ErrSIPEnabled = errors.New(
-	"guest SIP (System Integrity Protection) is still enabled; " +
-		"boot the guest into Recovery Mode, open Utilities → Terminal, run " +
-		"`csrutil disable`, then reboot the guest and import again")
-
 // setup boots the VBVM with the guest DMG attached and a GUI, then dials the
-// guest agent until a matching protocol reports in (or SIP/timeout).
+// guest agent until a matching protocol reports in (or timeout). SIP may be
+// in either state; plugins that need it disabled say so in their requirements.
 func setup(ctx context.Context, dir string, purpose setupPurpose) (*agent.GuestInfo, error) {
 	// Main thread is pinned in main(); do not UnlockOSThread.
 	ctx, cancel := context.WithCancel(ctx)
@@ -195,9 +189,6 @@ func waitGuest(ctx context.Context, inst *boxvm.VMInstance, purpose setupPurpose
 			continue
 		}
 		agent.LogGuest(info)
-		if !info.SIPDisabled {
-			return nil, ErrSIPEnabled
-		}
 		return &info, nil
 	}
 }

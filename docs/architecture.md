@@ -19,7 +19,7 @@ flowchart LR
         end
     end
 
-    subgraph Guest["Guest VM (macOS, SIP disabled)"]
+    subgraph Guest["Guest VM (macOS, auto-login)"]
         Agent["machbox-guest<br>HTTP over vsock :12345"]
         Proc["task processes"]
         Mount["/tmp/machbox_s*<br>virtiofs mount"]
@@ -47,7 +47,7 @@ Disk.img          config.json    # {"version":1,"cpu_count":â€¦,"memory_size":â€
 
 Booting never reads VirtualBuddy metadata again. Baselines imported by older versions (a whole `.vbvm` copy) are migrated in place on first load.
 
-Import and `vm update-agent` boot the baseline with a GUI and `guest.dmg` attached. The user installs `machbox-guest.pkg` from it; the host polls the agent until a compatible `AgentVersion` answers and SIP is reported disabled. The DMG is embedded in the binary and extracted to `data/guest-<sha256[:12]>.dmg` only when needed, atomically and read-only.
+Import and `vm update-agent` boot the baseline with a GUI and `guest.dmg` attached. The user installs `machbox-guest.pkg` from it; the host polls the agent until a compatible `AgentVersion` answers, then records the guest's OS version and SIP state. SIP may be on or off; plugins that need it off require `sip: disabled`, and baselines are chosen by those records before boot. The DMG is embedded in the binary and extracted to `data/guest-<sha256[:12]>.dmg` only when needed, atomically and read-only.
 
 ## Runs
 
@@ -67,7 +67,7 @@ A run (`internal/vm.Run`) owns one directory, `~/.machbox/runs/run-*/`:
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /v1/info` | OS, user, SIP state, `agent_version` |
+| `GET /v1/info` | OS, agent user, SIP state, `agent_version`, and the console user once their desktop is up |
 | `POST /v1/workdir` | mount the share and create a writable work dir |
 | `POST /v1/exec` | run a task to completion; JSON result |
 | `POST /v1/exec/stream` | stream stdout as a chunked body; exit status in `X-Task-Error` / `X-Task-Timed-Out` trailers |
@@ -109,6 +109,8 @@ workflows:
 ```
 
 Templates only substitute: `${{ inputs.<name> }}`, `${{ output }}`, `${{ steps.<id>.output }}` (an earlier step), `${{ plugin_dir }}`. A command with a slash (`tools/x`) is resolved in the plugin directory; a bare name in the guest `PATH` (the agent's includes Homebrew and `/usr/local/bin`; an `env` PATH replaces it).
+
+Before the first step, a job waits up to 5 minutes for the baseline's automatic login (the agent starts earlier, at the login window). Steps run as root, like the agent. Running the sample as the logged-in user (baselines log in automatically, see `environment-setup.md`) is up to the plugin: its root tools drop privileges when they launch the sample. Host safety never relies on that.
 
 Once a sample runs, it controls the guest, agent included, so the host trusts nothing the guest sends to be small or timely: it enforces every timeout itself (plus a 30 s grace), caps step logs at 64 MiB and outputs at 512 MiB, and strips control characters from guest error text before storing or printing it.
 

@@ -12,7 +12,20 @@ Only needs to be done once. After setup, the imported baseline can be reused for
 
 3. Complete the macOS setup inside the VM (region, account, etc.).
 
-## Disable SIP in the Guest VM
+## Turn FileVault Off in the Guest VM
+
+Samples run as the logged-in user in a real GUI session, so the guest has to log
+in automatically on every boot (runs are headless). macOS refuses automatic login
+while FileVault is on: turn it off in **System Settings → Privacy & Security →
+FileVault**. Installing `machbox-guest.pkg` then enables automatic login (below).
+
+## Disable SIP in the Guest VM (if your plugins need it)
+
+Plugins state whether they need SIP (System Integrity Protection) off, e.g. for
+EndpointSecurity or DTrace (`requires: {sip: disabled}` in `plugin.yml`); `machbox
+vm list` shows each baseline's state, and `machbox run` picks a baseline that fits.
+Keeping SIP on is more realistic: some malware checks `csrutil status` and stays
+quiet when SIP is off. You can keep one baseline of each kind.
 
 1. In VirtualBuddy, enable **Boot in recovery mode** for the VM.
 
@@ -40,8 +53,12 @@ In the VM window:
 
 1. Open Finder and select `MachboxGuest` from the sidebar.
 2. Install `machbox-guest.pkg`.
-3. Wait for the installation to finish (Xcode Command Line Tools will be installed silently).
-4. After the checks pass, close the VM window to finish the import.
+3. When asked, enter your account password to enable automatic login. macOS needs
+   it to log in by itself; it is checked and stored by macOS only. If you skip
+   this, set **System Settings → Users & Groups → Automatically log in as**
+   yourself, or reinstall the package later.
+4. Wait for the installation to finish (Xcode Command Line Tools will be installed silently).
+5. After the checks pass, close the VM window to finish the import.
 
 ## Update the Guest Agent on an Imported Baseline
 
