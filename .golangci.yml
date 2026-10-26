@@ -36,6 +36,7 @@ linters:
         - (io.Closer).Close
         - (io/fs.File).Close
         - (*os.File).Close
+        - (*os.Root).Close
         - (*io.PipeWriter).Close
         - syscall.Close
         - os.Remove

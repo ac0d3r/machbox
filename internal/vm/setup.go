@@ -199,6 +199,8 @@ func waitGuest(ctx context.Context, inst *boxvm.VMInstance, purpose setupPurpose
 	}
 }
 
+// finalizeBaseline drops runs_* snapshot directories that older versions
+// created inside the baseline bundle (runs now live in assets.RunsDir).
 func finalizeBaseline(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {

@@ -14,7 +14,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/sys/unix"
 	"gorm.io/gorm"
 )
 
@@ -67,7 +66,7 @@ func Import(ctx context.Context, opts ImportOptions) (vm *db.VM, err error) {
 	}()
 
 	logrus.Infof("importing baseline %q from %s", name, src)
-	if err = cloneFile(src, dir); err != nil {
+	if err = config.CloneFile(src, dir); err != nil {
 		return nil, fmt.Errorf("clone vm bundle: %w", err)
 	}
 
@@ -216,15 +215,4 @@ func newUUID() (string, error) {
 func looksLikeUUID(s string) bool {
 	_, err := uuid.Parse(s)
 	return err == nil
-}
-
-// cloneFile APFS-clones src to dst (copy-on-write). dst must not exist;
-// src and dst must be on the same APFS volume.
-func cloneFile(src, dst string) error {
-	if err := unix.Clonefile(src, dst, 0); err != nil {
-		logrus.Debugf("APFS clonefile failed for %s, falling back to regular copy", src)
-		return err
-	}
-
-	return nil
 }

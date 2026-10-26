@@ -46,9 +46,9 @@ func run() int {
 
 func collectGuestInfo() agent.GuestInfo {
 	info := agent.GuestInfo{
-		OSName:   "macOS",
+		OSName:       "macOS",
 		AgentVersion: agent.AgentVersion,
-		Username: "root",
+		Username:     "root",
 	}
 	if h, err := os.Hostname(); err == nil {
 		info.Hostname = h
@@ -87,7 +87,7 @@ func mountVirtioFS(mountpoint string) error {
 	}
 
 	// #nosec G204 -- tag is fixed; mountpoint comes from the trusted host.
-	out, err := exec.Command("mount_virtiofs", "machbox", mountpoint).CombinedOutput()
+	out, err := exec.Command("mount_virtiofs", agent.ShareTag, mountpoint).CombinedOutput()
 	if err != nil {
 		// Another session may have won the race.
 		if mounted, _ := isMounted(mountpoint); mounted {

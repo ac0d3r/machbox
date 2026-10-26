@@ -9,7 +9,7 @@ func TestCompatibleAgent(t *testing.T) {
 	if CompatibleAgent("") == nil {
 		t.Fatal("empty agent version should fail")
 	}
-	if CompatibleAgent(AgentVersion + ".x") == nil {
+	if CompatibleAgent(AgentVersion+".x") == nil {
 		t.Fatal("mismatched agent version should fail")
 	}
 }

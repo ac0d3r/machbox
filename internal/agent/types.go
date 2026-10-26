@@ -4,6 +4,9 @@ package agent
 // Host dials the same port via Virtualization.framework.
 const DefaultVsockPort uint32 = 12345
 
+// ShareTag is the virtiofs tag of the host directory shared with the guest.
+const ShareTag = "machbox"
+
 // GuestInfo is sent by the guest during handshake.
 type GuestInfo struct {
 	Hostname     string `json:"hostname"`

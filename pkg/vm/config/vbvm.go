@@ -14,8 +14,7 @@ const (
 )
 
 type VBVMConfig struct {
-	RootPath     string
-	SnapshotPath string
+	RootPath string
 
 	AuxiliaryStoragePath  string
 	HardwareModelPath     string

@@ -19,6 +19,7 @@ const (
 	dbName = "machbox.sqlite"
 
 	vmsDirName   = "vms"
+	runsDirName  = "runs"
 	dataDirName  = "data"
 	guestDMGName = "guest.dmg"
 	guestDMGSum  = guestDMGName + ".sha256"
@@ -28,6 +29,7 @@ var (
 	appDir  string
 	dataDir string
 	vmsDir  string
+	runsDir string
 
 	initOnce sync.Once
 )
@@ -36,6 +38,7 @@ func init() {
 	appDir = resolveAppDir()
 	dataDir = filepath.Join(appDir, dataDirName)
 	vmsDir = filepath.Join(appDir, vmsDirName)
+	runsDir = filepath.Join(appDir, runsDirName)
 }
 
 func resolveAppDir() string {
@@ -51,7 +54,7 @@ func Init() (err error) {
 }
 
 func doInit() error {
-	for _, dir := range []string{appDir, dataDir, vmsDir} {
+	for _, dir := range []string{appDir, dataDir, vmsDir, runsDir} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return fmt.Errorf("create dir %s: %w", dir, err)
 		}
@@ -117,8 +120,9 @@ func VMsDir() string { return vmsDir }
 // (~/.machbox/vms/<uuid>).
 func VMPath(uuid string) string { return filepath.Join(VMsDir(), uuid) }
 
-func GuestDMGPath() string { return filepath.Join(dataDir, guestDMGName) }
+// RunsDir returns the directory that holds disposable VM runs
+// (~/.machbox/runs). It is on the same volume as VMsDir so snapshots can be
+// APFS-cloned from baselines.
+func RunsDir() string { return runsDir }
 
-func OpenFS(name string) (fs.File, error) {
-	return dataFS.Open("data/" + name)
-}
+func GuestDMGPath() string { return filepath.Join(dataDir, guestDMGName) }
