@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	vz "github.com/Code-Hex/vz/v3"
+	vz "github.com/Code-Hex/vz/v4"
 )
 
 const (

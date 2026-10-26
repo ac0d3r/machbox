@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	vz "github.com/Code-Hex/vz/v3"
+	vz "github.com/Code-Hex/vz/v4"
 	"howett.net/plist"
 )
 

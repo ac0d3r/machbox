@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	vz "github.com/Code-Hex/vz/v3"
+	vz "github.com/Code-Hex/vz/v4"
 	"github.com/sirupsen/logrus"
 )
 
@@ -44,22 +44,27 @@ func (i *VMInstance) startStateWatcher() {
 }
 
 func (i *VMInstance) handleStateChanges() {
-	ch := i.vm.StateChangedNotify()
+	ch := make(chan vz.VirtualMachineState, 4)
+	stop, err := i.vm.StateChangedNotify(ch)
+	if err != nil {
+		logrus.Warnf("watch VM state: %v", err)
+		return
+	}
+	defer stop()
 
 	for {
+		// Notifications may be dropped or stale, so State() is authoritative;
+		// checking it first also covers a stop before registration.
+		if i.vm.State() == vz.VirtualMachineStateStopped {
+			logrus.Debug("VM stopped")
+			i.setShutdownState()
+			return
+		}
+
 		select {
-		case state, ok := <-ch:
-			if !ok {
-				logrus.Debug("VM state notification channel closed")
-				return
-			}
-			switch state {
-			case vz.VirtualMachineStateRunning:
+		case state := <-ch:
+			if state == vz.VirtualMachineStateRunning {
 				logrus.Debug("VM started")
-			case vz.VirtualMachineStateStopped:
-				logrus.Debug("VM stopped")
-				i.setShutdownState()
-				return
 			}
 		case <-i.ctx.Done():
 			logrus.Debug("VM state watcher cancelled by context")

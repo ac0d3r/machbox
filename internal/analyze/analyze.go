@@ -20,7 +20,7 @@ import (
 	boxvm "github.com/ac0d3r/machbox/pkg/vm"
 	"github.com/ac0d3r/machbox/pkg/vm/config"
 
-	vz "github.com/Code-Hex/vz/v3"
+	vz "github.com/Code-Hex/vz/v4"
 	"github.com/sirupsen/logrus"
 )
 
