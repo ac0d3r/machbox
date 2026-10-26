@@ -18,9 +18,9 @@ import (
 const (
 	// ManifestName is the manifest file at the root of a plugin directory.
 	ManifestName = "plugin.yml"
-	// APIVersion is the plugin contract (manifest schema, template
+	// ManifestVersion is the plugin contract (manifest schema, template
 	// variables, guest layout) this machbox implements.
-	APIVersion = 1
+	ManifestVersion = 1
 
 	// DefaultStepTimeout applies to steps without a timeout.
 	DefaultStepTimeout = 10 * time.Minute
@@ -36,11 +36,11 @@ type Plugin struct {
 	// Dir is the plugin directory on the host.
 	Dir string `yaml:"-"`
 
-	API       int                  `yaml:"api"`
-	Name      string               `yaml:"name"`
-	Version   string               `yaml:"version"`
-	Requires  Requires             `yaml:"requires"`
-	Workflows map[string]*Workflow `yaml:"workflows"`
+	ManifestVersion int                  `yaml:"manifest_version"`
+	Name            string               `yaml:"name"`
+	Version         string               `yaml:"version"`
+	Requires        Requires             `yaml:"requires"`
+	Workflows       map[string]*Workflow `yaml:"workflows"`
 }
 
 // Workflow is a named sequence of steps run in one guest.
@@ -187,8 +187,9 @@ func (p *Plugin) Workflow(name string) (*Workflow, error) {
 }
 
 func (p *Plugin) validate() error {
-	if p.API != APIVersion {
-		return fmt.Errorf("api %d is not supported (machbox implements api %d)", p.API, APIVersion)
+	if p.ManifestVersion != ManifestVersion {
+		return fmt.Errorf("manifest_version %d is not supported (machbox implements manifest_version %d)",
+			p.ManifestVersion, ManifestVersion)
 	}
 	if !identRe.MatchString(p.Name) {
 		return fmt.Errorf("name %q must match %s", p.Name, identRe)

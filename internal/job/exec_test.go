@@ -16,7 +16,7 @@ import (
 )
 
 const testManifest = `
-api: 1
+manifest_version: 1
 name: demo
 version: 0.1.0
 workflows:
@@ -73,44 +73,10 @@ func TestExecuteWorkflow(t *testing.T) {
 	sample := filepath.Join(t.TempDir(), "Sample.bin")
 	writeFile(t, sample, "MZ", 0o444)
 
-	p, err := plugin.Load(pluginDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wf, err := p.Workflow("analyze")
-	if err != nil {
-		t.Fatal(err)
-	}
-	inputs, err := wf.ParseArgs([]string{sample})
-	if err != nil {
-		t.Fatal(err)
-	}
-	j, err := create(filepath.Join(t.TempDir(), "job"), p, wf, inputs, &db.VM{UUID: "u", Name: "b"})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// The test agent runs tasks on this machine: share and workdir are
-	// plain directories.
-	wd := agent.WorkDir{SharePath: t.TempDir(), WorkPath: filepath.Join(t.TempDir(), "work")}
-	if err := os.Mkdir(wd.WorkPath, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := j.share(func(hostPath, name string) error {
-		dst := filepath.Join(wd.SharePath, name)
-		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-			return err
-		}
-		return exec.Command("cp", "-R", hostPath, dst).Run()
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	err = j.execute(context.Background(), startAgent(t), wd, nil)
+	j, wd, err := runLocal(t, pluginDir, "analyze", []string{sample})
 	if err == nil || !strings.Contains(err.Error(), "step missing") {
 		t.Fatalf("execute error = %v, want failure of step missing", err)
 	}
-	j.finish(err)
 
 	want := map[string]Status{
 		"static":  StatusSucceeded,
@@ -176,6 +142,46 @@ func TestPullOutputSizeLimit(t *testing.T) {
 	if entries, _ := os.ReadDir(filepath.Join(j.Dir, outputsDir)); len(entries) != 0 {
 		t.Errorf("partial output left behind: %v", entries)
 	}
+}
+
+// runLocal runs a workflow against a guest agent serving on loopback: its
+// tasks run on this machine, and share and workdir are plain directories.
+func runLocal(t *testing.T, pluginDir, workflow string, args []string) (*Job, agent.WorkDir, error) {
+	t.Helper()
+	p, err := plugin.Load(pluginDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wf, err := p.Workflow(workflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputs, err := wf.ParseArgs(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := create(filepath.Join(t.TempDir(), "job"), p, wf, inputs, &db.VM{UUID: "u", Name: "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wd := agent.WorkDir{SharePath: t.TempDir(), WorkPath: filepath.Join(t.TempDir(), "work")}
+	if err := os.Mkdir(wd.WorkPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.share(func(hostPath, name string) error {
+		dst := filepath.Join(wd.SharePath, name)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+			return err
+		}
+		return exec.Command("cp", "-R", hostPath, dst).Run()
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	err = j.execute(context.Background(), startAgent(t), wd, nil)
+	j.finish(err)
+	return j, wd, err
 }
 
 func startAgent(t *testing.T) *agent.Client {

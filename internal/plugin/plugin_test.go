@@ -9,7 +9,7 @@ import (
 )
 
 const malwareManifest = `
-api: 1
+manifest_version: 1
 name: malware
 version: 0.1.0
 requires:
@@ -72,9 +72,9 @@ func TestParseManifest(t *testing.T) {
 }
 
 func TestParseManifestErrors(t *testing.T) {
-	base := "api: 1\nname: p\nworkflows:\n  w:\n"
+	base := "manifest_version: 1\nname: p\nworkflows:\n  w:\n"
 	tests := map[string]string{
-		"api":            "api: 2\nname: p\nworkflows: {w: {steps: [{id: a, run: [x]}]}}",
+		"version":        "manifest_version: 2\nname: p\nworkflows: {w: {steps: [{id: a, run: [x]}]}}",
 		"unknown field":  base + "    steps: [{id: a, run: [x], bogus: 1}]",
 		"no steps":       base + "    steps: []",
 		"dup id":         base + "    steps: [{id: a, run: [x]}, {id: a, run: [y]}]",
@@ -90,11 +90,11 @@ func TestParseManifestErrors(t *testing.T) {
 		"malformed":      base + "    steps: [{id: a, run: [x, '${{ inputs.a']}]",
 		"file default":   base + "    inputs: {f: {type: file, default: x}}\n    steps: [{id: a, run: [x]}]",
 		"bad input type": base + "    inputs: {f: {type: int}}\n    steps: [{id: a, run: [x]}]",
-		"bad constraint": "api: 1\nname: p\nrequires: {macos: '14'}\nworkflows: {w: {steps: [{id: a, run: [x]}]}}",
+		"bad constraint": "manifest_version: 1\nname: p\nrequires: {macos: '14'}\nworkflows: {w: {steps: [{id: a, run: [x]}]}}",
 		"bad env name":   base + "    env: {1BAD: x}\n    steps: [{id: a, run: [x]}]",
 		"bad env tmpl":   base + "    steps: [{id: a, run: [x], env: {A: '${{ inputs.nope }}'}}]",
 		"dot output":     base + "    steps: [{id: a, run: [x], output: ./.}]",
-		"bad sip":        "api: 1\nname: p\nrequires: {sip: off}\nworkflows: {w: {steps: [{id: a, run: [x]}]}}",
+		"bad sip":        "manifest_version: 1\nname: p\nrequires: {sip: off}\nworkflows: {w: {steps: [{id: a, run: [x]}]}}",
 	}
 	for name, manifest := range tests {
 		if _, err := Parse([]byte(manifest)); err == nil {
@@ -172,7 +172,7 @@ func TestRequires(t *testing.T) {
 
 func TestStepEnviron(t *testing.T) {
 	p, err := Parse([]byte(`
-api: 1
+manifest_version: 1
 name: p
 workflows:
   w:

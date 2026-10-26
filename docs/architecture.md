@@ -80,7 +80,7 @@ Cancelling a request kills the task in the guest. A stream that hits its timeout
 A plugin is a directory with a `plugin.yml` and the command-line tools its workflows run **inside the guest**. `machbox run [flags] <plugin-dir> <workflow> [inputs...]` executes one workflow as a job:
 
 ```yaml
-api: 1                      # plugin contract version (plugin.APIVersion)
+manifest_version: 1         # plugin contract version (plugin.ManifestVersion)
 name: malware
 version: 0.1.0
 requires:                   # checked against the baseline record before boot, and the live guest after
@@ -113,6 +113,10 @@ Templates only substitute: `${{ inputs.<name> }}`, `${{ output }}`, `${{ steps.<
 Once a sample runs, it controls the guest, agent included, so the host trusts nothing the guest sends to be small or timely: it enforces every timeout itself (plus a 30 s grace), caps step logs at 64 MiB and outputs at 512 MiB, and strips control characters from guest error text before storing or printing it.
 
 In the guest, the plugin directory and file inputs are on the read-only share (`plugin/`, `inputs/<input>/<file name>`). Every step runs with the same writable workdir as cwd; file inputs are copied there first, so `${{ inputs.sample }}` is `inputs/sample/<file name>` relative to it. The guest never writes to the host: after each step the host pulls its declared output through `GET /v1/files` (capped at `job.MaxOutputSize`).
+
+`docs/plugin.schema.json` describes the manifest for editors. Map it to `**/plugin.yml` (VS Code: `"yaml.schemas"` in settings) or start the file with `# yaml-language-server: $schema=<path to it>`; otherwise editors may apply SchemaStore's Bukkit `plugin.yml` schema and report a missing `main`.
+
+`testdata/plugins/demo` is a working example (sh tools only); `internal/job` tests run its workflows against a loopback agent.
 
 On the host, a job keeps only `~/.machbox/jobs/<id>/`:
 

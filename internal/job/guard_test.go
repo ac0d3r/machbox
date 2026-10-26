@@ -36,7 +36,7 @@ func TestStepLogCapAndStderr(t *testing.T) {
 	t.Cleanup(func() { maxLogSize = old })
 
 	j, wd := newManifestJob(t, `
-api: 1
+manifest_version: 1
 name: p
 workflows:
   w:
@@ -80,7 +80,7 @@ func TestHostEnforcesStepTimeout(t *testing.T) {
 	t.Cleanup(func() { hostGrace = old })
 
 	j, wd := newManifestJob(t, `
-api: 1
+manifest_version: 1
 name: p
 workflows:
   w:
