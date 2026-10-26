@@ -71,16 +71,62 @@ A run (`internal/vm.Run`) owns one directory, `~/.machbox/runs/run-*/`:
 | `POST /v1/workdir` | mount the share and create a writable work dir |
 | `POST /v1/exec` | run a task to completion; JSON result |
 | `POST /v1/exec/stream` | stream stdout as a chunked body; exit status in `X-Task-Error` / `X-Task-Timed-Out` trailers |
+| `GET /v1/files?root=&path=` | read a regular file at `path` inside `root`, opened through `os.Root` (no `..` or symlink escape) |
 
 Cancelling a request kills the task in the guest. A stream that hits its timeout ends normally with the output collected so far. Host and guest share `AgentVersion`; a mismatch requires `machbox vm update-agent`.
+
+## Plugins and jobs
+
+A plugin is a directory with a `plugin.yml` and the command-line tools its workflows run **inside the guest**. `machbox run [flags] <plugin-dir> <workflow> [inputs...]` executes one workflow as a job:
+
+```yaml
+api: 1                      # plugin contract version (plugin.APIVersion)
+name: malware
+version: 0.1.0
+requires:                   # checked against the baseline record before boot, and the live guest after
+  macos: ">=14.0"           # comma-separated constraints: >= <= == > <
+  sip: disabled             # disabled | enabled | omitted (any)
+workflows:
+  analyze:
+    inputs:                 # declaration order = positional argument order
+      sample:  { type: file, required: true }   # file: copied into the guest workdir
+      timeout: { default: 5m }                  # string (default type)
+    steps:
+      - id: static
+        run: [tools/statictool, -o, "${{ output }}", "${{ inputs.sample }}"]
+        output: static.json             # copied back to the job directory
+      - id: dynamic
+        run: [tools/dynamictool, run, -o, "${{ output }}", "${{ inputs.sample }}"]
+        output: dynamic.jsonl
+        timeout: 10m                    # default 10m; a timeout fails the step
+        continue_on_error: true         # a failure does not fail the job
+      - id: report
+        when: always                    # success (default) | failure | always
+        run: [tools/report, -o, "${{ output }}", "${{ steps.static.output }}", "${{ steps.dynamic.output }}"]
+        output: report.json
+```
+
+Templates only substitute: `${{ inputs.<name> }}`, `${{ output }}`, `${{ steps.<id>.output }}` (an earlier step), `${{ plugin_dir }}`. A command with a slash (`tools/x`) is resolved in the plugin directory; a bare name in the guest `PATH`.
+
+In the guest, the plugin directory and file inputs are on the read-only share (`plugin/`, `inputs/<input>/<file name>`). Every step runs with the same writable workdir as cwd; file inputs are copied there first, so `${{ inputs.sample }}` is `inputs/sample/<file name>` relative to it. The guest never writes to the host: after each step the host pulls its declared output through `GET /v1/files` (capped at `job.MaxOutputSize`).
+
+On the host, a job keeps only `~/.machbox/jobs/<id>/`:
+
+| Path | Purpose |
+|------|---------|
+| `job.json` | plugin, inputs, baseline, guest info, status/error/timing of every step |
+| `logs/<step>.log` | step stdout (stderr is in the step error) |
+| `outputs/<output>` | each step's output, including partial output of a failed step |
 
 ## Packages
 
 | Package | Role |
 |---------|------|
-| `cmd` | CLI: `vm import/list/rename/update-agent/remove` |
+| `cmd` | CLI: `vm import/list/rename/update-agent/remove`, `run` |
 | `internal/vm` | baseline lifecycle (import, update-agent, resolve) and disposable runs |
 | `internal/agent` | guest agent HTTP API: server (guest) and client (host) |
+| `internal/plugin` | `plugin.yml` loading, validation, templates, requirements, workflow arguments |
+| `internal/job` | job directory and record, step execution in the guest, output collection |
 | `internal/assets` | `~/.machbox` layout, embedded guest DMG |
 | `internal/db` | SQLite baseline records |
 | `pkg/vm` | VM instance: start/stop, state, GUI, vsock connect |
