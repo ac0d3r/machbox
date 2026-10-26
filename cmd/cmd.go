@@ -1,13 +1,8 @@
 package cmd
 
 import (
-	"fmt"
-	"strconv"
-	"strings"
-
 	"github.com/ac0d3r/machbox/internal/assets"
 	"github.com/ac0d3r/machbox/internal/logger"
-	"github.com/ac0d3r/machbox/pkg/vm/config"
 
 	"github.com/spf13/cobra"
 )
@@ -16,14 +11,6 @@ type logOptions struct {
 	level  string
 	output string
 	JSON   bool
-}
-
-type vmOptions struct {
-	display     string
-	width       int64
-	height      int64
-	headless    bool
-	networkMode string
 }
 
 type rootOptions struct {
@@ -35,7 +22,7 @@ func NewRootCommand(version string) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:           "machbox",
-		Short:         "macOS malware analysis sandbox",
+		Short:         "macOS VM sandbox",
 		Version:       version,
 		SilenceErrors: true,
 		CompletionOptions: cobra.CompletionOptions{
@@ -63,8 +50,6 @@ func NewRootCommand(version string) *cobra.Command {
 		false, "enable JSON log output")
 
 	cmd.AddCommand(
-		newAnalyzeCommand(),
-		newReportViewCommand(),
 		newVMCommand(),
 	)
 
@@ -74,53 +59,4 @@ func NewRootCommand(version string) *cobra.Command {
 // Execute creates the root command and runs it.
 func Execute(version string) error {
 	return NewRootCommand(version).Execute()
-}
-
-func bindVMFlags(cmd *cobra.Command, opts *vmOptions) {
-	opts.display = fmt.Sprintf("%dx%d", config.DefaultDisplayWidth, config.DefaultDisplayHeight)
-
-	cmd.Flags().StringVar(&opts.display, "display",
-		opts.display, "display resolution, e.g. 1920x1080")
-
-	cmd.Flags().BoolVar(&opts.headless, "headless",
-		true, "run without a GUI window")
-
-	cmd.Flags().StringVar(
-		&opts.networkMode,
-		"network-mode",
-		"",
-		fmt.Sprintf("Network mode (%s)", strings.Join(config.NetworkModes, ", ")),
-	)
-}
-
-func (opts *vmOptions) parseDisplay() error {
-	parts := strings.Split(strings.ToLower(strings.TrimSpace(opts.display)), "x")
-	if len(parts) != 2 {
-		return fmt.Errorf("invalid --display value %q, expected WxH", opts.display)
-	}
-
-	width, err := strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
-	if err != nil {
-		return err
-	}
-	height, err := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
-	if err != nil {
-		return err
-	}
-
-	opts.width = width
-	opts.height = height
-
-	return nil
-}
-
-func (opts *vmOptions) parseNetwork() config.Network {
-	opts.networkMode = strings.TrimSpace(opts.networkMode)
-	for _, v := range config.NetworkModes {
-		if strings.EqualFold(opts.networkMode, v) {
-			return config.Network{Enable: true, Mode: opts.networkMode}
-		}
-	}
-
-	return config.Network{Enable: false}
 }

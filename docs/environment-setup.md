@@ -1,6 +1,6 @@
 # Environment Setup
 
-Only needs to be done once. After setup, you can run sample analysis repeatedly.
+Only needs to be done once. After setup, the imported baseline can be reused for every run.
 
 ## Create a Base VM with VirtualBuddy
 

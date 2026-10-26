@@ -1,16 +1,8 @@
 # Machbox
 
-`Machbox` is a lightweight, native macOS sandbox for malware analysis, built on Apple native frameworks (`Virtualization.framework`, `EndpointSecurity.framework`, `DTrace`, etc.).
+`Machbox` is a lightweight, native macOS VM sandbox built on Apple's `Virtualization.framework`: VM baseline management, a guest agent, and workflow execution.
 
-<img src="docs/imgs/machbox-reports.png" alt="Analysis Reports" width="680" />
-
-## Supported Formats
-
-- mach-o
-- Application Bundle
-- Disk Image(.dmg)
-- Package(.pkg)
-- zip archive (supports password extraction)
+Malware analysis (static/dynamic analysis tools and reports) lives in [machbox-malware](https://github.com/ac0d3r/machbox-malware).
 
 ## System Requirements
 
@@ -35,8 +27,6 @@ chmod +x machbox
 ## Build from Source
 
 - Go 1.27+
-- Bun 1.4+
-- Swift 5.9+
 - Xcode, for the macOS SDK, `codesign`, `pkgbuild`, and `hdiutil`
 
 ```bash
@@ -49,11 +39,9 @@ The compiled binary will be at `bin/machbox`.
 
 ## Usage
 
-- [Environment Setup](./docs/environment-setup.md): prepare a VirtualBuddy VM once before analyzing samples.
-- [Usage](./docs/usage.md): analyze samples and read reports.
+- [Environment Setup](./docs/environment-setup.md): prepare and import a VirtualBuddy VM baseline.
 
 ## Acknowledgments
 
-- https://github.com/blacktop/go-macho
 - https://github.com/Code-Hex/vz
 - https://github.com/insidegui/VirtualBuddy

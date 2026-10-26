@@ -2,26 +2,25 @@
 
 ```mermaid
 flowchart TB
-    User(["User: machbox analyze sample"])
+    User(["User: machbox vm ..."])
 
     subgraph Host["Host"]
         Machbox["machbox"]
+        Baseline["Baseline<br>(~/.machbox/vms)"]
         Snapshot["Snapshot"]
-        ShareDir["SharedDir<br>(tools|sample)"]
-        Report["Report(Web UI)"]
+        ShareDir["SharedDir"]
     end
 
     subgraph Guest["Guest VM"]
         Agent["Guest Agent"]
-        Analysis["static and dynamic<br>analysis"]
-        Sample["malware sample"]
+        Task["tasks"]
     end
 
     User --> Machbox
+    Machbox --> Baseline
+    Baseline --> |APFS clone|Snapshot
     Machbox --> |read-only|ShareDir
-    ShareDir --> |APFS clone|Snapshot
     Snapshot --> Agent
-    Agent <--> Analysis
-    Analysis --> Sample
-    Machbox <--> Report
+    Machbox <--> |vsock|Agent
+    Agent --> Task
 ```

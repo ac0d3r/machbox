@@ -18,12 +18,10 @@ const (
 
 	dbName = "machbox.sqlite"
 
-	vmsDirName      = "vms"
-	dataDirName     = "data"
-	guestDMGName    = "guest.dmg"
-	guestDMGSum     = guestDMGName + ".sha256"
-	dynamicToolName = "dynamictool"
-	staticToolName  = "statictool"
+	vmsDirName   = "vms"
+	dataDirName  = "data"
+	guestDMGName = "guest.dmg"
+	guestDMGSum  = guestDMGName + ".sha256"
 )
 
 var (

@@ -8,8 +8,6 @@ on:
       - "**/*.go"
       - "go.mod"
       - "go.sum"
-      - "guestkit/statictool/go.mod"
-      - "guestkit/statictool/go.sum"
       - ".golangci.yml"
       - ".github/workflows/lint-go.yml"
   pull_request:
@@ -17,8 +15,6 @@ on:
       - "**/*.go"
       - "go.mod"
       - "go.sum"
-      - "guestkit/statictool/go.mod"
-      - "guestkit/statictool/go.sum"
       - ".golangci.yml"
       - ".github/workflows/lint-go.yml"
   workflow_dispatch:
@@ -37,14 +33,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-          cache-dependency-path: |
-            go.sum
-            guestkit/statictool/go.sum
+          cache-dependency-path: go.sum
 
       - name: Prepare embed
         run: |
           mkdir -p internal/assets/data/ && touch internal/assets/data/placeholder
-          mkdir -p internal/report/web/dist && touch internal/report/web/dist/placeholder
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
@@ -61,18 +54,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-          cache-dependency-path: |
-            go.sum
-            guestkit/statictool/go.sum
+          cache-dependency-path: go.sum
 
       - name: Prepare embed
         run: |
           mkdir -p internal/assets/data/ && touch internal/assets/data/placeholder
-          mkdir -p internal/report/web/dist && touch internal/report/web/dist/placeholder
 
       - name: Test machbox
-        run: go test $(go list ./... | grep -v /node_modules/)
-
-      - name: Test statictool
-        working-directory: guestkit/statictool
         run: go test ./...

@@ -25,11 +25,6 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: internal/report/web/package.json
-
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:

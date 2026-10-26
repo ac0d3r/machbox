@@ -17,7 +17,7 @@ func InitDB() (err error) {
 		return err
 	}
 
-	return _db.AutoMigrate(&VM{}, &Report{})
+	return _db.AutoMigrate(&VM{})
 }
 
 func CloseDB() error {
