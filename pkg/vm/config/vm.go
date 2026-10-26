@@ -42,17 +42,17 @@ type StorageDisk struct {
 }
 
 func NewMacVMConf(
-	vbvmcfg *VBVMConfig,
+	bundle *Bundle,
 	opts *VMOptions,
 ) (*vz.VirtualMachineConfiguration, error) {
-	if vbvmcfg == nil {
-		return nil, fmt.Errorf("VBVM config is nil")
+	if bundle == nil {
+		return nil, fmt.Errorf("bundle is nil")
 	}
-	if vbvmcfg.DiskPath == "" {
-		return nil, fmt.Errorf("VBVM disk path is empty")
+	if bundle.DiskPath == "" {
+		return nil, fmt.Errorf("bundle disk path is empty")
 	}
 
-	pcfg, err := NewPlatformConfWithVbvm(vbvmcfg)
+	pcfg, err := newPlatformConf(bundle)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create platform configuration: %w", err)
 	}
@@ -70,7 +70,7 @@ func NewMacVMConf(
 	}
 
 	opts.Disks = normalizeDisks(
-		vbvmcfg.DiskPath,
+		bundle.DiskPath,
 		opts.Disks)
 
 	bootloader, err := vz.NewMacOSBootLoader()
@@ -80,8 +80,8 @@ func NewMacVMConf(
 
 	vmcfg, err := vz.NewVirtualMachineConfiguration(
 		bootloader,
-		vbvmcfg.CPUCount,
-		vbvmcfg.MemorySize,
+		bundle.CPUCount,
+		bundle.MemorySize,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create virtual machine configuration: %w", err)

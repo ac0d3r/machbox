@@ -41,12 +41,12 @@ func setup(ctx context.Context, dir string, purpose setupPurpose) (*agent.GuestI
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	vbvmcfg, err := config.DecodeVBVMPath(dir)
+	bundle, err := loadBundle(dir)
 	if err != nil {
-		return nil, fmt.Errorf("decode baseline bundle: %w", err)
+		return nil, fmt.Errorf("load baseline bundle: %w", err)
 	}
 
-	vmcfg, err := config.NewMacVMConf(vbvmcfg, &config.VMOptions{
+	vmcfg, err := config.NewMacVMConf(bundle, &config.VMOptions{
 		DisplayWidth:  config.DefaultDisplayWidth,
 		DisplayHeight: config.DefaultDisplayHeight,
 		Disks:         []config.StorageDisk{{Path: assets.GuestDMGPath(), ReadOnly: true}},

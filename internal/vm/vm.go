@@ -39,8 +39,9 @@ func Import(ctx context.Context, opts ImportOptions) (vm *db.VM, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve vbvm path: %w", err)
 	}
-	if _, err := config.DecodeVBVMPath(src); err != nil {
-		return nil, fmt.Errorf("invalid vbvm bundle %q: %w", src, err)
+	srcBundle, err := config.DecodeVBVM(src)
+	if err != nil {
+		return nil, err
 	}
 
 	id, err := newUUID()
@@ -66,8 +67,9 @@ func Import(ctx context.Context, opts ImportOptions) (vm *db.VM, err error) {
 	}()
 
 	logrus.Infof("importing baseline %q from %s", name, src)
-	if err = config.CloneFile(src, dir); err != nil {
-		return nil, fmt.Errorf("clone vm bundle: %w", err)
+	// Keep only what machbox boots from; VirtualBuddy metadata stays behind.
+	if _, err = srcBundle.Import(dir); err != nil {
+		return nil, fmt.Errorf("import vm bundle: %w", err)
 	}
 
 	info, err := setup(ctx, dir, purposeImport)
@@ -171,6 +173,17 @@ func Remove(identifier string) (*db.VM, error) {
 
 	logrus.Infof("removed baseline %s (%s)", vm.Name, vm.UUID)
 	return vm, nil
+}
+
+// loadBundle opens a baseline directory, converting baselines imported by
+// older versions (a whole VirtualBuddy bundle) to the machbox format.
+func loadBundle(dir string) (*config.Bundle, error) {
+	b, err := config.LoadBundle(dir)
+	if errors.Is(err, config.ErrNoBundleConfig) {
+		logrus.Infof("migrating baseline %s to the machbox bundle format", dir)
+		b, err = config.MigrateVBVM(dir)
+	}
+	return b, err
 }
 
 // Resolve looks up a baseline by UUID or unique name.

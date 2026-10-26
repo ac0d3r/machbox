@@ -41,7 +41,7 @@ const (
 type Run struct {
 	Baseline *db.VM
 	// Config is the baseline bundle pointing at the snapshot files.
-	Config *config.VBVMConfig
+	Config *config.Bundle
 
 	dir  string
 	lock *os.File
@@ -51,9 +51,9 @@ type Run struct {
 func NewRun(baseline *db.VM) (r *Run, err error) {
 	SweepRuns()
 
-	bundle, err := config.DecodeVBVMPath(assets.VMPath(baseline.UUID))
+	bundle, err := loadBundle(assets.VMPath(baseline.UUID))
 	if err != nil {
-		return nil, fmt.Errorf("decode baseline %s: %w", baseline.UUID, err)
+		return nil, fmt.Errorf("load baseline %s: %w", baseline.UUID, err)
 	}
 
 	dir, err := os.MkdirTemp(assets.RunsDir(), "run-")
