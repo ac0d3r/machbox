@@ -15,7 +15,7 @@ import (
 )
 
 // AgentVersion is the host↔guest agent revision shared by both sides.
-// Kept in this package (not guestkit/agent) so host and guest can import the
+// Kept in this package (not guest-agent) so host and guest can import the
 // same constant without a circular dependency. Bump when the RPC contract
 // changes incompatibly; unchanged values do not require reinstalling
 // machbox-guest.pkg or re-importing the baseline.
