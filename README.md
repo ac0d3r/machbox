@@ -1,8 +1,6 @@
 # Machbox
 
-`Machbox` is a lightweight, native macOS VM sandbox built on Apple's `Virtualization.framework`: VM baseline management, a guest agent, and workflow execution.
-
-Malware analysis (static/dynamic analysis tools and reports) lives in [machbox-malware](https://github.com/ac0d3r/machbox-malware).
+`Machbox` runs command-line workflows in throwaway macOS sandboxes, built on Apple's `Virtualization.framework`.
 
 ## System Requirements
 

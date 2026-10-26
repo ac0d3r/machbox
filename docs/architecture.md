@@ -77,35 +77,35 @@ Cancelling a request kills the task in the guest. A stream that hits its timeout
 
 ## Plugins and jobs
 
-A plugin is a directory with a `plugin.yml` and the command-line tools its workflows run **inside the guest**. `machbox run [flags] <plugin-dir> <workflow> [inputs...]` executes one workflow as a job:
+A plugin is a directory with a `plugin.yml` and the command-line tools its workflows run **inside the guest**. `machbox run [flags] <plugin-dir> <workflow> [inputs...]` executes one workflow as a job. Abridged from `testdata/plugins/demo`, a working example with sh-only tools:
 
 ```yaml
 manifest_version: 1         # plugin contract version (plugin.ManifestVersion)
-name: malware
+name: demo
 version: 0.1.0
 requires:                   # checked against the baseline record before boot, and the live guest after
-  macos: ">=14.0"           # comma-separated constraints: >= <= == > <
+  macos: ">=13.0"           # comma-separated constraints: >= <= == > <
   sip: disabled             # disabled | enabled | omitted (any)
 workflows:
   analyze:
     inputs:                 # declaration order = positional argument order
-      sample:  { type: file, required: true }   # file: copied into the guest workdir
-      timeout: { default: 5m }                  # string (default type)
+      sample:   { type: file, required: true }   # file: copied into the guest workdir
+      duration: { default: "10" }                # string (default type)
     env:                    # every step; a step's env overrides it; values are templates
-      PYTHONPATH: "${{ plugin_dir }}/lib"
+      DEMO_DATA: "${{ plugin_dir }}/data"
     steps:
-      - id: static
-        run: [tools/statictool, -o, "${{ output }}", "${{ inputs.sample }}"]
-        output: static.json             # copied back to the job directory
-      - id: dynamic
-        run: [tools/dynamictool, run, -o, "${{ output }}", "${{ inputs.sample }}"]
-        output: dynamic.jsonl
-        timeout: 10m                    # default 10m; a timeout fails the step
+      - id: info
+        run: [tools/info, -o, "${{ output }}", "${{ inputs.sample }}"]
+        output: info.json               # copied back to the job directory
+      - id: run
+        run: [tools/run, -o, "${{ output }}", -d, "${{ inputs.duration }}", "${{ inputs.sample }}"]
+        output: run.jsonl
+        timeout: 5m                     # default 10m; a timeout fails the step
         continue_on_error: true         # a failure does not fail the job
       - id: report
         when: always                    # success (default) | failure | always
-        run: [tools/report, -o, "${{ output }}", "${{ steps.static.output }}", "${{ steps.dynamic.output }}"]
-        output: report.json
+        run: [tools/report, -o, "${{ output }}", "${{ steps.info.output }}", "${{ steps.run.output }}"]
+        output: report/report.json
 ```
 
 Templates only substitute: `${{ inputs.<name> }}`, `${{ output }}`, `${{ steps.<id>.output }}` (an earlier step), `${{ plugin_dir }}`. A command with a slash (`tools/x`) is resolved in the plugin directory; a bare name in the guest `PATH` (the agent's includes Homebrew and `/usr/local/bin`; an `env` PATH replaces it).
@@ -118,7 +118,7 @@ In the guest, the plugin directory and file inputs are on the read-only share (`
 
 `docs/plugin.schema.json` describes the manifest for editors. Map it to `**/plugin.yml` (VS Code: `"yaml.schemas"` in settings) or start the file with `# yaml-language-server: $schema=<path to it>`; otherwise editors may apply SchemaStore's Bukkit `plugin.yml` schema and report a missing `main`.
 
-`testdata/plugins/demo` is a working example (sh tools only); `internal/job` tests run its workflows against a loopback agent.
+`internal/job` tests run the demo plugin's workflows against a loopback agent.
 
 On the host, a job keeps only `~/.machbox/jobs/<id>/`:
 

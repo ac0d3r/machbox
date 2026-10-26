@@ -24,8 +24,8 @@ FileVault**. Installing `machbox-guest.pkg` then enables automatic login (below)
 Plugins state whether they need SIP (System Integrity Protection) off, e.g. for
 EndpointSecurity or DTrace (`requires: {sip: disabled}` in `plugin.yml`); `machbox
 vm list` shows each baseline's state, and `machbox run` picks a baseline that fits.
-Keeping SIP on is more realistic: some malware checks `csrutil status` and stays
-quiet when SIP is off. You can keep one baseline of each kind.
+Keeping SIP on is more realistic: some software checks `csrutil status` and
+behaves differently when SIP is off. You can keep one baseline of each kind.
 
 1. In VirtualBuddy, enable **Boot in recovery mode** for the VM.
 
