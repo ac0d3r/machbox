@@ -22,7 +22,7 @@ func NewRootCommand(version string) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:           "machbox",
-		Short:         "Run command-line workflows in throwaway macOS sandboxes",
+		Short:         "Plugin-driven workflows in disposable macOS VMs, for macOS research",
 		Version:       version,
 		SilenceErrors: true,
 		CompletionOptions: cobra.CompletionOptions{

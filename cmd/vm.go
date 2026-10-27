@@ -14,7 +14,7 @@ import (
 func newVMCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "vm",
-		Short: "Manage sandbox VM baselines",
+		Short: "Manage macOS VM baselines",
 	}
 	cmd.AddCommand(
 		newVMImportCommand(),
