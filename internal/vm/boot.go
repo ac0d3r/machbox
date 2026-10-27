@@ -82,10 +82,12 @@ func (r *Run) Boot(ctx context.Context, opts BootOptions, fn GuestFunc) error {
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- r.withGuest(ctx, inst, fn)
-		cancel()
-		if opts.GUI {
-			logrus.Info("finished — close the VM window to exit")
+		if !opts.GUI {
+			cancel()
+			return
 		}
+		// Keep the guest up for inspection; closing the window stops it.
+		logrus.Info("finished — close the VM window to exit")
 	}()
 
 	var graphicErr error
