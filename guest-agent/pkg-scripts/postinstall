@@ -60,7 +60,7 @@ configure_autologin() {
     for tries in 1 2 3; do
         answer=$(ask "Machbox runs samples in a logged-in session, so this VM has to log in automatically.
 
-Enter the password of \"${user}\" to enable automatic login:" password) || {
+Enter the password of \"${user}\" to enable automatic login. It is stored in this VM in recoverable form, so it should be used nowhere else:" password) || {
             echo "automatic login skipped by the user"
             return 0
         }

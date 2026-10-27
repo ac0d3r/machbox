@@ -12,6 +12,14 @@ Only needs to be done once. After setup, the imported baseline can be reused for
 
 3. Complete the macOS setup inside the VM (region, account, etc.).
 
+> **Keep the baseline free of anything personal.** Every run starts from it, so
+> whatever it holds is readable by the code you run, which gets root.
+>
+> - Create a local account with a password you use nowhere else: automatic login
+>   (below) stores it in the guest in recoverable form.
+> - Skip Apple ID / iCloud sign-in, and do not sign in to any other account or
+>   service inside the VM.
+
 ## Turn FileVault Off in the Guest VM
 
 Samples run as the logged-in user in a real GUI session, so the guest has to log
