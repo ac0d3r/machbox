@@ -28,7 +28,8 @@ type Options struct {
 	// meets the plugin's requirements.
 	Baseline string
 	Boot     vm.BootOptions
-	// Echo, if not nil, also receives every step's stdout.
+	// Echo, if not nil, also receives every step's output, with control
+	// characters replaced; logs keep the raw bytes.
 	Echo io.Writer
 }
 

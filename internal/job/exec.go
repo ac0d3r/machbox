@@ -15,6 +15,7 @@ import (
 	"github.com/ac0d3r/machbox/internal/plugin"
 
 	"github.com/sirupsen/logrus"
+	"golang.org/x/sys/unix"
 )
 
 // Layout of the read-only share. The workdir mirrors inputs/ so tools get
@@ -204,7 +205,7 @@ func (j *Job) runStep(ctx context.Context, g Guest, wd agent.WorkDir, st *plugin
 	defer logf.Close()
 	var stdout io.Writer = logf
 	if echo != nil {
-		stdout = io.MultiWriter(logf, echo)
+		stdout = io.MultiWriter(logf, &termWriter{w: echo})
 	}
 	capped := &capWriter{w: stdout, n: maxLogSize}
 	j.trySave()
@@ -277,6 +278,11 @@ func (j *Job) pullOutput(ctx context.Context, g Guest, wd agent.WorkDir, name st
 	case n > MaxOutputSize:
 		return "", fmt.Errorf("output %s is larger than %d bytes", name, int64(MaxOutputSize))
 	}
+	// Mark it like a download, so macOS checks it before it is opened or run.
+	quarantine := fmt.Sprintf("0081;%08x;machbox;", time.Now().Unix())
+	if err := unix.Setxattr(tmp.Name(), "com.apple.quarantine", []byte(quarantine), 0); err != nil {
+		return "", fmt.Errorf("quarantine output %s: %w", name, err)
+	}
 	if err := os.Rename(tmp.Name(), dst); err != nil {
 		return "", err
 	}
@@ -311,6 +317,43 @@ func (c *capWriter) Write(p []byte) (int, error) {
 		return k, err
 	}
 	c.dropped += int64(len(p) - len(keep))
+	return len(p), nil
+}
+
+// termWriter passes guest output to a terminal with control characters
+// (C0 except \t and \n, DEL, and UTF-8 encoded C1) replaced, so the output
+// cannot drive the terminal with escape sequences.
+type termWriter struct {
+	w       io.Writer
+	pending bool // the previous Write ended with 0xC2, a possible C1 lead byte
+}
+
+func (t *termWriter) Write(p []byte) (int, error) {
+	out := make([]byte, 0, len(p)+1)
+	if t.pending {
+		out = append(out, 0xC2)
+		t.pending = false
+	}
+	for i := 0; i < len(p); i++ {
+		b := p[i]
+		switch {
+		case b == 0xC2 && i == len(p)-1:
+			t.pending = true
+			continue
+		case b == 0xC2 && p[i+1] >= 0x80 && p[i+1] <= 0x9F:
+			b = '?'
+			i++
+		case len(out) > 0 && out[len(out)-1] == 0xC2 && b >= 0x80 && b <= 0x9F:
+			out[len(out)-1] = '?'
+			continue
+		case b < 0x20 && b != '\t' && b != '\n', b == 0x7F:
+			b = '?'
+		}
+		out = append(out, b)
+	}
+	if _, err := t.w.Write(out); err != nil {
+		return 0, err
+	}
 	return len(p), nil
 }
 

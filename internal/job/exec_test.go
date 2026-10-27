@@ -13,6 +13,8 @@ import (
 	"github.com/ac0d3r/machbox/internal/agent"
 	"github.com/ac0d3r/machbox/internal/db"
 	"github.com/ac0d3r/machbox/internal/plugin"
+
+	"golang.org/x/sys/unix"
 )
 
 const testManifest = `
@@ -95,6 +97,9 @@ func TestExecuteWorkflow(t *testing.T) {
 
 	// Outputs, including the partial one of a failed step, are collected.
 	assertFile(t, filepath.Join(j.Dir, "outputs", "static.json"), `{"name":"Sample.bin"}`+"\n")
+	if _, err := unix.Getxattr(filepath.Join(j.Dir, "outputs", "static.json"), "com.apple.quarantine", nil); err != nil {
+		t.Errorf("output not quarantined: %v", err)
+	}
 	assertFile(t, filepath.Join(j.Dir, "outputs", "dynamic.jsonl"), `{"partial":true}`+"\n")
 	assertFile(t, filepath.Join(j.Dir, "outputs", "out", "report.json"),
 		`{"name":"Sample.bin"}`+"\n"+`{"partial":true}`+"\n")

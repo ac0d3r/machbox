@@ -99,6 +99,19 @@ workflows:
 	}
 }
 
+func TestTermWriter(t *testing.T) {
+	var out strings.Builder
+	w := &termWriter{w: &out}
+	for _, chunk := range []string{"ok\tline\n\x1b]0;evil\x07\r", "é\xc2", "\x9b31m done\x7f\n"} {
+		if n, err := w.Write([]byte(chunk)); err != nil || n != len(chunk) {
+			t.Fatalf("Write = %d, %v", n, err)
+		}
+	}
+	if got := out.String(); got != "ok\tline\n?]0;evil??é?31m done?\n" {
+		t.Errorf("terminal output = %q", got)
+	}
+}
+
 func TestSanitize(t *testing.T) {
 	if got := sanitize("ok\tline\n\x1b]52;c;evil\x07\x9b31m"); got != "ok\tline\n?]52;c;evil??31m" {
 		t.Errorf("sanitize = %q", got)
