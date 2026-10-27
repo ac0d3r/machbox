@@ -148,7 +148,7 @@ On the host, a job keeps only `~/.machbox/jobs/<id>/`:
 - loopback, link-local (169.254/16, fe80::/10, cloud metadata included), multicast, broadcast and `0.0.0.0/8` (which reaches the host's loopback on macOS);
 - the host's own interface addresses, re-read every 5 s.
 
-On the gateway itself (192.168.127.1) the guest reaches only DHCP and DNS; DNS is resolved by the host's resolver, so internal names resolve but their addresses stay unreachable. IPv6 is not routed. Refused frames are dropped silently, so a refused connection times out in the guest rather than failing fast; each refused destination is logged once (up to 64).
+On the gateway itself (192.168.127.1) the guest reaches only DHCP and DNS; DNS is resolved by the host's resolver, so internal names resolve but their addresses stay unreachable. IPv6 is not routed. Refused frames are dropped silently, so a refused connection times out in the guest rather than failing fast; each refused unicast destination is logged once (up to 64); multicast and broadcast, routine OS chatter, are only captured.
 
 Every frame, refused ones included, goes to `network.pcap` in the job directory, written by the host, never pulled from the guest.
 

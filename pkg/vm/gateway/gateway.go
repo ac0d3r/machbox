@@ -46,6 +46,9 @@ type Gateway struct {
 	stack net.Conn
 	pcap  *pcapWriter
 	wg    sync.WaitGroup
+
+	stopSwitch context.CancelFunc
+	switchDone chan struct{}
 }
 
 // Start creates the gateway. capture, if not empty, receives every frame
@@ -94,13 +97,16 @@ func Start(capture string) (g *Gateway, err error) {
 	}
 
 	p := &policy{gateway: netip.MustParseAddr(gatewayIP)}
-	g.wg.Add(3)
+	ctx, cancel := context.WithCancel(context.Background())
+	g.stopSwitch, g.switchDone = cancel, make(chan struct{})
 	go func() {
-		defer g.wg.Done()
-		if err := g.vn.AcceptVfkit(context.Background(), g.stack); err != nil && !errors.Is(err, net.ErrClosed) {
+		defer close(g.switchDone)
+		// The switch logs its own read errors, so Close stops it through ctx.
+		if err := g.vn.AcceptVfkit(ctx, g.stack); err != nil && !errors.Is(err, net.ErrClosed) {
 			logrus.Warnf("network gateway: %v", err)
 		}
 	}()
+	g.wg.Add(2)
 	go func() {
 		defer g.wg.Done()
 		g.forward(g.guest, g.relay, p)
@@ -129,7 +135,9 @@ func (g *Gateway) forward(src, dst net.Conn, p *policy) {
 		g.pcap.write(frame)
 		if p != nil {
 			if ok, dst := p.allow(frame); !ok {
-				if _, seen := refused[dst]; !seen && dst.IsValid() && len(refused) < maxRefusedLogged {
+				// Multicast and broadcast are the OS's own LAN chatter (mDNS, IGMP), not connections.
+				_, seen := refused[dst]
+				if !seen && dst.IsValid() && !dst.IsMulticast() && dst != broadcast && len(refused) < maxRefusedLogged {
 					refused[dst] = struct{}{}
 					if len(refused) < maxRefusedLogged {
 						logrus.Infof("network gateway: refused guest traffic to %s", dst)
@@ -152,10 +160,26 @@ func (g *Gateway) VMFile() *os.File { return g.vm }
 // Close stops the gateway and flushes the capture. The VM must be stopped
 // first.
 func (g *Gateway) Close() error {
+	if g.stopSwitch != nil {
+		// The switch checks ctx only between reads: wake it with a frame for
+		// the gateway whose EtherType (local experimental) its stack drops.
+		g.stopSwitch()
+		wake := make([]byte, 14)
+		mac, _ := net.ParseMAC(gatewayMAC)
+		copy(wake, mac)
+		wake[6] = 0x02
+		wake[12], wake[13] = 0x88, 0xb5
+		if _, err := g.relay.Write(wake); err == nil {
+			<-g.switchDone
+		}
+	}
 	for _, c := range []net.Conn{g.guest, g.relay, g.stack} {
 		if c != nil {
 			_ = c.Close()
 		}
+	}
+	if g.switchDone != nil {
+		<-g.switchDone
 	}
 	g.wg.Wait()
 	if g.vm != nil {
