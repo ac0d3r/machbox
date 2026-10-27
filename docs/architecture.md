@@ -1,10 +1,11 @@
 # Architecture
 
-machbox runs macOS guests on Apple's `Virtualization.framework`. The core does three things:
+machbox runs macOS guests on Apple's `Virtualization.framework`. The core does four things:
 
 - **Baseline management**: import a VirtualBuddy VM once, keep it in machbox's own bundle format.
 - **Disposable runs**: every boot works on an APFS copy-on-write snapshot plus a read-only share, discarded afterwards.
 - **Guest agent**: an HTTP API inside the guest, reached over virtio-vsock, that runs host-issued tasks.
+- **Guest network**: none by default; `--network Internet` gives public-only access through a host gateway that captures every frame.
 
 ```mermaid
 flowchart LR
@@ -17,6 +18,7 @@ flowchart LR
             Snap["vm/<br>APFS snapshot"]
             Share["share/<br>read-only share"]
         end
+        Gateway["network gateway<br>(--network Internet)"]
     end
 
     subgraph Guest["Guest VM (macOS, auto-login)"]
@@ -32,6 +34,7 @@ flowchart LR
     Snap -->|boot| Guest
     Share -->|virtiofs tag 'machbox'| Mount
     CLI <-->|HTTP/1.1 over vsock| Agent
+    Guest <-->|virtio-net over socketpair| Gateway
     Agent -->|exec| Proc
     Proc --> Mount
 ```
@@ -114,8 +117,6 @@ Before the first step, a job waits up to 5 minutes for the baseline's automatic 
 
 Once a sample runs, it controls the guest, agent included, so the host trusts nothing the guest sends to be small or timely: it enforces every timeout itself (plus a 30 s grace), caps step logs at 64 MiB and outputs at 512 MiB, and strips control characters from guest error text before storing or printing it.
 
-`--network Internet` gives the guest a user-mode network on the host (gvisor-tap-vsock, `pkg/vm/gateway`) instead of vz NAT. Before a guest frame reaches its stack, and so before any outbound connection is made, the gateway drops frames for private (10/8, 172.16/12, 192.168/16, fc00::/7), loopback, link-local, multicast and `0.0.0.0/8` addresses and for the host's own interface addresses; on the gateway itself the guest reaches only DHCP and DNS. IPv6 is not routed. Every frame, refused ones included, goes to `network.pcap` in the job directory.
-
 In the guest, the plugin directory and file inputs are on the read-only share (`plugin/`, `inputs/<input>/<file name>`). Every step runs with the same writable workdir as cwd; file inputs are copied there first, so `${{ inputs.sample }}` is `inputs/sample/<file name>` relative to it. The guest never writes to the host: after each step the host pulls its declared output through `GET /v1/files` (capped at `job.MaxOutputSize`).
 
 `docs/plugin.schema.json` describes the manifest for editors. Map it to `**/plugin.yml` (VS Code: `"yaml.schemas"` in settings) or start the file with `# yaml-language-server: $schema=<path to it>`; otherwise editors may apply SchemaStore's Bukkit `plugin.yml` schema and report a missing `main`.
@@ -131,6 +132,28 @@ On the host, a job keeps only `~/.machbox/jobs/<id>/`:
 | `outputs/<output>` | each step's output, including partial output of a failed step |
 | `network.pcap` | with `--network Internet`: every guest frame, refused ones included, captured on the host |
 
+## Network
+
+`machbox run --network` picks one of:
+
+| Mode | Guest network |
+|------|---------------|
+| `none` (default) | no network device |
+| `NAT` | vz NAT: the guest reaches whatever the host can, its LAN included |
+| `Internet` | user-mode gateway on the host: public addresses only, every frame captured |
+
+`Internet` (`pkg/vm/gateway`) attaches the guest to a gvisor-tap-vsock stack over a datagram socketpair (`VZFileHandleNetworkDeviceAttachment`); `Run.Boot` owns the gateway's lifetime. The stack's forwarders dial whatever address a packet is for, so a relay between the VM and the stack checks every guest frame first and drops those for:
+
+- private addresses (10/8, 172.16/12, 192.168/16, fc00::/7), the guest subnet (192.168.127.0/24) included;
+- loopback, link-local (169.254/16, fe80::/10, cloud metadata included), multicast, broadcast and `0.0.0.0/8` (which reaches the host's loopback on macOS);
+- the host's own interface addresses, re-read every 5 s.
+
+On the gateway itself (192.168.127.1) the guest reaches only DHCP and DNS; DNS is resolved by the host's resolver, so internal names resolve but their addresses stay unreachable. IPv6 is not routed. Refused frames are dropped silently, so a refused connection times out in the guest rather than failing fast; each refused destination is logged once (up to 64).
+
+Every frame, refused ones included, goes to `network.pcap` in the job directory, written by the host, never pulled from the guest.
+
+`vm import` and `vm update-agent` always boot with `NAT`.
+
 ## Packages
 
 | Package | Role |
@@ -144,5 +167,6 @@ On the host, a job keeps only `~/.machbox/jobs/<id>/`:
 | `internal/db` | SQLite baseline records |
 | `pkg/vm` | VM instance: start/stop, state, GUI, vsock connect |
 | `pkg/vm/config` | baseline bundle format, VirtualBuddy import, snapshot, `Virtualization.framework` configuration |
+| `pkg/vm/gateway` | `--network Internet`: gvisor-tap-vsock stack, egress policy, pcap capture |
 | `pkg/vsock` | guest-side AF_VSOCK listener |
 | `guest-agent` | `machbox-guest` daemon and `.pkg` packaging |

@@ -1,6 +1,8 @@
 # Machbox
 
-`Machbox` runs command-line workflows in throwaway macOS sandboxes, built on Apple's `Virtualization.framework`.
+**Machbox** — plugin-driven workflows in disposable macOS VMs, for macOS research.
+
+A plugin bundles tools and workflows in `plugin.yml`. Each run boots a fresh snapshot of a macOS VM (Apple's `Virtualization.framework`), runs the steps, brings back logs and outputs, then discards the VM. With `--network Internet`, the guest can reach public addresses only, and all its traffic is captured to a pcap on the host.
 
 ## System Requirements
 
