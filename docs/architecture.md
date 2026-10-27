@@ -114,6 +114,8 @@ Before the first step, a job waits up to 5 minutes for the baseline's automatic 
 
 Once a sample runs, it controls the guest, agent included, so the host trusts nothing the guest sends to be small or timely: it enforces every timeout itself (plus a 30 s grace), caps step logs at 64 MiB and outputs at 512 MiB, and strips control characters from guest error text before storing or printing it.
 
+`--network Internet` gives the guest a user-mode network on the host (gvisor-tap-vsock, `pkg/vm/gateway`) instead of vz NAT. Before a guest frame reaches its stack, and so before any outbound connection is made, the gateway drops frames for private (10/8, 172.16/12, 192.168/16, fc00::/7), loopback, link-local, multicast and `0.0.0.0/8` addresses and for the host's own interface addresses; on the gateway itself the guest reaches only DHCP and DNS. IPv6 is not routed. Every frame, refused ones included, goes to `network.pcap` in the job directory.
+
 In the guest, the plugin directory and file inputs are on the read-only share (`plugin/`, `inputs/<input>/<file name>`). Every step runs with the same writable workdir as cwd; file inputs are copied there first, so `${{ inputs.sample }}` is `inputs/sample/<file name>` relative to it. The guest never writes to the host: after each step the host pulls its declared output through `GET /v1/files` (capped at `job.MaxOutputSize`).
 
 `docs/plugin.schema.json` describes the manifest for editors. Map it to `**/plugin.yml` (VS Code: `"yaml.schemas"` in settings) or start the file with `# yaml-language-server: $schema=<path to it>`; otherwise editors may apply SchemaStore's Bukkit `plugin.yml` schema and report a missing `main`.
@@ -127,6 +129,7 @@ On the host, a job keeps only `~/.machbox/jobs/<id>/`:
 | `job.json` | plugin, inputs, baseline, guest info, status/error/timing of every step |
 | `logs/<step>.log` | step stdout and stderr |
 | `outputs/<output>` | each step's output, including partial output of a failed step |
+| `network.pcap` | with `--network Internet`: every guest frame, refused ones included, captured on the host |
 
 ## Packages
 

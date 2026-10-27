@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"time"
 
 	"github.com/ac0d3r/machbox/internal/agent"
 	"github.com/ac0d3r/machbox/internal/db"
 	"github.com/ac0d3r/machbox/internal/plugin"
 	"github.com/ac0d3r/machbox/internal/vm"
+	"github.com/ac0d3r/machbox/pkg/vm/config"
 
 	"github.com/sirupsen/logrus"
 )
@@ -60,6 +62,9 @@ func (j *Job) run(ctx context.Context, baseline *db.VM, opts Options) error {
 	}()
 	if err := j.share(r.ShareCopy); err != nil {
 		return err
+	}
+	if opts.Boot.Network.Enable && opts.Boot.Network.Mode == config.NetworkInternet {
+		opts.Boot.Capture = filepath.Join(j.Dir, captureName)
 	}
 
 	return r.Boot(ctx, opts.Boot, func(ctx context.Context, c *agent.Client, info agent.GuestInfo) error {

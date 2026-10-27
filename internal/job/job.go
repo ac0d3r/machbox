@@ -5,6 +5,7 @@
 //	job.json          inputs, guest, status of every step
 //	logs/<step>.log   step stdout (stderr is in the step error)
 //	outputs/<path>    each step's declared output
+//	network.pcap      guest traffic, with --network Internet
 package job
 
 import (
@@ -28,6 +29,8 @@ const (
 	recordName = "job.json"
 	logsDir    = "logs"
 	outputsDir = "outputs"
+	// captureName sits outside outputsDir, so no step output collides.
+	captureName = "network.pcap"
 )
 
 // Status is the state of a job or step.

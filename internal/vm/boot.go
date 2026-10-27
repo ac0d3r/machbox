@@ -11,6 +11,7 @@ import (
 	"github.com/ac0d3r/machbox/internal/agent"
 	boxvm "github.com/ac0d3r/machbox/pkg/vm"
 	"github.com/ac0d3r/machbox/pkg/vm/config"
+	"github.com/ac0d3r/machbox/pkg/vm/gateway"
 
 	"github.com/sirupsen/logrus"
 )
@@ -18,6 +19,8 @@ import (
 // BootOptions configures a run's VM.
 type BootOptions struct {
 	Network config.Network
+	// Capture, if not empty, is where the Internet network writes its pcap.
+	Capture string
 	// GUI shows the VM window. Boot must then be called on the main thread.
 	GUI bool
 }
@@ -32,10 +35,25 @@ func (r *Run) Boot(ctx context.Context, opts BootOptions, fn GuestFunc) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	network := opts.Network
+	if network.Enable && network.Mode == config.NetworkInternet {
+		gw, err := gateway.Start(opts.Capture)
+		if err != nil {
+			return fmt.Errorf("start network gateway: %w", err)
+		}
+		// Boot only returns after the VM has stopped (or the stop timed out).
+		defer func() {
+			if err := gw.Close(); err != nil {
+				logrus.Warnf("close network gateway: %v", err)
+			}
+		}()
+		network.File = gw.VMFile()
+	}
+
 	vmcfg, err := r.VMConfig(config.VMOptions{
 		DisplayWidth:  config.DefaultDisplayWidth,
 		DisplayHeight: config.DefaultDisplayHeight,
-		Network:       opts.Network,
+		Network:       network,
 	})
 	if err != nil {
 		return fmt.Errorf("create vm configuration: %w", err)

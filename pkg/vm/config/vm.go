@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"os"
 
 	vz "github.com/Code-Hex/vz/v4"
 )
@@ -13,13 +14,17 @@ const (
 	DefaultDisplayPixelsPerInch = int64(80)
 
 	NetworkNAT = "NAT"
+	// NetworkInternet reaches public addresses only, through a host gateway.
+	NetworkInternet = "Internet"
 )
 
-var NetworkModes = []string{NetworkNAT}
+var NetworkModes = []string{NetworkNAT, NetworkInternet}
 
 type Network struct {
 	Enable bool
 	Mode   string
+	// File is the VM end of a connected datagram socket (NetworkInternet).
+	File *os.File
 }
 
 type VMOptions struct {
@@ -288,9 +293,17 @@ func configureNetwork(
 	var attachment vz.NetworkDeviceAttachment
 	var err error
 
-	if cfg.Mode == NetworkNAT {
+	switch cfg.Mode {
+	case NetworkNAT:
 		if attachment, err = vz.NewNATNetworkDeviceAttachment(); err != nil {
 			return fmt.Errorf("create NAT network device attachment: %w", err)
+		}
+	case NetworkInternet:
+		if cfg.File == nil {
+			return errors.New("internet network needs a socket")
+		}
+		if attachment, err = vz.NewFileHandleNetworkDeviceAttachment(cfg.File); err != nil {
+			return fmt.Errorf("create file handle network device attachment: %w", err)
 		}
 	}
 
