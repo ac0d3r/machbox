@@ -41,6 +41,10 @@ The compiled binary will be at `bin/machbox`.
 - [Plugins](./docs/plugins.md): install, run, update and remove plugins.
 - [Architecture](./docs/architecture.md): how baselines, runs, the guest agent, plugins and the network work.
 
+## Plugins
+
+- [machbox-malware](https://github.com/ac0d3r/machbox-malware): macOS malware analysis.
+
 ## Acknowledgments
 
 - https://github.com/Code-Hex/vz
