@@ -6,7 +6,8 @@
 //
 // Sockets are non-blocking and wrapped in *os.File, so they are driven by the
 // Go netpoller: connections support deadlines (needed by net/http), and
-// closing the listener unblocks a pending Accept.
+// closing the listener unblocks a pending Accept. Accepted connections are
+// wrapped in FlowControl; the host must wrap its end the same way.
 package vsock
 
 import (
@@ -144,11 +145,11 @@ func (l *listener) Accept() (net.Conn, error) {
 		_ = unix.Close(nfd)
 		return nil, err
 	}
-	return &conn{
+	return FlowControl(&conn{
 		File:       os.NewFile(uintptr(nfd), "vsock"),
 		localPort:  l.port,
 		remotePort: vm.Port,
-	}, nil
+	}), nil
 }
 
 func (l *listener) Addr() net.Addr { return addr{l.port} }

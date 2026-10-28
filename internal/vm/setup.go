@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -136,9 +135,7 @@ func setup(ctx context.Context, dir string, purpose setupPurpose) (*agent.GuestI
 }
 
 func waitGuest(ctx context.Context, inst *boxvm.VMInstance, purpose setupPurpose) (*agent.GuestInfo, error) {
-	dial := func(ctx context.Context) (net.Conn, error) {
-		return inst.ConnectVsock(ctx, agent.DefaultVsockPort)
-	}
+	dial := agentDialer(inst)
 
 	// update-agent must observe the agent go down (pkg reinstall / kickstart)
 	// before accepting a handshake, otherwise an already-running old agent

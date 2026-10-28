@@ -12,6 +12,7 @@ import (
 	boxvm "github.com/ac0d3r/machbox/pkg/vm"
 	"github.com/ac0d3r/machbox/pkg/vm/config"
 	"github.com/ac0d3r/machbox/pkg/vm/gateway"
+	"github.com/ac0d3r/machbox/pkg/vsock"
 
 	"github.com/sirupsen/logrus"
 )
@@ -114,13 +115,22 @@ func (r *Run) Boot(ctx context.Context, opts BootOptions, fn GuestFunc) error {
 	return runErr
 }
 
+// agentDialer dials the guest agent with the flow control its listener uses.
+func agentDialer(inst *boxvm.VMInstance) agent.DialFunc {
+	return func(ctx context.Context) (net.Conn, error) {
+		c, err := inst.ConnectVsock(ctx, agent.DefaultVsockPort)
+		if err != nil {
+			return nil, err
+		}
+		return vsock.FlowControl(c), nil
+	}
+}
+
 func (r *Run) withGuest(ctx context.Context, inst *boxvm.VMInstance, fn GuestFunc) error {
 	waitCtx, waitCancel := context.WithTimeout(ctx, bootTimeout)
 	defer waitCancel()
 
-	dial := func(ctx context.Context) (net.Conn, error) {
-		return inst.ConnectVsock(ctx, agent.DefaultVsockPort)
-	}
+	dial := agentDialer(inst)
 	client, info, err := agent.WaitReady(waitCtx, dial, time.Second)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {

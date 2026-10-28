@@ -22,7 +22,7 @@ import (
 // same constant without a circular dependency. Bump when the API changes
 // incompatibly; unchanged values do not require reinstalling
 // machbox-guest.pkg or re-importing the baseline.
-const AgentVersion = "3"
+const AgentVersion = "7"
 
 // baseURL is the authority used for requests; the transport ignores it and
 // always dials the guest over vsock.

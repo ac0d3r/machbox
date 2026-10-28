@@ -1,14 +1,17 @@
 package vsock
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ac0d3r/machbox/internal/agent"
 
@@ -88,5 +91,51 @@ func TestKeepAliveRequestsOverFileConn(t *testing.T) {
 		if err != nil || !res.OK || res.Output != "ok\n" {
 			t.Fatalf("task %d on the kept-alive connection: %+v, %v", i+1, res, err)
 		}
+	}
+}
+
+// Close must not drop data the peer has not read yet, and a sender must
+// never run more than a window ahead of the reader.
+func TestFlowControlCloseDeliversEverything(t *testing.T) {
+	a, b := net.Pipe()
+	sender, receiver := FlowControl(a), FlowControl(b)
+
+	payload := bytes.Repeat([]byte("x"), 1<<20)
+	errc := make(chan error, 1)
+	go func() {
+		if _, err := sender.Write(payload); err != nil {
+			errc <- err
+			return
+		}
+		errc <- sender.Close()
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	fc := receiver.(*flowConn)
+	fc.mu.Lock()
+	n := len(fc.buf)
+	fc.mu.Unlock()
+	if n > window {
+		t.Fatalf("receiver buffered %d bytes, window is %d", n, window)
+	}
+	got, err := io.ReadAll(receiver)
+	if err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("read %d of %d bytes: %v", len(got), len(payload), err)
+	}
+	if err := <-errc; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFlowControlReadDeadline(t *testing.T) {
+	a, b := net.Pipe()
+	c := FlowControl(a)
+	defer c.Close()
+	defer b.Close()
+
+	_ = c.SetReadDeadline(time.Now().Add(20 * time.Millisecond))
+	var ne net.Error
+	if _, err := c.Read(make([]byte, 1)); !errors.As(err, &ne) || !ne.Timeout() {
+		t.Fatalf("Read = %v, want a timeout", err)
 	}
 }
