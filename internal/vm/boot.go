@@ -58,7 +58,7 @@ func (r *Run) Boot(ctx context.Context, opts BootOptions, fn GuestFunc) error {
 	if err != nil {
 		return fmt.Errorf("create vm configuration: %w", err)
 	}
-	inst, err := boxvm.New(ctx, vmcfg)
+	inst, err := boxvm.New(vmcfg)
 	if err != nil {
 		return fmt.Errorf("create vm instance: %w", err)
 	}

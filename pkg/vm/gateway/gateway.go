@@ -192,7 +192,7 @@ func (g *Gateway) Close() error {
 	return err
 }
 
-func socketpair() (*os.File, *os.File, error) {
+func socketpair() (a, b *os.File, err error) {
 	// macOS has no SOCK_CLOEXEC; hold ForkLock so no child inherits them.
 	syscall.ForkLock.RLock()
 	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_DGRAM, 0)

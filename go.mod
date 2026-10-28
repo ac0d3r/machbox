@@ -3,7 +3,7 @@ module github.com/ac0d3r/machbox
 go 1.27.0
 
 require (
-	github.com/Code-Hex/vz/v4 v4.0.0-20261026033011-ae0aa1debd2c
+	github.com/Code-Hex/vz/v4 v4.0.0-20261027153934-4e063666d1f7
 	github.com/antonfisher/nested-logrus-formatter v1.3.1
 	github.com/containers/gvisor-tap-vsock v0.9.0
 	github.com/google/uuid v1.6.0

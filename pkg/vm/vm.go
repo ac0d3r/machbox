@@ -1,17 +1,20 @@
 package vm
 
 import (
-	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	vz "github.com/Code-Hex/vz/v4"
 	"github.com/sirupsen/logrus"
 )
 
+// stateCheckInterval bounds how late a stop is noticed if its state
+// notification is dropped.
+const stateCheckInterval = time.Second
+
 type VMInstance struct {
-	ctx context.Context
-	vm  *vz.VirtualMachine
+	vm *vz.VirtualMachine
 
 	vsockMu sync.Mutex // serializes host→guest Connect
 
@@ -20,7 +23,7 @@ type VMInstance struct {
 	shutdownCh     chan struct{}
 }
 
-func New(ctx context.Context, cfg *vz.VirtualMachineConfiguration) (*VMInstance, error) {
+func New(cfg *vz.VirtualMachineConfiguration) (*VMInstance, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("virtual machine configuration is nil")
 	}
@@ -31,7 +34,6 @@ func New(ctx context.Context, cfg *vz.VirtualMachineConfiguration) (*VMInstance,
 	}
 
 	return &VMInstance{
-		ctx:        ctx,
 		vm:         vm,
 		shutdownCh: make(chan struct{}),
 	}, nil
@@ -52,6 +54,10 @@ func (i *VMInstance) handleStateChanges() {
 	}
 	defer stop()
 
+	// Runs until the VM stops, also after the caller's context is cancelled:
+	// callers stop the VM then and wait on AlreadyShutdown.
+	tick := time.NewTicker(stateCheckInterval)
+	defer tick.Stop()
 	for {
 		// Notifications may be dropped or stale, so State() is authoritative;
 		// checking it first also covers a stop before registration.
@@ -66,12 +72,7 @@ func (i *VMInstance) handleStateChanges() {
 			if state == vz.VirtualMachineStateRunning {
 				logrus.Debug("VM started")
 			}
-		case <-i.ctx.Done():
-			logrus.Debug("VM state watcher cancelled by context")
-			if i.vm.State() == vz.VirtualMachineStateStopped {
-				i.setShutdownState()
-			}
-			return
+		case <-tick.C:
 		}
 	}
 }
@@ -88,9 +89,10 @@ func (i *VMInstance) ShowGraphic(width, height int64) error {
 	if width <= 0 || height <= 0 {
 		return fmt.Errorf("invalid graphic size: width=%d height=%d", width, height)
 	}
+	w, h := fitWindow(float64(width), float64(height))
 	if err := i.vm.StartGraphicApplication(
-		float64(width),
-		float64(height),
+		w,
+		h,
 		vz.WithWindowTitle("machbox"),
 		vz.WithController(true),
 	); err != nil {

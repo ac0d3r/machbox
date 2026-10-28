@@ -55,7 +55,7 @@ func setup(ctx context.Context, dir string, purpose setupPurpose) (*agent.GuestI
 		return nil, fmt.Errorf("create vm configuration: %w", err)
 	}
 
-	inst, err := boxvm.New(ctx, vmcfg)
+	inst, err := boxvm.New(vmcfg)
 	if err != nil {
 		return nil, fmt.Errorf("create vm instance: %w", err)
 	}
@@ -146,6 +146,7 @@ func waitGuest(ctx context.Context, inst *boxvm.VMInstance, purpose setupPurpose
 	requireRestart := purpose == purposeUpdateAgent
 	sawDown := !requireRestart
 	loggedWaitingReinstall := false
+	lastIncompatible := ""
 
 	c := agent.NewClient(dial)
 	for {
@@ -169,7 +170,12 @@ func waitGuest(ctx context.Context, inst *boxvm.VMInstance, purpose setupPurpose
 		}
 		if err := agent.CompatibleAgent(info.AgentVersion); err != nil {
 			sawDown = true
-			logrus.Warnf("guest not ready: %v — install/reinstall machbox-guest.pkg", err)
+			if msg := err.Error(); msg != lastIncompatible {
+				logrus.Warnf("guest not ready: %v — install/reinstall machbox-guest.pkg", err)
+				lastIncompatible = msg
+			} else {
+				logrus.Debugf("guest not ready: %v", err)
+			}
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
