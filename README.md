@@ -40,6 +40,8 @@ The compiled binary will be at `bin/machbox`.
 ## Usage
 
 - [Environment Setup](./docs/environment-setup.md): prepare and import a VirtualBuddy VM baseline.
+- [Plugins](./docs/plugins.md): install, run, update and remove plugins.
+- [Architecture](./docs/architecture.md): how baselines, runs, the guest agent, plugins and the network work.
 
 ## Acknowledgments
 

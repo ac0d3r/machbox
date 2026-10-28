@@ -80,7 +80,7 @@ Cancelling a request kills the task in the guest. A stream that hits its timeout
 
 ## Plugins and jobs
 
-A plugin is a directory with a `plugin.yml` and the command-line tools its workflows run **inside the guest**. `machbox run [flags] <plugin-dir> <workflow> [inputs...]` executes one workflow as a job. Abridged from `testdata/plugins/demo`, a working example with sh-only tools:
+A plugin is a directory with a `plugin.yml` and the command-line tools its workflows run **inside the guest**. `machbox run [flags] <plugin> <workflow> [inputs...]` executes one workflow as a job; `<plugin>` is a plugin directory or an installed plugin (see below). Abridged from `testdata/plugins/demo`, a working example with sh-only tools:
 
 ```yaml
 manifest_version: 1         # plugin contract version (plugin.ManifestVersion)
@@ -123,6 +123,8 @@ In the guest, the plugin directory and file inputs are on the read-only share (`
 
 `internal/job` tests run the demo plugin's workflows against a loopback agent.
 
+`machbox plugin install <repo-url> [--version <tag>]` installs a plugin from a GitHub release (the latest by default) into `~/.machbox/plugins/<owner>/<repo>/`. The repository identifies the plugin: plugins from different repositories never replace each other, even with the same `name` in `plugin.yml`. `plugin update/remove` and `run` take `owner/repo`, or that `name` while only one installed plugin has it (`run` prefers a local directory of the same name). The release must carry one `.tar.gz` (or `<repo>.tar.gz` among several) with `plugin.yml` and the built tools at its root or in its only top-level directory; `<archive>.sha256` or GitHub's asset digest, if present, is checked. Archives may hold only regular files and directories. The installed tag is kept in `.machbox-source.json`: `plugin update` installs the latest release if its tag changed, replacing the directory in one rename. `GITHUB_TOKEN`, if set, authenticates the API requests.
+
 On the host, a job keeps only `~/.machbox/jobs/<id>/`:
 
 | Path | Purpose |
@@ -158,10 +160,11 @@ Every frame, refused ones included, goes to `network.pcap` in the job directory,
 
 | Package | Role |
 |---------|------|
-| `cmd` | CLI: `vm import/list/rename/update-agent/remove`, `run` |
+| `cmd` | CLI: `vm import/list/rename/update-agent/remove`, `plugin install/list/update/remove`, `run` |
 | `internal/vm` | baseline lifecycle (import, update-agent, resolve) and disposable runs |
 | `internal/agent` | guest agent HTTP API: server (guest) and client (host) |
 | `internal/plugin` | `plugin.yml` loading, validation, templates, requirements, workflow arguments |
+| `internal/plugin/store` | installed plugins: GitHub release download, verification, extraction |
 | `internal/job` | job directory and record, step execution in the guest, output collection |
 | `internal/assets` | `~/.machbox` layout, embedded guest DMG |
 | `internal/db` | SQLite baseline records |

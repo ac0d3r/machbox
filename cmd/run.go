@@ -23,18 +23,19 @@ func newRunCommand() *cobra.Command {
 		echo    bool
 	)
 	cmd := &cobra.Command{
-		Use:   "run [flags] <plugin-dir> [<workflow> [inputs...]]",
+		Use:   "run [flags] <plugin> [<workflow> [inputs...]]",
 		Short: "Run a plugin workflow in a disposable VM",
-		Long: "Runs a workflow of the plugin in <plugin-dir> (a directory with plugin.yml) " +
-			"in a fresh snapshot of a baseline. Flags go before <plugin-dir>; everything " +
+		Long: "Runs a workflow of <plugin>, a directory with plugin.yml or the name of an " +
+			"installed plugin, in a fresh snapshot of a baseline. Flags go before <plugin>; everything " +
 			"after <workflow> sets the workflow's inputs (--<input> <value> or positional). " +
 			"Without <workflow>, lists the plugin's workflows; with --help after it, its inputs.\n\n" +
 			"Step logs, outputs and job.json are kept in ~/.machbox/jobs/<id>/, printed when the job ends.",
-		Example:      "  machbox run --vm sonoma ./plugins/malware analyze ./sample.zip --timeout 5m",
+		Example: "  machbox run --vm sonoma example analyze ./sample.zip\n" +
+			"  machbox run testdata/plugins/demo info ./sample",
 		Args:         cobra.MinimumNArgs(1),
 		SilenceUsage: true,
 		RunE: withVMDB(func(cmd *cobra.Command, args []string) error {
-			p, err := plugin.Load(args[0])
+			p, err := loadPlugin(args[0])
 			if err != nil {
 				return err
 			}

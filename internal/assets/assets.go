@@ -23,11 +23,12 @@ const (
 
 	dbName = "machbox.sqlite"
 
-	vmsDirName   = "vms"
-	runsDirName  = "runs"
-	jobsDirName  = "jobs"
-	dataDirName  = "data"
-	guestDMGName = "guest.dmg"
+	vmsDirName     = "vms"
+	runsDirName    = "runs"
+	jobsDirName    = "jobs"
+	pluginsDirName = "plugins"
+	dataDirName    = "data"
+	guestDMGName   = "guest.dmg"
 
 	// Temp files from an interrupted extraction are removed once older
 	// than this, so a concurrent extraction in progress is left alone.
@@ -35,11 +36,12 @@ const (
 )
 
 var (
-	appDir  string
-	dataDir string
-	vmsDir  string
-	runsDir string
-	jobsDir string
+	appDir     string
+	dataDir    string
+	vmsDir     string
+	runsDir    string
+	jobsDir    string
+	pluginsDir string
 
 	initOnce sync.Once
 )
@@ -50,6 +52,7 @@ func init() {
 	vmsDir = filepath.Join(appDir, vmsDirName)
 	runsDir = filepath.Join(appDir, runsDirName)
 	jobsDir = filepath.Join(appDir, jobsDirName)
+	pluginsDir = filepath.Join(appDir, pluginsDirName)
 }
 
 func resolveAppDir() string {
@@ -65,7 +68,7 @@ func Init() (err error) {
 }
 
 func doInit() error {
-	for _, dir := range []string{appDir, dataDir, vmsDir, runsDir, jobsDir} {
+	for _, dir := range []string{appDir, dataDir, vmsDir, runsDir, jobsDir, pluginsDir} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return fmt.Errorf("create dir %s: %w", dir, err)
 		}
@@ -188,3 +191,7 @@ func RunsDir() string { return runsDir }
 // JobsDir returns the directory that holds workflow job records
 // (~/.machbox/jobs/<id>/).
 func JobsDir() string { return jobsDir }
+
+// PluginsDir returns the directory that holds installed plugins
+// (~/.machbox/plugins/<name>/).
+func PluginsDir() string { return pluginsDir }
