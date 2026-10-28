@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	vz "github.com/Code-Hex/vz/v4"
 )
@@ -19,6 +20,20 @@ const (
 )
 
 var NetworkModes = []string{NetworkNAT, NetworkInternet}
+
+// ParseNetwork returns the network for mode: "none" (or empty) or one of
+// NetworkModes, case-insensitively.
+func ParseNetwork(mode string) (Network, error) {
+	if strings.EqualFold(mode, "none") || mode == "" {
+		return Network{}, nil
+	}
+	for _, m := range NetworkModes {
+		if strings.EqualFold(mode, m) {
+			return Network{Enable: true, Mode: m}, nil
+		}
+	}
+	return Network{}, fmt.Errorf("unknown network %q (none, %s)", mode, strings.Join(NetworkModes, ", "))
+}
 
 type Network struct {
 	Enable bool

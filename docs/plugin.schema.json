@@ -52,6 +52,11 @@
           "propertyNames": { "$ref": "#/definitions/ident" },
           "additionalProperties": { "$ref": "#/definitions/input" }
         },
+        "network": {
+          "description": "Guest network when machbox run has no --network. Internet: public addresses only, captured to a pcap.",
+          "enum": ["none", "NAT", "Internet"],
+          "default": "none"
+        },
         "env": { "$ref": "#/definitions/env" },
         "steps": {
           "type": "array",

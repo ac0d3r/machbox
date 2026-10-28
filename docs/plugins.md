@@ -32,13 +32,15 @@ Flags go before the plugin:
 | Flag | |
 |------|-|
 | `--vm <uuid-or-name>` | baseline to use (default: the only one meeting the plugin's requirements) |
-| `--network Internet` | public-only network, captured to a pcap (default: none) |
+| `--network <mode>` | `none`, `NAT`, or `Internet` (public addresses only, captured to a pcap); default: the workflow's `network`, else `none` |
 | `--gui` | show the VM window |
 | `--show-output` | also print step output |
 
+An installed plugin is a plain directory: edit its `plugin.yml` (`~/.machbox/plugins/<owner>/<repo>/`) to change, say, a workflow's `network`. `plugin update` replaces the edits.
+
 The job directory, `~/.machbox/jobs/<id>/`, is printed when the job ends: step logs, outputs and `job.json`.
 
-`<plugin>` may also be a plugin directory, e.g. while developing one: `machbox run ./machbox-plugin analyze ./sample.zip`.
+`<plugin>` may also be a plugin directory, which takes precedence over an installed plugin of the same name, e.g. while developing one: `machbox run ./machbox-plugin analyze ./sample.zip`.
 
 ## Update and remove
 

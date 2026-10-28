@@ -5,7 +5,7 @@ machbox runs macOS guests on Apple's `Virtualization.framework`. The core does f
 - **Baseline management**: import a VirtualBuddy VM once, keep it in machbox's own bundle format.
 - **Disposable runs**: every boot works on an APFS copy-on-write snapshot plus a read-only share, discarded afterwards.
 - **Guest agent**: an HTTP API inside the guest, reached over virtio-vsock, that runs host-issued tasks.
-- **Guest network**: none by default; `--network Internet` gives public-only access through a host gateway that captures every frame.
+- **Guest network**: none by default (a workflow may set its own); `--network Internet` gives public-only access through a host gateway that captures every frame.
 
 ```mermaid
 flowchart LR
@@ -119,12 +119,6 @@ Once a sample runs, it controls the guest, agent included, so the host trusts no
 
 In the guest, the plugin directory and file inputs are on the read-only share (`plugin/`, `inputs/<input>/<file name>`). Every step runs with the same writable workdir as cwd; file inputs are copied there first, so `${{ inputs.sample }}` is `inputs/sample/<file name>` relative to it. The guest never writes to the host: after each step the host pulls its declared output through `GET /v1/files` (capped at `job.MaxOutputSize`).
 
-`docs/plugin.schema.json` describes the manifest for editors. Map it to `**/plugin.yml` (VS Code: `"yaml.schemas"` in settings) or start the file with `# yaml-language-server: $schema=<path to it>`; otherwise editors may apply SchemaStore's Bukkit `plugin.yml` schema and report a missing `main`.
-
-`internal/job` tests run the demo plugin's workflows against a loopback agent.
-
-`machbox plugin install <repo-url> [--version <tag>]` installs a plugin from a GitHub release (the latest by default) into `~/.machbox/plugins/<owner>/<repo>/`. The repository identifies the plugin: plugins from different repositories never replace each other, even with the same `name` in `plugin.yml`. `plugin update/remove` and `run` take `owner/repo`, or that `name` while only one installed plugin has it (`run` prefers a local directory of the same name). The release must carry one `.tar.gz` (or `<repo>.tar.gz` among several) with `plugin.yml` and the built tools at its root or in its only top-level directory; `<archive>.sha256` or GitHub's asset digest, if present, is checked. Archives may hold only regular files and directories. The installed tag is kept in `.machbox-source.json`: `plugin update` installs the latest release if its tag changed, replacing the directory in one rename. `GITHUB_TOKEN`, if set, authenticates the API requests.
-
 On the host, a job keeps only `~/.machbox/jobs/<id>/`:
 
 | Path | Purpose |
@@ -134,13 +128,19 @@ On the host, a job keeps only `~/.machbox/jobs/<id>/`:
 | `outputs/<output>` | each step's output, including partial output of a failed step |
 | `network.pcap` | with `--network Internet`: every guest frame, refused ones included, captured on the host |
 
+Installed plugins ([usage](./plugins.md)) live in `~/.machbox/plugins/<owner>/<repo>/`: the repository, not the manifest `name`, identifies a plugin, so two plugins sharing a name never replace each other. `plugin install` takes a GitHub release's `.tar.gz` (`<repo>.tar.gz` if there are several) with `plugin.yml` at its root or in its only directory. It checks `<archive>.sha256` or GitHub's asset digest when present, accepts only regular files and directories, and records the tag in `.machbox-source.json`; `plugin update` reinstalls when the latest tag differs, swapping the directory in one rename. `GITHUB_TOKEN`, if set, authenticates the API requests.
+
+`docs/plugin.schema.json` describes the manifest for editors. Map it to `**/plugin.yml` (VS Code: `"yaml.schemas"` in settings) or start the file with `# yaml-language-server: $schema=<path to it>`; otherwise editors may apply SchemaStore's Bukkit `plugin.yml` schema and report a missing `main`.
+
+`internal/job` tests run the demo plugin's workflows against a loopback agent.
+
 ## Network
 
-`machbox run --network` picks one of:
+The guest network is `machbox run --network`, else the workflow's default (`workflows.<name>.network` in `plugin.yml`, logged when it applies), else `none`:
 
 | Mode | Guest network |
 |------|---------------|
-| `none` (default) | no network device |
+| `none` | no network device |
 | `NAT` | vz NAT: the guest reaches whatever the host can, its LAN included |
 | `Internet` | user-mode gateway on the host: public addresses only, every frame captured |
 

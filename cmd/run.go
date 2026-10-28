@@ -13,6 +13,7 @@ import (
 	"github.com/ac0d3r/machbox/internal/plugin"
 	"github.com/ac0d3r/machbox/pkg/vm/config"
 
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 
@@ -60,7 +61,13 @@ func newRunCommand() *cobra.Command {
 				return fmt.Errorf("%w\n\n%s", err, usage.String())
 			}
 
-			if opts.Boot.Network, err = parseNetwork(network); err != nil {
+			if !cmd.Flags().Changed("network") {
+				network = wf.Network
+				if network != "" {
+					logrus.Infof("workflow %s sets the guest network to %s; --network none turns it off", wf.Name, network)
+				}
+			}
+			if opts.Boot.Network, err = config.ParseNetwork(network); err != nil {
 				return err
 			}
 			if echo {
@@ -79,8 +86,8 @@ func newRunCommand() *cobra.Command {
 	cmd.Flags().SetInterspersed(false)
 	cmd.Flags().StringVarP(&opts.Baseline, "vm", "m", "",
 		"baseline UUID or unique name (default: the only one meeting the plugin's requirements)")
-	cmd.Flags().StringVar(&network, "network", "none",
-		fmt.Sprintf("guest network: none, %s", strings.Join(config.NetworkModes, ", ")))
+	cmd.Flags().StringVar(&network, "network", "",
+		fmt.Sprintf("guest network: none, %s (default: the workflow's network, else none)", strings.Join(config.NetworkModes, ", ")))
 	cmd.Flags().BoolVar(&opts.Boot.GUI, "gui", false, "show the VM window")
 	cmd.Flags().BoolVar(&echo, "show-output", false, "also print step output (always kept in the job's logs)")
 	return cmd
@@ -96,16 +103,4 @@ func printWorkflows(cmd *cobra.Command, p *plugin.Plugin) {
 	for _, name := range names {
 		fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", name)
 	}
-}
-
-func parseNetwork(mode string) (config.Network, error) {
-	if strings.EqualFold(mode, "none") || mode == "" {
-		return config.Network{}, nil
-	}
-	for _, m := range config.NetworkModes {
-		if strings.EqualFold(mode, m) {
-			return config.Network{Enable: true, Mode: m}, nil
-		}
-	}
-	return config.Network{}, fmt.Errorf("unknown --network %q (none, %s)", mode, strings.Join(config.NetworkModes, ", "))
 }

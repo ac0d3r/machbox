@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/ac0d3r/machbox/pkg/vm/config"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -47,6 +49,9 @@ type Plugin struct {
 type Workflow struct {
 	Name   string `yaml:"-"`
 	Inputs Inputs `yaml:"inputs"`
+	// Network is the guest network when machbox run has no --network:
+	// none (default) or a config.NetworkModes value, canonicalized by Parse.
+	Network string `yaml:"network"`
 	// Env is set for every step; a step's own env overrides it.
 	Env   map[string]string `yaml:"env"`
 	Steps []*Step           `yaml:"steps"`
@@ -216,6 +221,11 @@ func (p *Plugin) validate() error {
 }
 
 func (wf *Workflow) validate() error {
+	net, err := config.ParseNetwork(wf.Network)
+	if err != nil {
+		return err
+	}
+	wf.Network = net.Mode
 	seen := map[string]bool{}
 	for _, in := range wf.Inputs {
 		if !identRe.MatchString(in.Name) {
