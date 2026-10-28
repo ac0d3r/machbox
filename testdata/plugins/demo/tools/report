@@ -1,0 +1,18 @@
+#!/bin/sh
+# Usage: report -o <output> <info.json> <run.jsonl>
+# Combines the other steps' outputs; either may be missing if its step
+# failed or was skipped.
+set -eu
+[ $# -eq 4 ] && [ "$1" = "-o" ] || { echo "usage: report -o <output> <info.json> <run.jsonl>" >&2; exit 2; }
+out=$2
+info=$3
+run=$4
+
+{
+	printf '{"info":'
+	if [ -s "$info" ]; then tr -d '\n' <"$info"; else printf 'null'; fi
+	printf ',"run":'
+	if [ -s "$run" ]; then printf '['; paste -s -d , "$run" | tr -d '\n'; printf ']'; else printf 'null'; fi
+	printf '}\n'
+} >"$out"
+echo "report: $out"

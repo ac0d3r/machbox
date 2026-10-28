@@ -1,0 +1,106 @@
+package cmd
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"os/signal"
+	"slices"
+	"strings"
+	"syscall"
+
+	"github.com/ac0d3r/machbox/internal/job"
+	"github.com/ac0d3r/machbox/internal/plugin"
+	"github.com/ac0d3r/machbox/pkg/vm/config"
+
+	"github.com/sirupsen/logrus"
+	"github.com/spf13/cobra"
+)
+
+func newRunCommand() *cobra.Command {
+	var (
+		opts    job.Options
+		network string
+		echo    bool
+	)
+	cmd := &cobra.Command{
+		Use:   "run [flags] <plugin> [<workflow> [inputs...]]",
+		Short: "Run a plugin workflow in a disposable VM",
+		Long: "Runs a workflow of <plugin>, a directory with plugin.yml or the name of an " +
+			"installed plugin, in a fresh snapshot of a baseline. Flags go before <plugin>; everything " +
+			"after <workflow> sets the workflow's inputs (--<input> <value> or positional). " +
+			"Without <workflow>, lists the plugin's workflows; with --help after it, its inputs.\n\n" +
+			"Step logs, outputs and job.json are kept in ~/.machbox/jobs/<id>/, printed when the job ends.",
+		Example: "  machbox run --vm sonoma example analyze ./sample.zip\n" +
+			"  machbox run testdata/plugins/demo info ./sample",
+		Args:         cobra.MinimumNArgs(1),
+		SilenceUsage: true,
+		RunE: withVMDB(func(cmd *cobra.Command, args []string) error {
+			p, err := loadPlugin(args[0])
+			if err != nil {
+				return err
+			}
+			if len(args) == 1 {
+				printWorkflows(cmd, p)
+				return nil
+			}
+			wf, err := p.Workflow(args[1])
+			if err != nil {
+				return err
+			}
+
+			prefix := fmt.Sprintf("machbox run [flags] %s %s", args[0], args[1])
+			inputs, err := wf.ParseArgs(args[2:])
+			if errors.Is(err, plugin.ErrHelp) {
+				wf.Usage(cmd.OutOrStdout(), prefix)
+				return nil
+			}
+			if err != nil {
+				var usage strings.Builder
+				wf.Usage(&usage, prefix)
+				return fmt.Errorf("%w\n\n%s", err, usage.String())
+			}
+
+			if !cmd.Flags().Changed("network") {
+				network = wf.Network
+				if network != "" {
+					logrus.Infof("workflow %s sets the guest network to %s; --network none turns it off", wf.Name, network)
+				}
+			}
+			if opts.Boot.Network, err = config.ParseNetwork(network); err != nil {
+				return err
+			}
+			if echo {
+				opts.Echo = cmd.ErrOrStderr()
+			}
+
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			j, err := job.Run(ctx, p, wf, inputs, opts)
+			if j != nil {
+				fmt.Fprintln(cmd.OutOrStdout(), j.Dir)
+			}
+			return err
+		}),
+	}
+	cmd.Flags().SetInterspersed(false)
+	cmd.Flags().StringVarP(&opts.Baseline, "vm", "m", "",
+		"baseline UUID or unique name (default: the only one meeting the plugin's requirements)")
+	cmd.Flags().StringVar(&network, "network", "",
+		fmt.Sprintf("guest network: none, %s (default: the workflow's network, else none)", strings.Join(config.NetworkModes, ", ")))
+	cmd.Flags().BoolVar(&opts.Boot.GUI, "gui", false, "show the VM window")
+	cmd.Flags().BoolVar(&echo, "show-output", false, "also print step output (always kept in the job's logs)")
+	return cmd
+}
+
+func printWorkflows(cmd *cobra.Command, p *plugin.Plugin) {
+	names := make([]string, 0, len(p.Workflows))
+	for name := range p.Workflows {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	fmt.Fprintf(cmd.OutOrStdout(), "Workflows of %s %s:\n", p.Name, p.Version)
+	for _, name := range names {
+		fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", name)
+	}
+}

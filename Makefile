@@ -9,14 +9,11 @@ export CGO_LDFLAGS := -Wl,-no_warn_duplicate_libraries
 
 # Guest image
 VOLUME_NAME   := MachboxGuest
-GUEST_PKG     := guestkit/agent/build/machbox-guest.pkg
-GUEST_DMG     := guestkit/agent/guest.dmg
+GUEST_PKG     := guest-agent/build/machbox-guest.pkg
+GUEST_DMG     := guest-agent/guest.dmg
 
 # machbox assets
 EMBED_DIR     := internal/assets/data
-
-# Report web view
-REPORT_WEB_DIR := internal/report/web
 
 .PHONY: all build build-agent prepare-assets clean
 
@@ -32,21 +29,13 @@ build: prepare-assets
 		--options runtime \
 		"$(BINFILE)"
 
-prepare-assets: build-agent build-tools build-report-web
+prepare-assets: build-agent
 	@mkdir -p $(EMBED_DIR)
 	@mv "$(GUEST_DMG)" $(EMBED_DIR)/
 
-	@mv guestkit/statictool/bin/statictool $(EMBED_DIR)/
-
-	@mv guestkit/dynamictool/bin/dynamictool $(EMBED_DIR)/
-	@mkdir -p  $(EMBED_DIR)/DTrace
-	@cp -r guestkit/dynamictool/DTrace/*.d $(EMBED_DIR)/DTrace
-
-	@shasum -a 256 $(EMBED_DIR)/guest.dmg | awk '{print $$1}' > $(EMBED_DIR)/guest.dmg.sha256
-
 build-agent:
 	rm -f $(GUEST_DMG)
-	$(MAKE) -C guestkit/agent package VERSION=$(VERSION)
+	$(MAKE) -C guest-agent package VERSION=$(VERSION)
 	@if [ ! -f "$(GUEST_DMG)" ]; then \
 		hdiutil create \
 			-srcfolder "$(GUEST_PKG)" \
@@ -55,20 +44,9 @@ build-agent:
 			-o "$(GUEST_DMG)"; \
 	fi
 
-build-tools:
-	$(MAKE) -C guestkit/statictool build
-	$(MAKE) -C guestkit/dynamictool build
-
-build-report-web:
-	cd "$(REPORT_WEB_DIR)" && bun install --frozen-lockfile && bun run build
-
 clean:
 	rm -f $(BINFILE)
 	rm -f $(GUEST_DMG)
 	rm -rf $(EMBED_DIR)
-	
-	rm -rf "$(REPORT_WEB_DIR)/dist"
 
-	$(MAKE) -C guestkit/agent clean
-	$(MAKE) -C guestkit/statictool clean
-	$(MAKE) -C guestkit/dynamictool clean
+	$(MAKE) -C guest-agent clean

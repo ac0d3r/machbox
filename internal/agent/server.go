@@ -7,215 +7,299 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
-// Server is the guest-agent session handler.
+const (
+	defaultTaskTimeout = 60 * time.Second
+	// After a task is killed, Wait gives up on its stdout/stderr pipes after
+	// this long; children it spawned (e.g. a sample's) may still hold them.
+	taskWaitDelay  = 2 * time.Second
+	maxRequestBody = 1 << 20
+)
+
+// Server is the guest-agent HTTP API.
 type Server struct {
 	Info       func() (GuestInfo, error)
 	MountShare func(sharePath string) error
 }
 
-// Serve accepts connections until ctx is cancelled or the listener fails.
+// Serve handles requests until ctx is cancelled or the listener fails.
+// Cancelling ctx also cancels running tasks.
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
+	hs := &http.Server{
+		Handler:           s.Handler(),
+		ReadHeaderTimeout: 30 * time.Second,
+		BaseContext:       func(net.Listener) context.Context { return ctx },
+	}
 	go func() {
 		<-ctx.Done()
-		_ = ln.Close()
+		_ = hs.Close()
 	}()
 
-	for {
-		nc, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			return err
-		}
-		go s.handleConn(ctx, nc)
-	}
-}
-
-func (s *Server) handleConn(ctx context.Context, nc net.Conn) {
-	defer nc.Close()
-	c := wrapConn(nc)
-	info, err := s.Info()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "collect guest info: %v\n", err)
-		return
-	}
-	if err := c.sendJSON(msgGuestInfo, info); err != nil {
-		fmt.Fprintf(os.Stderr, "send guest info: %v\n", err)
-		return
-	}
-	var a ack
-	if err := c.recvJSON(msgACK, &a); err != nil {
-		fmt.Fprintf(os.Stderr, "recv handshake ack: %v\n", err)
-		return
-	}
-	if !a.OK {
-		fmt.Fprintf(os.Stderr, "host rejected guest info: %s\n", a.Error)
-		return
-	}
-
-	for {
-		msg, err := c.recv()
-		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				fmt.Fprintf(os.Stderr, "recv: %v\n", err)
-			}
-			return
-		}
-		switch msg.Type {
-		case msgSetWorkDir:
-			var wd WorkDir
-			if err := json.Unmarshal(msg.Payload, &wd); err != nil {
-				fmt.Fprintf(os.Stderr, "decode workdir: %v\n", err)
-				return
-			}
-			if err := s.applyWorkDir(&wd); err != nil {
-				_ = c.sendJSON(msgACK, ack{OK: false, Error: err.Error()})
-				return
-			}
-			if err := c.sendJSON(msgACK, ack{OK: true}); err != nil {
-				fmt.Fprintf(os.Stderr, "ack workdir: %v\n", err)
-				return
-			}
-		case msgTask:
-			var task Task
-			if err := json.Unmarshal(msg.Payload, &task); err != nil {
-				fmt.Fprintf(os.Stderr, "decode task: %v\n", err)
-				return
-			}
-			if err := executeTask(ctx, c, &task); err != nil {
-				fmt.Fprintf(os.Stderr, "execute task: %v\n", err)
-				return
-			}
-		default:
-			fmt.Fprintf(os.Stderr, "unexpected message type: %d\n", msg.Type)
-			return
-		}
-	}
-}
-
-func (s *Server) applyWorkDir(wd *WorkDir) error {
-	if wd.SharePath != "" && s.MountShare != nil {
-		if err := s.MountShare(wd.SharePath); err != nil {
-			return fmt.Errorf("mount share: %w", err)
-		}
-	}
-	if wd.WorkPath != "" {
-		if err := os.MkdirAll(wd.WorkPath, 0o750); err != nil {
-			return fmt.Errorf("mkdir workdir: %w", err)
-		}
+	if err := hs.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
 	}
 	return nil
 }
 
-func executeTask(ctx context.Context, c *conn, task *Task) error {
-	if task.Timeout <= 0 {
-		task.Timeout = 60
-	}
-	tctx, cancel := context.WithTimeout(ctx, time.Duration(task.Timeout)*time.Second)
-	defer cancel()
-
-	// #nosec G204 -- guest-agent executes commands from the trusted host.
-	cmd := exec.CommandContext(tctx, task.Command, task.Args...)
-	cmd.Dir = task.WorkDir
-
-	if task.Stream {
-		return executeStreamTask(tctx, c, cmd)
-	}
-	return executeOneShotTask(c, cmd)
+// Handler returns the agent's HTTP routes.
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET "+pathInfo, s.handleInfo)
+	mux.HandleFunc("POST "+pathWorkDir, s.handleWorkDir)
+	mux.HandleFunc("POST "+pathExec, s.handleExec)
+	mux.HandleFunc("POST "+pathExecStream, s.handleExecStream)
+	mux.HandleFunc("GET "+pathFiles, s.handleFile)
+	return mux
 }
 
-func executeOneShotTask(c *conn, cmd *exec.Cmd) error {
-	var ret TaskResult
-	out, err := cmd.Output()
+// handleFile serves the regular file at path inside root. Tasks that touch
+// a sample may have rewritten root, so the file is opened through os.Root:
+// symlinks and ".." cannot reach outside it.
+func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	rootPath, name := q.Get("root"), q.Get("path")
+	if !filepath.IsAbs(rootPath) || !filepath.IsLocal(name) {
+		writeError(w, http.StatusBadRequest,
+			fmt.Errorf("root must be absolute and path relative inside it (root=%q path=%q)", rootPath, name))
+		return
+	}
+	root, err := os.OpenRoot(rootPath)
 	if err != nil {
+		writeFileError(w, err)
+		return
+	}
+	defer root.Close()
+
+	f, err := root.Open(name)
+	if err != nil {
+		writeFileError(w, err)
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		writeFileError(w, err)
+		return
+	}
+	if !info.Mode().IsRegular() {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("%s is not a regular file", name))
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
+	w.WriteHeader(http.StatusOK)
+	// The file may change meanwhile; never send more than announced.
+	_, _ = io.CopyN(w, f, info.Size())
+}
+
+func writeFileError(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	if errors.Is(err, fs.ErrNotExist) {
+		status = http.StatusNotFound
+	}
+	writeError(w, status, err)
+}
+
+func (s *Server) handleInfo(w http.ResponseWriter, _ *http.Request) {
+	info, err := s.Info()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("collect guest info: %w", err))
+		return
+	}
+	writeJSON(w, http.StatusOK, info)
+}
+
+func (s *Server) handleWorkDir(w http.ResponseWriter, r *http.Request) {
+	var wd WorkDir
+	if !readJSON(w, r, &wd) {
+		return
+	}
+	if wd.SharePath != "" && s.MountShare != nil {
+		if err := s.MountShare(wd.SharePath); err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Errorf("mount share: %w", err))
+			return
+		}
+	}
+	if wd.WorkPath != "" {
+		if err := os.MkdirAll(wd.WorkPath, 0o750); err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Errorf("mkdir workdir: %w", err))
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
+	var task Task
+	if !readJSON(w, r, &task) {
+		return
+	}
+	ctx, cancel := taskContext(r.Context(), &task)
+	defer cancel()
+	cmd := taskCommand(ctx, &task)
+
+	run := cmd.Output
+	if task.CombinedOutput {
+		run = cmd.CombinedOutput
+	}
+	var ret TaskResult
+	if out, err := run(); err != nil {
 		ret.Error = execErr(err)
+		if task.CombinedOutput {
+			ret.Error = fmt.Sprintf("%s (output: %s)", ret.Error, strings.TrimSpace(string(out)))
+		}
 	} else {
 		ret.OK = true
 		ret.Output = string(out)
 	}
-	return c.sendJSON(msgTaskResult, ret)
+	writeJSON(w, http.StatusOK, ret)
 }
 
-func executeStreamTask(ctx context.Context, c *conn, cmd *exec.Cmd) error {
-	var stderrBuf bytes.Buffer
-	cmd.Stderr = &stderrBuf
+// handleExecStream streams the task's stdout as the response body and
+// reports how it ended in trailers, since the status line is already sent
+// by then. A task that cannot be started is a plain HTTP error.
+func (s *Server) handleExecStream(w http.ResponseWriter, r *http.Request) {
+	var task Task
+	if !readJSON(w, r, &task) {
+		return
+	}
+	ctx, cancel := taskContext(r.Context(), &task)
+	defer cancel()
 
+	cmd := taskCommand(ctx, &task)
+	var stderr bytes.Buffer
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return c.sendJSON(msgACK, ack{OK: false, Error: err.Error()})
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	cmd.Stderr = &stderr
+	if task.CombinedOutput {
+		cmd.Stderr = cmd.Stdout // the pipe's write end
 	}
 	if err := cmd.Start(); err != nil {
-		return c.sendJSON(msgACK, ack{OK: false, Error: err.Error()})
-	}
-	if err := c.sendJSON(msgACK, ack{OK: true}); err != nil {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		return err
+		writeError(w, http.StatusInternalServerError, err)
+		return
 	}
 
-	var ferr error
-	var wg sync.WaitGroup
-	wg.Add(1)
+	w.Header().Set("Trailer", trailerTaskError+", "+trailerTaskTimedOut)
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.WriteHeader(http.StatusOK)
+	rc := http.NewResponseController(w)
+
+	// Killing the task does not end the read if a child it spawned still
+	// holds stdout; closing our end on timeout/cancel does.
 	go func() {
 		<-ctx.Done()
 		_ = stdout.Close()
 	}()
-	go func() {
-		defer wg.Done()
-		buf := make([]byte, 4*1024)
-		for {
-			n, err := stdout.Read(buf)
-			if n > 0 {
-				if err := c.send(msgStreamTaskData, buf[:n]); err != nil {
-					ferr = err
-					_ = stdout.Close()
-					return
-				}
-			}
-			if err != nil {
-				if err != io.EOF {
-					if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-						ferr = context.DeadlineExceeded
-					} else {
-						ferr = err
-					}
-				}
-				return
-			}
-		}
-	}()
 
+	var copyErr error
+	buf := make([]byte, 32*1024)
+	for {
+		n, err := stdout.Read(buf)
+		if n > 0 {
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				copyErr = werr // host went away; ctx cancellation kills the task
+				break
+			}
+			_ = rc.Flush()
+		}
+		if err != nil {
+			if !errors.Is(err, io.EOF) && !errors.Is(err, os.ErrClosed) {
+				copyErr = err
+			}
+			break
+		}
+	}
+	if copyErr != nil {
+		cancel()
+	}
 	waitErr := cmd.Wait()
-	wg.Wait()
 
-	timedOut := errors.Is(ferr, context.DeadlineExceeded) ||
-		errors.Is(waitErr, context.DeadlineExceeded) ||
-		errors.Is(ctx.Err(), context.DeadlineExceeded)
-
-	var errStr string
+	timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
+	var msg string
 	switch {
-	case ferr != nil:
-		errStr = ferr.Error()
+	case timedOut:
+		msg = context.DeadlineExceeded.Error()
+	case copyErr != nil:
+		msg = copyErr.Error()
 	case waitErr != nil:
-		errStr = waitErr.Error()
+		msg = waitErr.Error()
 	}
-	if s := strings.TrimSpace(stderrBuf.String()); s != "" {
-		if errStr == "" {
-			errStr = s
-		} else {
-			errStr = fmt.Sprintf("%s (stderr: %s)", errStr, s)
+	if msg != "" {
+		if s := strings.TrimSpace(stderr.String()); s != "" {
+			msg = fmt.Sprintf("%s (stderr: %s)", msg, s)
 		}
 	}
-	return c.sendJSON(msgStreamTaskEnd, streamTaskEnd{Error: errStr, TimedOut: timedOut})
+	w.Header().Set(trailerTaskError, msg)
+	w.Header().Set(trailerTaskTimedOut, strconv.FormatBool(timedOut))
+}
+
+func taskContext(parent context.Context, task *Task) (context.Context, context.CancelFunc) {
+	timeout := defaultTaskTimeout
+	if task.Timeout > 0 {
+		timeout = time.Duration(task.Timeout) * time.Second
+	}
+	return context.WithTimeout(parent, timeout)
+}
+
+func taskCommand(ctx context.Context, task *Task) *exec.Cmd {
+	name := task.Command
+	pathEnv, hasPath := lookupEnv(task.Env, "PATH")
+	var lookErr error
+	if hasPath && !strings.Contains(name, "/") {
+		name, lookErr = lookPath(name, pathEnv)
+	}
+	// #nosec G204 -- guest-agent executes commands from the trusted host.
+	cmd := exec.CommandContext(ctx, name, task.Args...)
+	if lookErr != nil {
+		cmd.Err = lookErr
+	}
+	if len(task.Env) > 0 {
+		// Later entries win, so the task's values override the agent's.
+		cmd.Env = append(os.Environ(), task.Env...)
+	}
+	cmd.Dir = task.WorkDir
+	cmd.WaitDelay = taskWaitDelay
+	return cmd
+}
+
+// lookupEnv returns the last value of key in env (KEY=VALUE entries).
+func lookupEnv(env []string, key string) (string, bool) {
+	val, found := "", false
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == key {
+			val, found = v, true
+		}
+	}
+	return val, found
+}
+
+// lookPath finds an executable name in the directories of pathEnv;
+// exec.Command only searches the agent's own PATH.
+func lookPath(name, pathEnv string) (string, error) {
+	for _, dir := range filepath.SplitList(pathEnv) {
+		if dir == "" {
+			continue
+		}
+		p := filepath.Join(dir, name)
+		if info, err := os.Stat(p); err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0 {
+			return p, nil
+		}
+	}
+	return name, fmt.Errorf("%s: executable file not found in task PATH %q", name, pathEnv)
 }
 
 func execErr(err error) string {
@@ -224,4 +308,26 @@ func execErr(err error) string {
 		return fmt.Sprintf("%s (stderr: %s)", err.Error(), strings.TrimSpace(string(eerr.Stderr)))
 	}
 	return err.Error()
+}
+
+func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBody))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("decode request: %w", err))
+		return false
+	}
+	return true
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		fmt.Fprintf(os.Stderr, "write response: %v\n", err)
+	}
+}
+
+func writeError(w http.ResponseWriter, status int, err error) {
+	writeJSON(w, status, apiError{Error: err.Error()})
 }

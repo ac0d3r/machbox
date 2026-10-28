@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,36 +26,35 @@ const (
 	purposeUpdateAgent
 )
 
-// ErrSIPEnabled is returned when the guest still has System Integrity
-// Protection enabled.
-var ErrSIPEnabled = errors.New(
-	"guest SIP (System Integrity Protection) is still enabled; " +
-		"boot the guest into Recovery Mode, open Utilities → Terminal, run " +
-		"`csrutil disable`, then reboot the guest and import again")
-
 // setup boots the VBVM with the guest DMG attached and a GUI, then dials the
-// guest agent until a matching protocol reports in (or SIP/timeout).
+// guest agent until a matching protocol reports in (or timeout). SIP may be
+// in either state; plugins that need it disabled say so in their requirements.
 func setup(ctx context.Context, dir string, purpose setupPurpose) (*agent.GuestInfo, error) {
 	// Main thread is pinned in main(); do not UnlockOSThread.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	vbvmcfg, err := config.DecodeVBVMPath(dir)
+	bundle, err := loadBundle(dir)
 	if err != nil {
-		return nil, fmt.Errorf("decode baseline bundle: %w", err)
+		return nil, fmt.Errorf("load baseline bundle: %w", err)
 	}
 
-	vmcfg, err := config.NewMacVMConf(vbvmcfg, &config.VMOptions{
+	guestDMG, err := assets.GuestDMG()
+	if err != nil {
+		return nil, err
+	}
+
+	vmcfg, err := config.NewMacVMConf(bundle, &config.VMOptions{
 		DisplayWidth:  config.DefaultDisplayWidth,
 		DisplayHeight: config.DefaultDisplayHeight,
-		Disks:         []config.StorageDisk{{Path: assets.GuestDMGPath(), ReadOnly: true}},
+		Disks:         []config.StorageDisk{{Path: guestDMG, ReadOnly: true}},
 		Network:       config.Network{Enable: true, Mode: config.NetworkNAT},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create vm configuration: %w", err)
 	}
 
-	inst, err := boxvm.New(ctx, vmcfg)
+	inst, err := boxvm.New(vmcfg)
 	if err != nil {
 		return nil, fmt.Errorf("create vm instance: %w", err)
 	}
@@ -137,9 +135,7 @@ func setup(ctx context.Context, dir string, purpose setupPurpose) (*agent.GuestI
 }
 
 func waitGuest(ctx context.Context, inst *boxvm.VMInstance, purpose setupPurpose) (*agent.GuestInfo, error) {
-	dial := func(ctx context.Context) (net.Conn, error) {
-		return inst.ConnectVsock(ctx, agent.DefaultVsockPort)
-	}
+	dial := agentDialer(inst)
 
 	// update-agent must observe the agent go down (pkg reinstall / kickstart)
 	// before accepting a handshake, otherwise an already-running old agent
@@ -147,9 +143,11 @@ func waitGuest(ctx context.Context, inst *boxvm.VMInstance, purpose setupPurpose
 	requireRestart := purpose == purposeUpdateAgent
 	sawDown := !requireRestart
 	loggedWaitingReinstall := false
+	lastIncompatible := ""
 
+	c := agent.NewClient(dial)
 	for {
-		client, info, err := agent.Dial(ctx, dial)
+		info, err := c.Info(ctx)
 		if err != nil {
 			if requireRestart && !sawDown {
 				logrus.Debugf("guest agent unreachable (waiting for reinstall cycle): %v", err)
@@ -164,14 +162,17 @@ func waitGuest(ctx context.Context, inst *boxvm.VMInstance, purpose setupPurpose
 			}
 			continue
 		}
-		_ = client.Close()
-
 		if info.OSName == "" {
 			info.OSName = "macOS"
 		}
 		if err := agent.CompatibleAgent(info.AgentVersion); err != nil {
 			sawDown = true
-			logrus.Warnf("guest not ready: %v — install/reinstall machbox-guest.pkg", err)
+			if msg := err.Error(); msg != lastIncompatible {
+				logrus.Warnf("guest not ready: %v — install/reinstall machbox-guest.pkg", err)
+				lastIncompatible = msg
+			} else {
+				logrus.Debugf("guest not ready: %v", err)
+			}
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -192,13 +193,12 @@ func waitGuest(ctx context.Context, inst *boxvm.VMInstance, purpose setupPurpose
 			continue
 		}
 		agent.LogGuest(info)
-		if !info.SIPDisabled {
-			return nil, ErrSIPEnabled
-		}
 		return &info, nil
 	}
 }
 
+// finalizeBaseline drops runs_* snapshot directories that older versions
+// created inside the baseline bundle (runs now live in assets.RunsDir).
 func finalizeBaseline(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {

@@ -1,17 +1,20 @@
 package vm
 
 import (
-	"context"
 	"fmt"
 	"sync"
+	"time"
 
-	vz "github.com/Code-Hex/vz/v3"
+	vz "github.com/Code-Hex/vz/v4"
 	"github.com/sirupsen/logrus"
 )
 
+// stateCheckInterval bounds how late a stop is noticed if its state
+// notification is dropped.
+const stateCheckInterval = time.Second
+
 type VMInstance struct {
-	ctx context.Context
-	vm  *vz.VirtualMachine
+	vm *vz.VirtualMachine
 
 	vsockMu sync.Mutex // serializes host→guest Connect
 
@@ -20,7 +23,7 @@ type VMInstance struct {
 	shutdownCh     chan struct{}
 }
 
-func New(ctx context.Context, cfg *vz.VirtualMachineConfiguration) (*VMInstance, error) {
+func New(cfg *vz.VirtualMachineConfiguration) (*VMInstance, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("virtual machine configuration is nil")
 	}
@@ -31,7 +34,6 @@ func New(ctx context.Context, cfg *vz.VirtualMachineConfiguration) (*VMInstance,
 	}
 
 	return &VMInstance{
-		ctx:        ctx,
 		vm:         vm,
 		shutdownCh: make(chan struct{}),
 	}, nil
@@ -44,29 +46,33 @@ func (i *VMInstance) startStateWatcher() {
 }
 
 func (i *VMInstance) handleStateChanges() {
-	ch := i.vm.StateChangedNotify()
+	ch := make(chan vz.VirtualMachineState, 4)
+	stop, err := i.vm.StateChangedNotify(ch)
+	if err != nil {
+		logrus.Warnf("watch VM state: %v", err)
+		return
+	}
+	defer stop()
 
+	// Runs until the VM stops, also after the caller's context is cancelled:
+	// callers stop the VM then and wait on AlreadyShutdown.
+	tick := time.NewTicker(stateCheckInterval)
+	defer tick.Stop()
 	for {
-		select {
-		case state, ok := <-ch:
-			if !ok {
-				logrus.Debug("VM state notification channel closed")
-				return
-			}
-			switch state {
-			case vz.VirtualMachineStateRunning:
-				logrus.Debug("VM started")
-			case vz.VirtualMachineStateStopped:
-				logrus.Debug("VM stopped")
-				i.setShutdownState()
-				return
-			}
-		case <-i.ctx.Done():
-			logrus.Debug("VM state watcher cancelled by context")
-			if i.vm.State() == vz.VirtualMachineStateStopped {
-				i.setShutdownState()
-			}
+		// Notifications may be dropped or stale, so State() is authoritative;
+		// checking it first also covers a stop before registration.
+		if i.vm.State() == vz.VirtualMachineStateStopped {
+			logrus.Debug("VM stopped")
+			i.setShutdownState()
 			return
+		}
+
+		select {
+		case state := <-ch:
+			if state == vz.VirtualMachineStateRunning {
+				logrus.Debug("VM started")
+			}
+		case <-tick.C:
 		}
 	}
 }
@@ -83,9 +89,10 @@ func (i *VMInstance) ShowGraphic(width, height int64) error {
 	if width <= 0 || height <= 0 {
 		return fmt.Errorf("invalid graphic size: width=%d height=%d", width, height)
 	}
+	w, h := fitWindow(float64(width), float64(height))
 	if err := i.vm.StartGraphicApplication(
-		float64(width),
-		float64(height),
+		w,
+		h,
 		vz.WithWindowTitle("machbox"),
 		vz.WithController(true),
 	); err != nil {

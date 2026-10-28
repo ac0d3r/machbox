@@ -1,0 +1,43 @@
+# Demo plugin for machbox run. Its tools are plain sh using only what
+# ships with macOS, so it works in any baseline and in the job tests.
+#
+#   machbox run testdata/plugins/demo analyze ./sample --duration 10
+#   machbox run testdata/plugins/demo info ./sample
+manifest_version: 1
+name: demo
+version: 0.1.0
+requires:
+  macos: ">=13.0"
+  sip: disabled
+
+workflows:
+  # Describe the sample, run it for a while, then combine both results.
+  analyze:
+    inputs:
+      sample:   { type: file, required: true, description: file to analyze }
+      duration: { default: "10", description: seconds to let the sample run }
+    steps:
+      - id: info
+        run: [tools/info, -o, "${{ output }}", "${{ inputs.sample }}"]
+        output: info.json
+        timeout: 1m
+      - id: run
+        run: [tools/run, -o, "${{ output }}", -d, "${{ inputs.duration }}", "${{ inputs.sample }}"]
+        output: run.jsonl
+        timeout: 5m
+        continue_on_error: true
+      - id: report
+        when: always
+        run: [tools/report, -o, "${{ output }}", "${{ steps.info.output }}", "${{ steps.run.output }}"]
+        output: report/report.json
+        timeout: 1m
+
+  # Describe the sample without running it.
+  info:
+    inputs:
+      sample: { type: file, required: true, description: file to describe }
+    steps:
+      - id: info
+        run: [tools/info, -o, "${{ output }}", "${{ inputs.sample }}"]
+        output: info.json
+        timeout: 1m

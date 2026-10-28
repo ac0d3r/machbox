@@ -3,8 +3,10 @@ package config
 import (
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 
-	vz "github.com/Code-Hex/vz/v3"
+	vz "github.com/Code-Hex/vz/v4"
 )
 
 const (
@@ -13,13 +15,31 @@ const (
 	DefaultDisplayPixelsPerInch = int64(80)
 
 	NetworkNAT = "NAT"
+	// NetworkInternet reaches public addresses only, through a host gateway.
+	NetworkInternet = "Internet"
 )
 
-var NetworkModes = []string{NetworkNAT}
+var NetworkModes = []string{NetworkNAT, NetworkInternet}
+
+// ParseNetwork returns the network for mode: "none" (or empty) or one of
+// NetworkModes, case-insensitively.
+func ParseNetwork(mode string) (Network, error) {
+	if strings.EqualFold(mode, "none") || mode == "" {
+		return Network{}, nil
+	}
+	for _, m := range NetworkModes {
+		if strings.EqualFold(mode, m) {
+			return Network{Enable: true, Mode: m}, nil
+		}
+	}
+	return Network{}, fmt.Errorf("unknown network %q (none, %s)", mode, strings.Join(NetworkModes, ", "))
+}
 
 type Network struct {
 	Enable bool
 	Mode   string
+	// File is the VM end of a connected datagram socket (NetworkInternet).
+	File *os.File
 }
 
 type VMOptions struct {
@@ -42,17 +62,17 @@ type StorageDisk struct {
 }
 
 func NewMacVMConf(
-	vbvmcfg *VBVMConfig,
+	bundle *Bundle,
 	opts *VMOptions,
 ) (*vz.VirtualMachineConfiguration, error) {
-	if vbvmcfg == nil {
-		return nil, fmt.Errorf("VBVM config is nil")
+	if bundle == nil {
+		return nil, fmt.Errorf("bundle is nil")
 	}
-	if vbvmcfg.DiskPath == "" {
-		return nil, fmt.Errorf("VBVM disk path is empty")
+	if bundle.DiskPath == "" {
+		return nil, fmt.Errorf("bundle disk path is empty")
 	}
 
-	pcfg, err := NewPlatformConfWithVbvm(vbvmcfg)
+	pcfg, err := newPlatformConf(bundle)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create platform configuration: %w", err)
 	}
@@ -70,7 +90,7 @@ func NewMacVMConf(
 	}
 
 	opts.Disks = normalizeDisks(
-		vbvmcfg.DiskPath,
+		bundle.DiskPath,
 		opts.Disks)
 
 	bootloader, err := vz.NewMacOSBootLoader()
@@ -80,8 +100,8 @@ func NewMacVMConf(
 
 	vmcfg, err := vz.NewVirtualMachineConfiguration(
 		bootloader,
-		vbvmcfg.CPUCount,
-		vbvmcfg.MemorySize,
+		bundle.CPUCount,
+		bundle.MemorySize,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create virtual machine configuration: %w", err)
@@ -288,9 +308,17 @@ func configureNetwork(
 	var attachment vz.NetworkDeviceAttachment
 	var err error
 
-	if cfg.Mode == NetworkNAT {
+	switch cfg.Mode {
+	case NetworkNAT:
 		if attachment, err = vz.NewNATNetworkDeviceAttachment(); err != nil {
 			return fmt.Errorf("create NAT network device attachment: %w", err)
+		}
+	case NetworkInternet:
+		if cfg.File == nil {
+			return errors.New("internet network needs a socket")
+		}
+		if attachment, err = vz.NewFileHandleNetworkDeviceAttachment(cfg.File); err != nil {
+			return fmt.Errorf("create file handle network device attachment: %w", err)
 		}
 	}
 

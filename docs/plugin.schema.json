@@ -1,0 +1,109 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/ac0d3r/machbox/docs/plugin.schema.json",
+  "title": "machbox plugin manifest (plugin.yml)",
+  "description": "Point editors at this schema with a first line of\n# yaml-language-server: $schema=<path or URL of this file>\nso that plugin.yml is not matched against unrelated schemas (e.g. Bukkit's).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["manifest_version", "name", "workflows"],
+  "properties": {
+    "manifest_version": {
+      "description": "Plugin contract version implemented by machbox.",
+      "const": 1
+    },
+    "name": { "$ref": "#/definitions/ident" },
+    "version": { "type": "string" },
+    "requires": {
+      "description": "Guest requirements; checked against the baseline before boot and the live guest after.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "macos": {
+          "description": "Comma-separated version constraints, e.g. \">=14.0\" or \">=14, <16\".",
+          "type": "string",
+          "pattern": "^\\s*(>=|<=|==|>|<)\\s*[0-9]+(\\.[0-9]+)*\\s*(,\\s*(>=|<=|==|>|<)\\s*[0-9]+(\\.[0-9]+)*\\s*)*$"
+        },
+        "sip": { "enum": ["disabled", "enabled"] }
+      }
+    },
+    "workflows": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/definitions/ident" },
+      "additionalProperties": { "$ref": "#/definitions/workflow" }
+    }
+  },
+  "definitions": {
+    "ident": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+    "env": {
+      "description": "Environment variables; values are templates like run arguments. A PATH is also where commands without a slash are looked up.",
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+      "additionalProperties": { "type": "string" }
+    },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["steps"],
+      "properties": {
+        "inputs": {
+          "description": "Declaration order is the positional argument order.",
+          "type": "object",
+          "propertyNames": { "$ref": "#/definitions/ident" },
+          "additionalProperties": { "$ref": "#/definitions/input" }
+        },
+        "network": {
+          "description": "Guest network when machbox run has no --network. Internet: public addresses only, captured to a pcap.",
+          "enum": ["none", "NAT", "Internet"],
+          "default": "none"
+        },
+        "env": { "$ref": "#/definitions/env" },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/step" }
+        }
+      }
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "description": "file: a host path copied into the guest workdir; tools get its relative path.",
+          "enum": ["string", "file"],
+          "default": "string"
+        },
+        "required": { "type": "boolean" },
+        "default": { "type": ["string", "number", "boolean"] },
+        "description": { "type": "string" }
+      }
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "run"],
+      "properties": {
+        "id": { "$ref": "#/definitions/ident" },
+        "run": {
+          "description": "argv; ${{ inputs.<name> }}, ${{ output }}, ${{ steps.<id>.output }} and ${{ plugin_dir }} are substituted. A command with a slash is resolved in the plugin directory.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "output": {
+          "description": "File the step writes, relative to the workdir; copied back to the job directory.",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Go duration, e.g. 30s or 10m (default 10m). A timeout fails the step.",
+          "type": "string",
+          "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
+        },
+        "env": { "$ref": "#/definitions/env" },
+        "continue_on_error": { "type": "boolean" },
+        "when": { "enum": ["success", "failure", "always"], "default": "success" }
+      }
+    }
+  }
+}

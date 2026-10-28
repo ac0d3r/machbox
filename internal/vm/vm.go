@@ -14,7 +14,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/sys/unix"
 	"gorm.io/gorm"
 )
 
@@ -40,8 +39,9 @@ func Import(ctx context.Context, opts ImportOptions) (vm *db.VM, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve vbvm path: %w", err)
 	}
-	if _, err := config.DecodeVBVMPath(src); err != nil {
-		return nil, fmt.Errorf("invalid vbvm bundle %q: %w", src, err)
+	srcBundle, err := config.DecodeVBVM(src)
+	if err != nil {
+		return nil, err
 	}
 
 	id, err := newUUID()
@@ -67,8 +67,9 @@ func Import(ctx context.Context, opts ImportOptions) (vm *db.VM, err error) {
 	}()
 
 	logrus.Infof("importing baseline %q from %s", name, src)
-	if err = cloneFile(src, dir); err != nil {
-		return nil, fmt.Errorf("clone vm bundle: %w", err)
+	// Keep only what machbox boots from; VirtualBuddy metadata stays behind.
+	if _, err = srcBundle.Import(dir); err != nil {
+		return nil, fmt.Errorf("import vm bundle: %w", err)
 	}
 
 	info, err := setup(ctx, dir, purposeImport)
@@ -86,6 +87,7 @@ func Import(ctx context.Context, opts ImportOptions) (vm *db.VM, err error) {
 		OSVersion:    info.OSVersion,
 		OSBuild:      info.BuildVersion,
 		AgentVersion: info.AgentVersion,
+		SIPDisabled:  info.SIPDisabled,
 	}
 	if err = db.CreateVM(vm); err != nil {
 		return nil, fmt.Errorf("save baseline: %w", err)
@@ -122,6 +124,7 @@ func UpdateAgent(ctx context.Context, identifier string) (*db.VM, error) {
 	vm.OSVersion = info.OSVersion
 	vm.OSBuild = info.BuildVersion
 	vm.AgentVersion = info.AgentVersion
+	vm.SIPDisabled = info.SIPDisabled
 	vm.Error = ""
 	if err := db.SaveVM(vm); err != nil {
 		return nil, fmt.Errorf("save baseline after agent update: %w", err)
@@ -174,6 +177,17 @@ func Remove(identifier string) (*db.VM, error) {
 	return vm, nil
 }
 
+// loadBundle opens a baseline directory, converting baselines imported by
+// older versions (a whole VirtualBuddy bundle) to the machbox format.
+func loadBundle(dir string) (*config.Bundle, error) {
+	b, err := config.LoadBundle(dir)
+	if errors.Is(err, config.ErrNoBundleConfig) {
+		logrus.Infof("migrating baseline %s to the machbox bundle format", dir)
+		b, err = config.MigrateVBVM(dir)
+	}
+	return b, err
+}
+
 // Resolve looks up a baseline by UUID or unique name.
 func Resolve(identifier string) (*db.VM, error) {
 	identifier = strings.TrimSpace(identifier)
@@ -216,15 +230,4 @@ func newUUID() (string, error) {
 func looksLikeUUID(s string) bool {
 	_, err := uuid.Parse(s)
 	return err == nil
-}
-
-// cloneFile APFS-clones src to dst (copy-on-write). dst must not exist;
-// src and dst must be on the same APFS volume.
-func cloneFile(src, dst string) error {
-	if err := unix.Clonefile(src, dst, 0); err != nil {
-		logrus.Debugf("APFS clonefile failed for %s, falling back to regular copy", src)
-		return err
-	}
-
-	return nil
 }

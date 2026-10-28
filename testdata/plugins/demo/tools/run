@@ -1,0 +1,44 @@
+#!/bin/sh
+# Usage: run -o <output> -d <seconds> <file> [args...]
+# Runs the sample for at most <seconds> and records start/exit events as
+# JSON lines. The sample's own exit status is data, not a failure of this
+# tool; the sample's output is echoed to this step's log.
+set -u
+[ $# -ge 5 ] && [ "$1" = "-o" ] && [ "$3" = "-d" ] ||
+	{ echo "usage: run -o <output> -d <seconds> <file> [args...]" >&2; exit 2; }
+out=$2
+duration=$4
+file=$5
+shift 5
+
+event() { printf '{"time":%s,"event":"%s"%s}\n' "$(date +%s)" "$1" "${2:-}" >>"$out"; }
+
+[ -e "$file" ] || { echo "run: $file not found" >&2; exit 1; }
+[ -f "$file" ] || { echo "run: $file is not a regular file; only executables are supported" >&2; exit 1; }
+case $file in /*) ;; *) file=./$file ;; esac
+: >"$out"
+
+xattr -c "$file" 2>/dev/null
+chmod u+x "$file" || exit 1
+
+# Output goes to a file: a child the sample leaves behind must not hold
+# this task's stdout open.
+"$file" "$@" >sample.log 2>&1 </dev/null &
+pid=$!
+event start ",\"pid\":$pid"
+echo "run: started pid $pid for up to ${duration}s"
+
+(sleep "$duration" && kill -9 "$pid") >/dev/null 2>&1 &
+watchdog=$!
+wait "$pid"
+status=$?
+kill "$watchdog" 2>/dev/null
+
+if [ "$status" -eq 137 ]; then
+	event killed ",\"after\":$duration"
+	echo "run: still running after ${duration}s, killed"
+else
+	event exit ",\"status\":$status"
+	echo "run: exited with status $status"
+fi
+sed 's/^/sample: /' sample.log

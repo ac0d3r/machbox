@@ -1,0 +1,24 @@
+#!/bin/sh
+# Usage: info -o <output> <file>
+# Writes the sample's name, size, SHA-256 and file(1) type as JSON.
+set -eu
+[ $# -eq 3 ] && [ "$1" = "-o" ] || { echo "usage: info -o <output> <file>" >&2; exit 2; }
+out=$2
+file=$3
+
+json() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+echo "info: $file"
+if [ -d "$file" ]; then
+	sha=""
+	size=$(du -sk "$file" | cut -f1)
+	size=$((size * 1024))
+else
+	sha=$(shasum -a 256 "$file" | cut -d' ' -f1)
+	size=$(stat -f%z "$file")
+fi
+type=$(file -b "$file")
+
+printf '{"name":"%s","size":%s,"sha256":"%s","type":"%s"}\n' \
+	"$(json "$(basename "$file")")" "$size" "$sha" "$(json "$type")" >"$out"
+echo "info: $type, $size bytes"

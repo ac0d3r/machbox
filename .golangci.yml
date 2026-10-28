@@ -36,12 +36,13 @@ linters:
         - (io.Closer).Close
         - (io/fs.File).Close
         - (*os.File).Close
+        - (*os.Root).Close
         - (*io.PipeWriter).Close
         - syscall.Close
         - os.Remove
         - os.RemoveAll
         - (*os.Process).Kill
-        - (*github.com/Code-Hex/vz/v3.VirtioSocketListener).Close
+        - (*github.com/Code-Hex/vz/v4.VirtioSocketListener).Close
         - (*github.com/ac0d3r/machbox/pkg/vm.VMInstance).Shutdown
         - (*github.com/ac0d3r/machbox/internal/agent.Client).Close
   exclusions:

@@ -1,13 +1,18 @@
 package assets
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 //go:embed data
@@ -18,18 +23,25 @@ const (
 
 	dbName = "machbox.sqlite"
 
-	vmsDirName      = "vms"
-	dataDirName     = "data"
-	guestDMGName    = "guest.dmg"
-	guestDMGSum     = guestDMGName + ".sha256"
-	dynamicToolName = "dynamictool"
-	staticToolName  = "statictool"
+	vmsDirName     = "vms"
+	runsDirName    = "runs"
+	jobsDirName    = "jobs"
+	pluginsDirName = "plugins"
+	dataDirName    = "data"
+	guestDMGName   = "guest.dmg"
+
+	// Temp files from an interrupted extraction are removed once older
+	// than this, so a concurrent extraction in progress is left alone.
+	staleTempAge = 10 * time.Minute
 )
 
 var (
-	appDir  string
-	dataDir string
-	vmsDir  string
+	appDir     string
+	dataDir    string
+	vmsDir     string
+	runsDir    string
+	jobsDir    string
+	pluginsDir string
 
 	initOnce sync.Once
 )
@@ -38,6 +50,9 @@ func init() {
 	appDir = resolveAppDir()
 	dataDir = filepath.Join(appDir, dataDirName)
 	vmsDir = filepath.Join(appDir, vmsDirName)
+	runsDir = filepath.Join(appDir, runsDirName)
+	jobsDir = filepath.Join(appDir, jobsDirName)
+	pluginsDir = filepath.Join(appDir, pluginsDirName)
 }
 
 func resolveAppDir() string {
@@ -53,56 +68,105 @@ func Init() (err error) {
 }
 
 func doInit() error {
-	for _, dir := range []string{appDir, dataDir, vmsDir} {
+	for _, dir := range []string{appDir, dataDir, vmsDir, runsDir, jobsDir, pluginsDir} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return fmt.Errorf("create dir %s: %w", dir, err)
 		}
 	}
-
-	if err := extracDatatFile(guestDMGName, guestDMGSum); err != nil {
-		return fmt.Errorf("extract %s: %w", guestDMGName, err)
-	}
-
 	return nil
 }
 
-func extracDatatFile(name, sumName string) error {
-	srcPath := "data/" + name
-	srcSumPath := "data/" + sumName
+var (
+	guestDMGOnce sync.Once
+	guestDMGPath string
+	guestDMGErr  error
+)
 
-	sumBytes, err := fs.ReadFile(dataFS, srcSumPath)
+// GuestDMG returns the path of the embedded guest disk image, extracting it
+// on first use. Only commands that attach it to a VM need to call this.
+func GuestDMG() (string, error) {
+	guestDMGOnce.Do(func() {
+		guestDMGPath, guestDMGErr = extractContentAddressed(dataFS, "data/"+guestDMGName, dataDir)
+		if guestDMGErr != nil {
+			guestDMGErr = fmt.Errorf("extract %s: %w", guestDMGName, guestDMGErr)
+		}
+	})
+	return guestDMGPath, guestDMGErr
+}
+
+// extractContentAddressed writes the embedded file name to
+// dir/<stem>-<sha256[:12]><ext> unless it is already there, and returns
+// that path. The file is written to a temp file and renamed into place, so
+// a version of the image attached to a running VM is never overwritten and
+// concurrent extractions cannot produce a torn file. Older versions are
+// removed; a VM that still has one attached keeps its open file.
+func extractContentAddressed(fsys fs.FS, name, dir string) (string, error) {
+	data, err := fs.ReadFile(fsys, name)
 	if err != nil {
-		return fmt.Errorf("read embedded checksum %q: %w", srcSumPath, err)
+		return "", fmt.Errorf("read embedded %s: %w", name, err)
 	}
-	expectedSum := strings.TrimSpace(string(sumBytes))
 
-	dstPath := filepath.Join(dataDir, name)
-	dstSumPath := filepath.Join(dataDir, sumName)
+	sum := sha256.Sum256(data)
+	ext := filepath.Ext(name)
+	stem := strings.TrimSuffix(filepath.Base(name), ext)
+	prefix := stem + "-"
+	dst := filepath.Join(dir, prefix+hex.EncodeToString(sum[:])[:12]+ext)
 
-	// Skip if already extracted with the same checksum.
-	// #nosec G304 -- dstSumPath is constructed internally from hardcoded sumName and app dataDir.
-	if actualSum, err := os.ReadFile(dstSumPath); err == nil {
-		if strings.TrimSpace(string(actualSum)) == expectedSum {
-			return nil
+	if info, err := os.Stat(dst); err == nil && info.Size() == int64(len(data)) {
+		return dst, nil
+	}
+
+	tmp, err := os.CreateTemp(dir, "."+prefix+"*.tmp")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(tmp.Name()) // no-op after a successful rename
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		return "", err
+	}
+	// The image is only ever attached read-only.
+	if err := os.Chmod(tmp.Name(), 0o400); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmp.Name(), dst); err != nil {
+		return "", err
+	}
+
+	removeOldExtractions(dir, stem, ext, dst)
+	return dst, nil
+}
+
+func removeOldExtractions(dir, stem, ext, keep string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		n := e.Name()
+		path := filepath.Join(dir, n)
+		switch {
+		case path == keep:
+			continue
+		case strings.HasPrefix(n, stem+"-") && strings.HasSuffix(n, ext),
+			// Layout used before content-addressed names.
+			n == stem+ext, n == stem+ext+".sha256":
+		case strings.HasPrefix(n, "."+stem+"-") && strings.HasSuffix(n, ".tmp"):
+			info, err := e.Info()
+			if err != nil || time.Since(info.ModTime()) < staleTempAge {
+				continue
+			}
+		default:
+			continue
+		}
+		if err := os.Remove(path); err != nil {
+			logrus.Debugf("remove old %s: %v", path, err)
 		}
 	}
-
-	data, err := dataFS.ReadFile(srcPath)
-	if err != nil {
-		return fmt.Errorf("embedded file %q not found: %w", name, err)
-	}
-
-	// #nosec G304 -- dstPath is constructed internally from hardcoded name and app dataDir.
-	if err := os.WriteFile(dstPath, data, 0o600); err != nil {
-		return err
-	}
-
-	// Persist the checksum so the next run can skip extraction cheaply.
-	if err := os.WriteFile(dstSumPath, []byte(expectedSum), 0o600); err != nil {
-		return fmt.Errorf("write checksum %q: %w", dstSumPath, err)
-	}
-
-	return nil
 }
 
 // Dir returns the root application directory (~/.machbox).
@@ -119,8 +183,15 @@ func VMsDir() string { return vmsDir }
 // (~/.machbox/vms/<uuid>).
 func VMPath(uuid string) string { return filepath.Join(VMsDir(), uuid) }
 
-func GuestDMGPath() string { return filepath.Join(dataDir, guestDMGName) }
+// RunsDir returns the directory that holds disposable VM runs
+// (~/.machbox/runs). It is on the same volume as VMsDir so snapshots can be
+// APFS-cloned from baselines.
+func RunsDir() string { return runsDir }
 
-func OpenFS(name string) (fs.File, error) {
-	return dataFS.Open("data/" + name)
-}
+// JobsDir returns the directory that holds workflow job records
+// (~/.machbox/jobs/<id>/).
+func JobsDir() string { return jobsDir }
+
+// PluginsDir returns the directory that holds installed plugins
+// (~/.machbox/plugins/<name>/).
+func PluginsDir() string { return pluginsDir }

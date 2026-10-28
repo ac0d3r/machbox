@@ -14,7 +14,7 @@ import (
 func newVMCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "vm",
-		Short: "Manage sandbox VM baselines",
+		Short: "Manage macOS VM baselines",
 	}
 	cmd.AddCommand(
 		newVMImportCommand(),
@@ -68,12 +68,16 @@ func newVMListCommand() *cobra.Command {
 				return err
 			}
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "UUID\tNAME\tOS\tAGENT\tCREATED")
+			fmt.Fprintln(w, "UUID\tNAME\tOS\tSIP\tAGENT\tCREATED")
 			for i := range vms {
 				v := &vms[i]
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+				sip := "enabled"
+				if v.SIPDisabled {
+					sip = "disabled"
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
 					v.UUID, v.Name, formatOS(v.OSName, v.OSVersion, v.OSBuild),
-					v.AgentVersion, v.CreatedAt.Format(time.RFC3339))
+					sip, v.AgentVersion, v.CreatedAt.Format(time.RFC3339))
 			}
 			return w.Flush()
 		}),
