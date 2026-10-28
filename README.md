@@ -45,3 +45,4 @@ The compiled binary will be at `bin/machbox`.
 
 - https://github.com/Code-Hex/vz
 - https://github.com/insidegui/VirtualBuddy
+- https://github.com/containers/gvisor-tap-vsock
