@@ -88,6 +88,7 @@ func (s *Store) load(repo string) (*Installed, error) {
 		return nil, err
 	}
 	in := &Installed{Plugin: p, Source: Source{Repo: repo}}
+	// #nosec G304 -- dir is an entry of the plugin store, checked by validRepo.
 	if data, err := os.ReadFile(filepath.Join(dir, sourceFile)); err == nil {
 		var src Source
 		if json.Unmarshal(data, &src) == nil {
@@ -246,7 +247,7 @@ func ParseRepo(raw string) (string, error) {
 		s = strings.TrimPrefix(u.Path, "/")
 	}
 	m := repoPathRe.FindStringSubmatch(s)
-	if m == nil || !validRepo(m[1]+"/"+m[2]) {
+	if len(m) < 3 || !validRepo(m[1]+"/"+m[2]) {
 		return "", fmt.Errorf("%q is not a GitHub repository URL", raw)
 	}
 	return m[1] + "/" + m[2], nil
@@ -305,7 +306,7 @@ func (s *Store) getRelease(ctx context.Context, repo, rel string) (*release, err
 }
 
 func (s *Store) get(ctx context.Context, u, accept string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
 	if err != nil {
 		return nil, err
 	}
@@ -473,7 +474,7 @@ func extract(r io.Reader, dir string) error {
 	if err != nil {
 		return err
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		return err
 	}
@@ -523,7 +524,8 @@ func extract(r io.Reader, dir string) error {
 			if err != nil {
 				return err
 			}
-			_, err = io.Copy(f, tr)
+			// hdr.Size is already counted against maxExtractedSize.
+			_, err = io.CopyN(f, tr, hdr.Size)
 			if cerr := f.Close(); err == nil {
 				err = cerr
 			}

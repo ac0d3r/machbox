@@ -205,6 +205,7 @@ func (c *flowConn) writeFrame(typ byte, p []byte, n int) error {
 	c.frameMu.Lock()
 	defer c.frameMu.Unlock()
 	c.wbuf[0] = typ
+	// #nosec G115 -- n is a frame length or an ack, at most window.
 	binary.BigEndian.PutUint32(c.wbuf[1:headerLen], uint32(n))
 	m := copy(c.wbuf[headerLen:], p)
 	_, err := c.Conn.Write(c.wbuf[:headerLen+m])
