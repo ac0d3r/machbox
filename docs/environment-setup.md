@@ -68,6 +68,12 @@ In the VM window:
 4. Wait for the installation to finish (Xcode Command Line Tools will be installed silently).
 5. After the checks pass, close the VM window to finish the import.
 
+Plugin steps and samples inherit the agent's privacy permissions, and
+EndpointSecurity clients need Full Disk Access. With SIP disabled, the installer
+grants it to the agent. With SIP enabled it cannot: add `/usr/local/libexec/machbox-guest`
+in **System Settings → Privacy & Security → Full Disk Access** (press ⌘⇧G in the
+file picker to type the path), and do it again after every agent update.
+
 ## Update the Guest Agent on an Imported Baseline
 
 When a new Machbox release ships an updated `machbox-guest.pkg` (for example after
@@ -82,6 +88,8 @@ In the VM window:
 
 1. Open Finder and select `MachboxGuest` from the sidebar.
 2. Reinstall `machbox-guest.pkg` (overwrite the previous install).
-3. After the checks pass, close the VM window to finish the update.
+3. With SIP enabled, grant Full Disk Access again (see above): the new agent build
+   no longer matches the old grant.
+4. After the checks pass, close the VM window to finish the update.
 
 `machbox vm list` shows the recorded agent version in the `AGENT` column.

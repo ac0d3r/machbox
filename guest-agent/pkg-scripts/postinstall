@@ -16,6 +16,44 @@ chmod 644 "${PLIST_PATH}"
 chown root:wheel "${AGENT}"
 chmod 755 "${AGENT}"
 
+# Plugin steps and samples are children of the agent, so TCC judges them by
+# the agent: without Full Disk Access, EndpointSecurity clients get
+# ERR_NOT_PERMITTED and protected user data reads fail. The system TCC.db is
+# only writable with SIP off; with SIP on, grant it in System Settings. The
+# agent is ad-hoc signed, so its requirement is a cdhash that changes with
+# every build: rewrite the grant on each install. Never fails the install.
+grant_full_disk_access() {
+    local db="/Library/Application Support/com.apple.TCC/TCC.db"
+    local req blob
+
+    if ! csrutil status 2>/dev/null | head -n 1 | grep -qi "status: *disabled"; then
+        echo "SIP is enabled; grant Full Disk Access to ${AGENT} in System Settings"
+        return 0
+    fi
+    # An ad-hoc signature's requirement is implicit and printed as "# designated => ...".
+    req=$(codesign -d -r- "${AGENT}" 2>&1 | sed -n 's/^\(# \)\{0,1\}designated => //p')
+    if [ -z "${req}" ]; then
+        echo "no designated requirement for ${AGENT}; skipping Full Disk Access"
+        return 0
+    fi
+    blob=$(mktemp -t machbox-csreq)
+    # REPLACE overwrites the row with the same (service, client, client_type),
+    # so reinstalls never pile up grants. set -e is off inside a function
+    # called with ||, so check each step.
+    if ! csreq -r- -b "${blob}" <<<"${req}" ||
+        ! sqlite3 "${db}" "REPLACE INTO access
+            (service, client, client_type, auth_value, auth_reason, auth_version, csreq, flags)
+            VALUES ('kTCCServiceSystemPolicyAllFiles', '${AGENT}', 1, 2, 4, 1, X'$(xxd -p "${blob}" | tr -d '\n')', 0);"; then
+        rm -f "${blob}"
+        echo "granting Full Disk Access failed; grant it to ${AGENT} in System Settings"
+        return 0
+    fi
+    rm -f "${blob}"
+    killall tccd 2>/dev/null || true
+    echo "Full Disk Access granted to ${AGENT}"
+}
+grant_full_disk_access || true
+
 launchctl bootstrap system "${PLIST_PATH}"
 launchctl kickstart -k "${SERVICE}"
 
