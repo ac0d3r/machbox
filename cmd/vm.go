@@ -22,6 +22,7 @@ func newVMCommand() *cobra.Command {
 		newVMImportCommand(),
 		newVMListCommand(),
 		newVMRenameCommand(),
+		newVMDuplicateCommand(),
 		newVMSetupCommand(),
 		newVMRemoveCommand(),
 	)
@@ -94,6 +95,22 @@ func newVMRenameCommand() *cobra.Command {
 	return cmd
 }
 
+func newVMDuplicateCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:          "duplicate <uuid-or-name> <new-name>",
+		Short:        "Copy a baseline, to configure the copy independently",
+		Args:         cobra.ExactArgs(2),
+		SilenceUsage: true,
+		RunE: withVMDB(func(cmd *cobra.Command, args []string) error {
+			rec, err := vm.Duplicate(args[0], args[1])
+			if err != nil {
+				return err
+			}
+			return printBaselines(cmd.OutOrStdout(), *rec)
+		}),
+	}
+}
+
 func newVMSetupCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:     "setup <uuid-or-name>",
@@ -115,14 +132,28 @@ func newVMSetupCommand() *cobra.Command {
 }
 
 func newVMRemoveCommand() *cobra.Command {
-	return &cobra.Command{
+	var yes bool
+	cmd := &cobra.Command{
 		Use:          "remove <uuid-or-name>",
 		Short:        "Remove an imported baseline",
 		Aliases:      []string{"rm"},
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		RunE: withVMDB(func(cmd *cobra.Command, args []string) error {
-			rec, err := vm.Remove(args[0])
+			rec, err := vm.Resolve(args[0])
+			if err != nil {
+				return err
+			}
+			if !yes {
+				ok, err := confirm(cmd, fmt.Sprintf("Remove baseline %s (%s) and its disk?", rec.Name, rec.UUID))
+				if err != nil {
+					return err
+				}
+				if !ok {
+					return errAborted
+				}
+			}
+			rec, err = vm.Remove(rec.UUID)
 			if err != nil {
 				return err
 			}
@@ -130,6 +161,8 @@ func newVMRemoveCommand() *cobra.Command {
 			return nil
 		}),
 	}
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "remove without asking")
+	return cmd
 }
 
 // printBaselines prints baselines as a table, the format of vm list.

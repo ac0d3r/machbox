@@ -48,6 +48,8 @@ AuxiliaryStorage  HardwareModel  MachineIdentifier
 Disk.img          config.json    # {"version":1,"cpu_count":…,"memory_size":…}
 ```
 
+`vm duplicate` clones a baseline the same way, keeping its machine identity. `vm setup` holds an exclusive `flock` on the baseline directory, so it is never cloned or removed mid-write.
+
 Booting never reads VirtualBuddy metadata again. Baselines imported by older versions (a whole `.vbvm` copy) are migrated in place on first load.
 
 Import and `vm setup` boot the baseline with a GUI and `guest.dmg` attached. The user runs Machbox Setup from it. Until the window closes, the host runs `machbox-guest check` through the agent every few seconds; the baseline is ready once a compatible `AgentVersion` answers with automatic login on. It then records the guest's OS version and the baseline's **features** from the last ready check: `agent`, `autologin`, and whichever of `rosetta`, `clt`, `ssh` are in place, plus `sip-disabled` when SIP is off (`agent.Features`). Only import and setup change a baseline, so the record stays accurate. SIP may be on or off; plugins that need it off require `sip: disabled`, plugins that need tools require `features`, and baselines are chosen by those records before boot. After boot, SIP is confirmed against the live guest. The DMG is embedded in the binary and extracted to `data/guest-<sha256[:12]>.dmg` only when needed, atomically and read-only.
@@ -165,8 +167,8 @@ With `--pcap`, every frame, refused ones included, goes to `network.pcap` in the
 
 | Package | Role |
 |---------|------|
-| `cmd` | CLI: `vm import/list/rename/setup/remove`, `plugin install/list/update/remove`, `run` |
-| `internal/vm` | baseline lifecycle (import, setup, resolve) and disposable runs |
+| `cmd` | CLI: `vm import/list/rename/duplicate/setup/remove`, `plugin install/list/update/remove`, `run` |
+| `internal/vm` | baseline lifecycle (import, setup, duplicate, resolve) and disposable runs |
 | `internal/agent` | guest agent HTTP API: server (guest) and client (host) |
 | `internal/plugin` | `plugin.yml` loading, validation, templates, requirements, workflow arguments |
 | `internal/plugin/store` | installed plugins: GitHub release download, verification, extraction |

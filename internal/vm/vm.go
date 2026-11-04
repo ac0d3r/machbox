@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/ac0d3r/machbox/internal/assets"
 	"github.com/ac0d3r/machbox/internal/db"
@@ -135,6 +137,71 @@ func Reconfigure(ctx context.Context, identifier string) (*db.VM, error) {
 	return vm, nil
 }
 
+// Duplicate APFS-clones an imported baseline into a new one named newName. The
+// clone shares blocks with the source until either is written to, and is
+// configured independently from then on. On failure nothing is left behind.
+func Duplicate(identifier, newName string) (*db.VM, error) {
+	newName = strings.TrimSpace(newName)
+	if newName == "" {
+		return nil, errors.New("name is required")
+	}
+	src, err := Resolve(identifier)
+	if err != nil {
+		return nil, err
+	}
+	// Baselines are looked up by name, so a second one would make both ambiguous.
+	if same, err := db.FindVMsByName(newName); err != nil {
+		return nil, err
+	} else if len(same) > 0 {
+		return nil, fmt.Errorf("a baseline named %q already exists", newName)
+	}
+
+	id, err := newUUID()
+	if err != nil {
+		return nil, err
+	}
+	dir := assets.VMPath(id)
+	if err := cloneBaseline(assets.VMPath(src.UUID), dir); err != nil {
+		return nil, fmt.Errorf("duplicate %s: %w", src.UUID, err)
+	}
+
+	dup := *src
+	dup.UUID, dup.Name = id, newName
+	dup.Features = slices.Clone(src.Features)
+	dup.CreatedAt, dup.UpdatedAt = time.Time{}, time.Time{}
+	if err := db.CreateVM(&dup); err != nil {
+		if rmErr := os.RemoveAll(dir); rmErr != nil {
+			logrus.Warnf("failed to remove incomplete baseline %s: %v", dir, rmErr)
+		}
+		return nil, fmt.Errorf("save baseline: %w", err)
+	}
+
+	logrus.Infof("duplicated baseline %s (%s) as %s (%s)", src.Name, src.UUID, dup.Name, dup.UUID)
+	return &dup, nil
+}
+
+// cloneBaseline clones the baseline at src to dst, which must not exist. It
+// holds src's lock: a baseline being configured is mid-write.
+func cloneBaseline(src, dst string) (err error) {
+	lock, err := lockBaseline(src)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+
+	bundle, err := loadBundle(src)
+	if err != nil {
+		return fmt.Errorf("load baseline bundle: %w", err)
+	}
+	if _, err := bundle.Import(dst); err != nil {
+		if rmErr := os.RemoveAll(dst); rmErr != nil {
+			logrus.Warnf("failed to remove incomplete baseline %s: %v", dst, rmErr)
+		}
+		return err
+	}
+	return nil
+}
+
 // lockBaseline takes the exclusive lock of a baseline directory, held by
 // whatever writes to the baseline itself. Closing the file releases it.
 func lockBaseline(dir string) (*os.File, error) {
@@ -176,7 +243,8 @@ func Rename(identifier, newName string) (*db.VM, error) {
 	return vm, nil
 }
 
-// Remove deletes a baseline record and its on-disk bundle.
+// Remove deletes a baseline record and its on-disk bundle; it refuses while
+// the baseline is in use by import, setup or duplicate.
 func Remove(identifier string) (*db.VM, error) {
 	vm, err := Resolve(identifier)
 	if err != nil {
@@ -184,6 +252,13 @@ func Remove(identifier string) (*db.VM, error) {
 	}
 
 	dir := assets.VMPath(vm.UUID)
+	lock, err := lockBaseline(dir)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	if lock != nil {
+		defer lock.Close()
+	}
 	if err := os.RemoveAll(dir); err != nil {
 		return nil, fmt.Errorf("remove baseline files %s: %w", dir, err)
 	}

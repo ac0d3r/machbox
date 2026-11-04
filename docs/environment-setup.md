@@ -107,3 +107,17 @@ when the setup window closed, and `sip-disabled`. Plugins can require features (
 `machbox run` only picks baselines that have them. Baselines recorded by older
 versions list only `sip-disabled`: run `machbox vm setup` once to record the rest.
 
+## Duplicate a Baseline
+
+To keep one clean baseline and a variant with more tools, copy it and configure the
+copy:
+
+```bash
+machbox vm duplicate <uuid-or-name> <new-name>
+machbox vm setup <new-name>
+```
+
+The copy is an APFS clone: it is instant and takes no extra space until the two
+diverge. It keeps the source's machine identity, which an installed macOS needs to
+boot, so do not run the source and the copy at the same time. A baseline cannot be
+duplicated while `machbox vm import` or `machbox vm setup` is using it.
