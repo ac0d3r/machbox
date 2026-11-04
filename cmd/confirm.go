@@ -10,8 +10,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// errAborted is returned when the user declines a confirmation.
-var errAborted = errors.New("aborted")
+// ErrAborted is returned when the user declines a confirmation: nothing was
+// done, and there is nothing to report.
+var ErrAborted = errors.New("aborted")
 
 // confirm asks a yes/no question on the command's input; anything but y or
 // yes, end of input included, is no.

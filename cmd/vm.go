@@ -150,7 +150,7 @@ func newVMRemoveCommand() *cobra.Command {
 					return err
 				}
 				if !ok {
-					return errAborted
+					return ErrAborted
 				}
 			}
 			rec, err = vm.Remove(rec.UUID)

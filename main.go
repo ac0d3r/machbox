@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -19,7 +20,10 @@ func init() {
 
 func main() {
 	if err := cmd.Execute(Version); err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
+		// A declined confirmation is the user's own answer, not an error.
+		if !errors.Is(err, cmd.ErrAborted) {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+		}
 		os.Exit(1)
 	}
 }
