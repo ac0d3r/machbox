@@ -99,24 +99,6 @@ func TestLoadBundleWithoutConfig(t *testing.T) {
 	}
 }
 
-func TestMigrateVBVMInPlace(t *testing.T) {
-	dir := writeVBVM(t, "Boot")
-
-	b, err := MigrateVBVM(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if b.DiskPath != filepath.Join(dir, DiskName) {
-		t.Errorf("DiskPath = %q", b.DiskPath)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "Boot.img")); !os.IsNotExist(err) {
-		t.Errorf("old disk name still present: %v", err)
-	}
-	if _, err := LoadBundle(dir); err != nil {
-		t.Errorf("LoadBundle after migration: %v", err)
-	}
-}
-
 func TestSnapshotClonesWithoutMutatingBaseline(t *testing.T) {
 	src, err := DecodeVBVM(writeVBVM(t, "Disk"))
 	if err != nil {

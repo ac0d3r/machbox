@@ -326,13 +326,14 @@ func Remove(identifier string) (*db.VM, error) {
 	return vm, nil
 }
 
-// loadBundle opens a baseline directory, converting baselines imported by
-// older versions (a whole VirtualBuddy bundle) to the machbox format.
+// loadBundle opens a baseline directory. Baselines imported by old versions,
+// as a whole VirtualBuddy bundle, are no longer read: they have to be
+// imported again.
 func loadBundle(dir string) (*config.Bundle, error) {
 	b, err := config.LoadBundle(dir)
 	if errors.Is(err, config.ErrNoBundleConfig) {
-		logrus.Infof("migrating baseline %s to the machbox bundle format", dir)
-		b, err = config.MigrateVBVM(dir)
+		return nil, fmt.Errorf("%w: the baseline was imported by an old machbox version; "+
+			"remove it with `machbox vm remove` and import its VirtualBuddy VM again", err)
 	}
 	return b, err
 }

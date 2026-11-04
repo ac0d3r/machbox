@@ -73,29 +73,6 @@ func DecodeVBVM(path string) (*Bundle, error) {
 	return b, nil
 }
 
-// MigrateVBVM converts, in place, a baseline imported as a whole VirtualBuddy
-// bundle by older machbox versions: it renames the disk to DiskName and
-// writes the bundle config. The .vbdata metadata is left as is but unused.
-func MigrateVBVM(dir string) (*Bundle, error) {
-	src, err := DecodeVBVM(dir)
-	if err != nil {
-		return nil, err
-	}
-
-	dst := bundleAt(dir)
-	if src.DiskPath != dst.DiskPath {
-		if err := os.Rename(src.DiskPath, dst.DiskPath); err != nil {
-			return nil, fmt.Errorf("rename disk image: %w", err)
-		}
-	}
-	dst.CPUCount = src.CPUCount
-	dst.MemorySize = src.MemorySize
-	if err := dst.writeConfig(); err != nil {
-		return nil, err
-	}
-	return LoadBundle(dir)
-}
-
 func decodeDiskPath(rootPath string, pcfg vbvmPlist) (string, error) {
 	if len(pcfg.Hardware.StorageDevices) == 0 {
 		return "", fmt.Errorf("VirtualBuddy config has no storage devices")
