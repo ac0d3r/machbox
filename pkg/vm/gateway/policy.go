@@ -27,8 +27,7 @@ var (
 // connection never made.
 type policy struct {
 	gateway netip.Addr
-	// publicOnly also refuses private and link-local networks and the
-	// host's addresses.
+	// publicOnly also refuses private and link-local networks.
 	publicOnly bool
 	// interfaceAddrs lists the host's addresses; net.InterfaceAddrs if nil.
 	interfaceAddrs func() ([]net.Addr, error)
@@ -80,19 +79,20 @@ func (p *policy) allowIPv4(pkt []byte) (bool, netip.Addr) {
 	return false, dst
 }
 
-// blocked reports whether the guest must not reach ip. The host's loopback
-// is never reachable, as with NAT; multicast and broadcast are not
-// forwarded. publicOnly adds private and link-local networks and the
-// host's own addresses.
+// blocked reports whether the guest must not reach ip. The host itself is
+// never reachable: the gateway dials from the host, so a connection to one
+// of its own addresses goes over loopback, past its firewall. Multicast and
+// broadcast are not forwarded. publicOnly adds private and link-local
+// networks.
 func (p *policy) blocked(ip netip.Addr) bool {
 	ip = ip.Unmap()
 	if ip.IsLoopback() || ip.IsMulticast() || ip.IsUnspecified() || thisNetwork.Contains(ip) || ip == broadcast {
 		return true
 	}
-	if !p.publicOnly {
-		return false
+	if p.publicOnly && (ip.IsPrivate() || ip.IsLinkLocalUnicast()) {
+		return true
 	}
-	return ip.IsPrivate() || ip.IsLinkLocalUnicast() || p.isHostAddr(ip)
+	return p.isHostAddr(ip)
 }
 
 func (p *policy) isHostAddr(ip netip.Addr) bool {

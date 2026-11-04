@@ -57,7 +57,7 @@ type Options struct {
 	// receives as pcap, refused ones included.
 	Capture string
 	// PublicOnly limits the guest to public addresses: no private or
-	// link-local networks and none of the host's addresses.
+	// link-local networks. The host's own addresses are refused either way.
 	PublicOnly bool
 }
 

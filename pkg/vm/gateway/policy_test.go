@@ -56,7 +56,7 @@ func TestPolicyAllow(t *testing.T) {
 		{"this network", ipv4Frame(protoTCP, "0.0.0.0", 80), false, false},
 		{"link-local", ipv4Frame(protoTCP, "169.254.169.254", 80), true, false},
 		{"multicast", ipv4Frame(protoUDP, "224.0.0.251", 5353), false, false},
-		{"host address", ipv4Frame(protoTCP, "203.0.113.7", 22), true, false},
+		{"host address", ipv4Frame(protoTCP, "203.0.113.7", 22), false, false},
 		{"host's neighbour", ipv4Frame(protoTCP, "203.0.113.8", 22), true, true},
 	}
 	for _, tt := range tests {
