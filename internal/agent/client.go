@@ -76,7 +76,6 @@ func WaitReady(ctx context.Context, dial DialFunc, interval time.Duration) (*Cli
 	for {
 		info, err := c.Info(ctx)
 		if err == nil {
-			LogGuest(info)
 			return c, info, nil
 		}
 		last = err
@@ -241,11 +240,16 @@ func (c *Client) do(ctx context.Context, method, path string, in any) (*http.Res
 	return nil, fmt.Errorf("guest agent: %s", msg)
 }
 
-// LogGuest logs a successful guest handshake.
-func LogGuest(info GuestInfo) {
-	logrus.Infof("guest connected: %s %s (%s), host=%s user=%s agent_version=%q sip_disabled=%v",
+// LogGuest logs a guest that is ready, with its features in the words of vm
+// list and plugin requirements.
+func LogGuest(info GuestInfo, features []string) {
+	f := strings.Join(features, ",")
+	if f == "" {
+		f = "-"
+	}
+	logrus.Infof("guest ready: %s %s (%s), host %q, agent %s as %s, features: %s",
 		info.OSName, info.OSVersion, info.BuildVersion,
-		info.Hostname, info.Username, info.AgentVersion, info.SIPDisabled)
+		info.Hostname, info.AgentVersion, info.Username, f)
 	if info.Username != "root" {
 		logrus.Warnf("guest agent running as non-root user: %s", info.Username)
 	}

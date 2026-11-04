@@ -171,8 +171,12 @@ func watchGuest(ctx context.Context, inst *boxvm.VMInstance, ready func()) (*set
 				logrus.Infof("guest not ready: %s", waiting)
 			}
 		default:
+			// Again whenever an optional item is set up meanwhile.
+			if f := strings.Join(res.Features, ","); lastWaiting != "ready" || f != lastFeatures {
+				agent.LogGuest(res.Info, res.Features)
+				lastFeatures = f
+			}
 			if lastWaiting != "ready" {
-				agent.LogGuest(res.Info)
 				ready()
 			}
 			latest = &res
@@ -180,10 +184,6 @@ func watchGuest(ctx context.Context, inst *boxvm.VMInstance, ready func()) (*set
 		}
 		if err == nil {
 			lastWaiting = waiting
-			if f := strings.Join(res.Features, ","); f != lastFeatures {
-				logrus.Infof("guest features: %s", f)
-				lastFeatures = f
-			}
 		}
 		select {
 		case <-ctx.Done():

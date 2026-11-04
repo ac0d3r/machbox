@@ -156,5 +156,7 @@ func (r *Run) withGuest(ctx context.Context, inst *boxvm.VMInstance, fn GuestFun
 	if err := agent.CompatibleAgent(info.AgentVersion); err != nil {
 		return fmt.Errorf("%w; run: machbox vm setup %s", err, r.Baseline.UUID)
 	}
+	// Only SIP is read live; the rest is the baseline's record.
+	agent.LogGuest(info, agent.WithSIP(r.Baseline.Features, info.SIPDisabled))
 	return fn(ctx, client, info)
 }

@@ -365,6 +365,14 @@ func (in *Instance) Start(ctx context.Context, opts StartOptions) error {
 		if err := agent.CompatibleAgent(info.AgentVersion); err != nil {
 			logrus.Warnf("%v; the instance keeps running", err)
 		}
+		// An instance drifts from its baseline: check what it has now.
+		features := agent.WithSIP(nil, info.SIPDisabled)
+		if report, err := c.Check(waitCtx); err == nil {
+			features = checkFeatures(&report)
+		} else {
+			logrus.Debugf("guest check: %v", err)
+		}
+		agent.LogGuest(info, features)
 		client.Store(c)
 		logrus.Infof("instance %s is up; press Ctrl-C to shut it down", in.Name)
 	}()
