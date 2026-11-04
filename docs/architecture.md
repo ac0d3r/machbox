@@ -4,6 +4,7 @@ machbox runs macOS guests on Apple's `Virtualization.framework`. The core does f
 
 - **Baseline management**: import a VirtualBuddy VM once, keep it in machbox's own bundle format.
 - **Disposable runs**: every boot works on an APFS copy-on-write snapshot plus a read-only share, discarded afterwards.
+- **Persistent instances**: `machbox start` boots a clone of a baseline that keeps its disk across shutdowns; `machbox run` never uses one.
 - **Guest agent**: an HTTP API inside the guest, reached over virtio-vsock, that runs host-issued tasks.
 - **Guest network**: none by default (a workflow may set its own); `--network gateway` goes through a host gateway (`gateway-public`: public addresses only), which with `--pcap` saves every frame.
 
@@ -50,7 +51,7 @@ Disk.img          config.json    # {"version":1,"cpu_count":…,"memory_size":�
 
 `vm duplicate` clones a baseline the same way, keeping its machine identity.
 
-Commands coordinate through a `flock` on the baseline directory. `vm import` and `vm setup` hold it exclusively until the record is saved, and `vm remove` while it deletes; copying it (a run's snapshot, `vm duplicate`) holds it shared, only while copying. So copies go on together, but never of a baseline mid-write or mid-removal. Nothing waits: a command that finds a conflicting lock fails at once, since setup can take an hour.
+Commands coordinate through a `flock` on the baseline directory. `vm import` and `vm setup` hold it exclusively until the record is saved, and `vm remove` while it deletes; copying it (a run's snapshot, `vm duplicate`, a new instance) holds it shared, only while copying. So copies go on together, but never of a baseline mid-write or mid-removal. Nothing waits: a command that finds a conflicting lock fails at once, since setup can take an hour.
 
 Booting never reads VirtualBuddy metadata again. Baselines imported by old versions (a whole `.vbvm` copy, without `config.json`) are refused: remove them and import again.
 
@@ -67,6 +68,22 @@ A run (`internal/vm.Run`) owns one directory, `~/.machbox/runs/run-*/`:
 | `.lock` | exclusive `flock` held for the run's lifetime |
 
 `Close` removes the directory. Runs whose owner died (lock acquirable) are swept by the next `NewRun`.
+
+## Instances
+
+An instance (`internal/vm.Instance`) is a persistent clone of a baseline for interactive work, such as a signed-in tool. It is kept in the baseline's directory and the directory is its whole record; the database is not involved:
+
+| Path (`~/.machbox/vms/<uuid>/instances/<name>/`) | Purpose |
+|------|---------|
+| `Disk.img`, `config.json`, … | the bundle, APFS-cloned from the baseline when created, then booted in place |
+| `instance.json` | network mode of the last start (the next start's default), creation and last start time |
+| `.lock` | exclusive `flock` held while the instance runs or is removed |
+
+`machbox start <name> --vm <baseline>` clones under a hidden `.new-*` name, holding the baseline's lock, and renames it into place; `machbox start <name>` boots an existing one. Names are unique across baselines. Clones copy only the bundle files, so neither `vm duplicate` nor a new instance picks up another baseline's instances, and `vm setup` changes only the baseline.
+
+Shares are host directories at `/Volumes/My Shared Files/<name>` in the guest: one virtiofs device with the macOS automount tag and a multiple-directory share, read-write unless `--share-ro`, and given anew on every start, never saved. An instance does not need its agent. It runs until the guest shuts down, its window is closed or the process gets SIGINT, SIGTERM or SIGHUP; the guest is then shut down through the agent (`shutdown -h now`), or the power button without one, and forced off after two minutes or on a second signal. `caffeinate -i -w <pid>` keeps the host from idle-sleeping meanwhile. The instance keeps the baseline's machine identity, as runs do.
+
+`machbox run` picks baselines from the database only, so an instance and whatever is signed in to in it never run a plugin's samples. `vm remove` lists a baseline's instances and asks before removing them with it; it refuses while one is running.
 
 ## Guest agent
 
@@ -169,8 +186,8 @@ With `--pcap`, every frame, refused ones included, goes to `network.pcap` in the
 
 | Package | Role |
 |---------|------|
-| `cmd` | CLI: `vm import/list/rename/duplicate/setup/remove`, `plugin install/list/update/remove`, `run` |
-| `internal/vm` | baseline lifecycle (import, setup, duplicate, resolve) and disposable runs |
+| `cmd` | CLI: `vm import/list/rename/duplicate/setup/remove`, `plugin install/list/update/remove`, `run`, `start`, `instance list/remove` |
+| `internal/vm` | baseline lifecycle (import, setup, duplicate, resolve), disposable runs and persistent instances |
 | `internal/agent` | guest agent HTTP API: server (guest) and client (host) |
 | `internal/plugin` | `plugin.yml` loading, validation, templates, requirements, workflow arguments |
 | `internal/plugin/store` | installed plugins: GitHub release download, verification, extraction |

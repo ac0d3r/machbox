@@ -223,7 +223,7 @@ func cloneBaseline(src, dst string) (err error) {
 // errBaselineInUse is returned when another machbox process holds a
 // conflicting lock on a baseline.
 var errBaselineInUse = errors.New("baseline is in use by another machbox command " +
-	"(vm import, setup, duplicate or remove, or a run being created); try again when it is done")
+	"(vm import, setup, duplicate or remove, or a run or instance being created); try again when it is done")
 
 // lockBaseline takes the exclusive lock of a baseline directory, held by
 // whatever writes to the baseline or removes it: no other lock, shared or
@@ -233,7 +233,7 @@ func lockBaseline(dir string) (*os.File, error) {
 }
 
 // readLockBaseline takes a shared lock of a baseline directory, held while
-// copying it (a run's snapshot, a duplicate): copies go on
+// copying it (a run's snapshot, a duplicate, a new instance): copies go on
 // together, never while the baseline is written or removed.
 func readLockBaseline(dir string) (*os.File, error) {
 	return flockBaseline(dir, unix.LOCK_SH)
@@ -299,8 +299,8 @@ func Rename(identifier, newName string) (*db.VM, error) {
 	return vm, nil
 }
 
-// Remove deletes a baseline record and its on-disk bundle; it refuses while
-// the baseline is in use by import, setup or duplicate.
+// Remove deletes a baseline record and its on-disk bundle, its instances
+// included; it refuses while the baseline or any instance is in use.
 func Remove(identifier string) (*db.VM, error) {
 	vm, err := Resolve(identifier)
 	if err != nil {
@@ -314,6 +314,23 @@ func Remove(identifier string) (*db.VM, error) {
 	}
 	if lock != nil {
 		defer lock.Close()
+	}
+	instances, err := Instances(vm.UUID)
+	if err != nil {
+		return nil, err
+	}
+	locks := make([]*os.File, 0, len(instances))
+	defer func() {
+		for _, l := range locks {
+			_ = l.Close()
+		}
+	}()
+	for i := range instances {
+		l, err := instances[i].lock()
+		if err != nil {
+			return nil, err
+		}
+		locks = append(locks, l)
 	}
 	if err := os.RemoveAll(dir); err != nil {
 		return nil, fmt.Errorf("remove baseline files %s: %w", dir, err)

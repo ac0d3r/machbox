@@ -116,6 +116,22 @@ func (i *VMInstance) Shutdown() error {
 	return i.vm.Stop()
 }
 
+// RequestStop asks the guest to shut itself down, like pressing the power
+// button; Shutdown stops the VM at once.
+func (i *VMInstance) RequestStop() error {
+	if !i.vm.CanRequestStop() {
+		return fmt.Errorf("VM cannot be asked to stop in state %v", i.vm.State())
+	}
+	ok, err := i.vm.RequestStop()
+	if err != nil {
+		return fmt.Errorf("request VM stop: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("VM refused the stop request")
+	}
+	return nil
+}
+
 func (i *VMInstance) AlreadyShutdown() <-chan struct{} {
 	return i.shutdownCh
 }

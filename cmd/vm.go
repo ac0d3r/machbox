@@ -135,7 +135,7 @@ func newVMRemoveCommand() *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
 		Use:          "remove <uuid-or-name>",
-		Short:        "Remove an imported baseline",
+		Short:        "Remove an imported baseline and its instances",
 		Aliases:      []string{"rm"},
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
@@ -144,8 +144,26 @@ func newVMRemoveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			ins, err := vm.Instances(rec.UUID)
+			if err != nil {
+				return err
+			}
+			question := fmt.Sprintf("Remove baseline %s (%s) and its disk?", rec.Name, rec.UUID)
+			if len(ins) > 0 {
+				names := make([]string, len(ins))
+				for i := range ins {
+					names[i] = ins[i].Name
+					if ins[i].Running() {
+						return fmt.Errorf("instance %s of baseline %s is running; shut it down first", ins[i].Name, rec.Name)
+					}
+				}
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"WARNING: baseline %s has %d instance(s), which will be removed with it, disks included: %s\n",
+					rec.Name, len(ins), strings.Join(names, ", "))
+				question = "Remove the baseline and its instances?"
+			}
 			if !yes {
-				ok, err := confirm(cmd, fmt.Sprintf("Remove baseline %s (%s) and its disk?", rec.Name, rec.UUID))
+				ok, err := confirm(cmd, question)
 				if err != nil {
 					return err
 				}
@@ -168,16 +186,20 @@ func newVMRemoveCommand() *cobra.Command {
 // printBaselines prints baselines as a table, the format of vm list.
 func printBaselines(out io.Writer, vms ...db.VM) error {
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "UUID\tNAME\tOS\tAGENT\tFEATURES\tCREATED")
+	fmt.Fprintln(w, "UUID\tNAME\tOS\tAGENT\tFEATURES\tINSTANCES\tCREATED")
 	for i := range vms {
 		v := &vms[i]
 		features := "-"
 		if len(v.Features) > 0 {
 			features = strings.Join(v.Features, ",")
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+		instances := 0
+		if ins, err := vm.Instances(v.UUID); err == nil {
+			instances = len(ins)
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\t%s\n",
 			v.UUID, v.Name, formatOS(v.OSName, v.OSVersion, v.OSBuild),
-			v.AgentVersion, features, v.CreatedAt.Format(time.RFC3339))
+			v.AgentVersion, features, instances, v.CreatedAt.Format(time.RFC3339))
 	}
 	return w.Flush()
 }

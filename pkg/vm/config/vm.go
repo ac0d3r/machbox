@@ -56,7 +56,11 @@ type VMOptions struct {
 	DisplayHeight int64
 	Disks         []StorageDisk
 	Shares        []ShareDir
-	Network       Network
+	// AutomountShares appear in a macOS guest under
+	// /Volumes/My Shared Files/<Tag> with nothing to mount; Tag is the
+	// directory name there and must be unique.
+	AutomountShares []ShareDir
+	Network         Network
 }
 
 type ShareDir struct {
@@ -142,7 +146,7 @@ func NewMacVMConf(
 		return nil, err
 	}
 
-	if err := configureFileSystemDevice(vmcfg, opts.Shares); err != nil {
+	if err := configureFileSystemDevice(vmcfg, opts.Shares, opts.AutomountShares); err != nil {
 		return nil, err
 	}
 
@@ -277,9 +281,37 @@ func configureVirtioSocket(
 
 func configureFileSystemDevice(
 	vmcfg *vz.VirtualMachineConfiguration,
-	shares []ShareDir,
+	shares, automount []ShareDir,
 ) error {
 	var devices []vz.DirectorySharingDeviceConfiguration
+
+	if len(automount) > 0 {
+		dirs := make(map[string]*vz.SharedDirectory, len(automount))
+		for _, s := range automount {
+			if _, dup := dirs[s.Tag]; dup {
+				return fmt.Errorf("two shared directories named %q", s.Tag)
+			}
+			dir, err := vz.NewSharedDirectory(s.Dir, s.ReadOnly)
+			if err != nil {
+				return fmt.Errorf("create shared directory %s: %w", s.Dir, err)
+			}
+			dirs[s.Tag] = dir
+		}
+		share, err := vz.NewMultipleDirectoryShare(dirs)
+		if err != nil {
+			return fmt.Errorf("create multiple directory share: %w", err)
+		}
+		tag, err := vz.MacOSGuestAutomountTag()
+		if err != nil {
+			return fmt.Errorf("macOS automount tag: %w", err)
+		}
+		fsDev, err := vz.NewVirtioFileSystemDeviceConfiguration(tag)
+		if err != nil {
+			return fmt.Errorf("create virtio filesystem device configuration: %w", err)
+		}
+		fsDev.SetDirectoryShare(share)
+		devices = append(devices, fsDev)
+	}
 
 	for _, s := range shares {
 		dir, err := vz.NewSharedDirectory(s.Dir, s.ReadOnly)
