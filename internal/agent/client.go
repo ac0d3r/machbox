@@ -20,9 +20,9 @@ import (
 // AgentVersion is the host↔guest agent revision shared by both sides.
 // Kept in this package (not guest-agent) so host and guest can import the
 // same constant without a circular dependency. Bump when the API changes
-// incompatibly; unchanged values do not require reinstalling
-// machbox-guest.pkg or re-importing the baseline.
-const AgentVersion = "7"
+// incompatibly; unchanged values do not require `machbox vm setup` or
+// re-importing the baseline.
+const AgentVersion = "8"
 
 // baseURL is the authority used for requests; the transport ignores it and
 // always dials the guest over vsock.
@@ -41,10 +41,10 @@ type DialFunc func(ctx context.Context) (net.Conn, error)
 // CompatibleAgent reports whether a guest agent is usable with this host.
 func CompatibleAgent(version string) error {
 	if version == "" {
-		return fmt.Errorf("guest agent did not report agent_version; reinstall machbox-guest.pkg")
+		return fmt.Errorf("guest agent did not report agent_version; run `machbox vm setup`")
 	}
 	if version != AgentVersion {
-		return fmt.Errorf("guest agent version %q incompatible with host agent %q; reinstall machbox-guest.pkg",
+		return fmt.Errorf("guest agent version %q incompatible with host agent %q; run `machbox vm setup`",
 			version, AgentVersion)
 	}
 	return nil

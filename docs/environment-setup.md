@@ -25,13 +25,14 @@ Only needs to be done once. After setup, the imported baseline can be reused for
 Samples run as the logged-in user in a real GUI session, so the guest has to log
 in automatically on every boot (runs are headless). macOS refuses automatic login
 while FileVault is on: turn it off in **System Settings → Privacy & Security →
-FileVault**. Installing `machbox-guest.pkg` then enables automatic login (below).
+FileVault**. Machbox Setup then enables automatic login (below).
 
 ## Disable SIP in the Guest VM (if your plugins need it)
 
 Plugins state whether they need SIP (System Integrity Protection) off, e.g. for
 EndpointSecurity or DTrace (`requires: {sip: disabled}` in `plugin.yml`); `machbox
-vm list` shows each baseline's state, and `machbox run` picks a baseline that fits.
+vm list` shows `sip-disabled` in the `FEATURES` column of baselines that have it off,
+and `machbox run` picks a baseline that fits.
 Keeping SIP on is more realistic: some software checks `csrutil status` and
 behaves differently when SIP is off. You can keep one baseline of each kind.
 
@@ -49,7 +50,7 @@ behaves differently when SIP is off. You can keep one baseline of each kind.
 
 4. Restart the VM normally.
 
-## Install the Machbox Guest Agent
+## Run Machbox Setup
 
 On the host, run the command below. It opens the VM window:
 
@@ -59,37 +60,50 @@ machbox vm import /path/to/your_Machbox.vbvm <name>
 
 In the VM window:
 
-1. Open Finder and select `MachboxGuest` from the sidebar.
-2. Install `machbox-guest.pkg`.
-3. When asked, enter your account password to enable automatic login. macOS needs
-   it to log in by itself; it is checked and stored by macOS only. If you skip
-   this, set **System Settings → Users & Groups → Automatically log in as**
-   yourself, or reinstall the package later.
-4. Wait for the installation to finish (Xcode Command Line Tools will be installed silently).
-5. After the checks pass, close the VM window to finish the import.
+1. Open Finder, select `MachboxGuest` from the sidebar and open **Machbox Setup**.
+   It runs from that disk and leaves no app in the baseline.
+2. Press **Install Agent…** and enter your account password. Machbox Setup installs the
+   guest agent as root and turns on automatic login: macOS needs the password to log
+   in by itself, and stores it in recoverable form. With FileVault on, automatic login
+   is impossible and Machbox Setup says so; turn FileVault off (see above) and install
+   again.
+3. When the host logs that setup checks passed, the baseline is usable. Set up what
+   your plugins need from the optional list (below), then close the VM window to
+   finish the import.
 
-Plugin steps and samples inherit the agent's privacy permissions, and
-EndpointSecurity clients need Full Disk Access. With SIP disabled, the installer
-grants it to the agent. With SIP enabled it cannot: add `/usr/local/libexec/machbox-guest`
-in **System Settings → Privacy & Security → Full Disk Access** (press ⌘⇧G in the
-file picker to type the path), and do it again after every agent update.
+> Everything in a baseline is visible to, and usable by, what you run in it. Set up
+> only what your plugins need, or keep separate baselines for separate purposes.
 
-## Update the Guest Agent on an Imported Baseline
+### Optional Items
 
-When a new Machbox release ships an updated `machbox-guest.pkg` (for example after
-a guest agent version change), reinstall it on an existing baseline without
-re-importing the VirtualBuddy bundle:
+Machbox checks these and never installs them; each has a button to start on it:
+
+| Item | Feature | How |
+|------|---------|-----|
+| Remote Login (SSH) | `ssh` | System Settings → General → Sharing → Remote Login |
+| Xcode Command Line Tools | `clt` | Apple's installer (`xcode-select --install`) |
+| Rosetta 2 | `rosetta` | `softwareupdate --install-rosetta`, which asks for your password |
+
+The host checks the guest every few seconds while the window is open, with
+`machbox-guest check` run by the agent, and records what was in place when the
+window closed. Remote Login needs a network, which only setup always has: runs have
+none unless `--network` or the workflow provides it.
+
+## Update the Agent or Change the Tools of a Baseline
+
+To install a new agent after a Machbox release, or set up more later, run:
 
 ```bash
-machbox vm update-agent <uuid-or-name>
+machbox vm setup <uuid-or-name>
 ```
 
-In the VM window:
+`machbox vm update-agent` is an alias. In the VM window, open Machbox Setup again
+as above: it shows **Update Agent…** when the installed agent is another build, and asks
+for the password again, which also refreshes automatic login.
 
-1. Open Finder and select `MachboxGuest` from the sidebar.
-2. Reinstall `machbox-guest.pkg` (overwrite the previous install).
-3. With SIP enabled, grant Full Disk Access again (see above): the new agent build
-   no longer matches the old grant.
-4. After the checks pass, close the VM window to finish the update.
+`machbox vm import`, `machbox vm setup` and `machbox vm list` print each baseline's
+agent version and its features: `agent`, `autologin`, the optional items in place
+when the setup window closed, and `sip-disabled`. Plugins can require features (`requires: {features: [rosetta, clt]}`);
+`machbox run` only picks baselines that have them. Baselines recorded by older
+versions list only `sip-disabled`: run `machbox vm setup` once to record the rest.
 
-`machbox vm list` shows the recorded agent version in the `AGENT` column.

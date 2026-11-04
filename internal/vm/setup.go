@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -19,20 +20,44 @@ import (
 
 const bootTimeout = 15 * time.Minute
 
+// setupTimeout covers the user working through Machbox Setup and whatever
+// else they set up: Command Line Tools alone can take most of an hour on a
+// slow link.
+const setupTimeout = 2 * time.Hour
+
+// checkInterval is how often setup runs `machbox-guest check`.
+const checkInterval = 3 * time.Second
+
+const setupHint = "run Machbox Setup from the MachboxGuest volume in the VM window"
+
 type setupPurpose int
 
 const (
 	purposeImport setupPurpose = iota
-	purposeUpdateAgent
+	purposeReconfigure
 )
 
-// setup boots the VBVM with the guest DMG attached and a GUI, then dials the
-// guest agent until a matching protocol reports in (or timeout). SIP may be
+// setupResult is what a finished setup records about the baseline.
+type setupResult struct {
+	Info     agent.GuestInfo
+	Features []string
+}
+
+// setup boots the VBVM with the guest DMG attached and a GUI, and checks the
+// guest until the window is closed. The baseline is ready once a matching
+// agent runs with automatic login; it records the features of the last check
+// that was ready, so what the user sets up after that counts too. SIP may be
 // in either state; plugins that need it disabled say so in their requirements.
-func setup(ctx context.Context, dir string, purpose setupPurpose) (*agent.GuestInfo, error) {
+func setup(ctx context.Context, dir string, purpose setupPurpose) (*setupResult, error) {
 	// Main thread is pinned in main(); do not UnlockOSThread.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	lock, err := lockBaseline(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Close()
 
 	bundle, err := loadBundle(dir)
 	if err != nil {
@@ -64,19 +89,17 @@ func setup(ctx context.Context, dir string, purpose setupPurpose) (*agent.GuestI
 	logrus.Info("VM started successfully")
 
 	type outcome struct {
-		info *agent.GuestInfo
+		info *setupResult
 		err  error
 	}
 	done := make(chan outcome, 1)
 
-	waitCtx, waitCancel := context.WithTimeout(ctx, bootTimeout)
+	waitCtx, waitCancel := context.WithTimeout(ctx, setupTimeout)
 	defer waitCancel()
 
 	finishVerb := "finish import"
-	pkgHint := "install machbox-guest.pkg from the MachboxGuest volume in the GUI"
-	if purpose == purposeUpdateAgent {
-		finishVerb = "finish agent update"
-		pkgHint = "reinstall machbox-guest.pkg from the MachboxGuest volume in the GUI"
+	if purpose == purposeReconfigure {
+		finishVerb = "finish setup"
 	}
 
 	go func() {
@@ -88,12 +111,14 @@ func setup(ctx context.Context, dir string, purpose setupPurpose) (*agent.GuestI
 		case <-time.After(2 * time.Second):
 		}
 
-		info, err := waitGuest(waitCtx, inst, purpose)
+		info, err := watchGuest(waitCtx, inst, func() {
+			logrus.Infof("setup checks passed — close the VM window to %s", finishVerb)
+		})
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
 				err = fmt.Errorf(
-					"timed out after %s waiting for guest agent API %q; %s",
-					bootTimeout, agent.AgentVersion, pkgHint)
+					"timed out after %s waiting for guest setup with agent %q; %s",
+					setupTimeout, agent.AgentVersion, setupHint)
 			}
 			logrus.Errorf("setup checks failed: %v — close the VM window to abort", err)
 			done <- outcome{err: err}
@@ -103,13 +128,12 @@ func setup(ctx context.Context, dir string, purpose setupPurpose) (*agent.GuestI
 			done <- outcome{err: err}
 			return
 		}
-		logrus.Infof("setup checks passed — close the VM window to %s", finishVerb)
 		done <- outcome{info: info}
 	}()
 
 	logrus.Infof("showing GUI (%dx%d); %s",
-		config.DefaultDisplayWidth, config.DefaultDisplayHeight, pkgHint)
-	logrus.Infof("waiting for guest agent version %q…", agent.AgentVersion)
+		config.DefaultDisplayWidth, config.DefaultDisplayHeight, setupHint)
+	logrus.Infof("waiting for guest setup with agent version %q…", agent.AgentVersion)
 	graphicErr := inst.ShowGraphic(config.DefaultDisplayWidth, config.DefaultDisplayHeight)
 	cancel()
 
@@ -134,67 +158,85 @@ func setup(ctx context.Context, dir string, purpose setupPurpose) (*agent.GuestI
 	return r.info, r.err
 }
 
-func waitGuest(ctx context.Context, inst *boxvm.VMInstance, purpose setupPurpose) (*agent.GuestInfo, error) {
-	dial := agentDialer(inst)
-
-	// update-agent must observe the agent go down (pkg reinstall / kickstart)
-	// before accepting a handshake, otherwise an already-running old agent
-	// would pass immediately without the user reinstalling.
-	requireRestart := purpose == purposeUpdateAgent
-	sawDown := !requireRestart
-	loggedWaitingReinstall := false
-	lastIncompatible := ""
-
-	c := agent.NewClient(dial)
+// watchGuest checks the guest until ctx ends and returns the last result
+// that was ready; an error if none was. ready is called the first time one is.
+func watchGuest(ctx context.Context, inst *boxvm.VMInstance, ready func()) (*setupResult, error) {
+	c := agent.NewClient(agentDialer(inst))
+	var latest *setupResult
+	lastWaiting, lastFeatures := "", ""
 	for {
-		info, err := c.Info(ctx)
-		if err != nil {
-			if requireRestart && !sawDown {
-				logrus.Debugf("guest agent unreachable (waiting for reinstall cycle): %v", err)
-			} else {
-				logrus.Debugf("guest agent not ready: %v", err)
+		res, waiting, err := pollGuest(ctx, c)
+		switch {
+		case err != nil:
+			// The agent restarts while Machbox Setup updates it.
+			logrus.Debugf("guest not ready: %v", err)
+		case waiting != "":
+			latest = nil
+			if waiting != lastWaiting {
+				logrus.Infof("guest not ready: %s", waiting)
 			}
-			sawDown = true
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(time.Second):
+		default:
+			if lastWaiting != "ready" {
+				agent.LogGuest(res.Info)
+				ready()
 			}
-			continue
+			latest = &res
+			waiting = "ready"
 		}
-		if info.OSName == "" {
-			info.OSName = "macOS"
+		if err == nil {
+			lastWaiting = waiting
+			if f := strings.Join(res.Features, ","); f != lastFeatures {
+				logrus.Infof("guest features: %s", f)
+				lastFeatures = f
+			}
 		}
-		if err := agent.CompatibleAgent(info.AgentVersion); err != nil {
-			sawDown = true
-			if msg := err.Error(); msg != lastIncompatible {
-				logrus.Warnf("guest not ready: %v — install/reinstall machbox-guest.pkg", err)
-				lastIncompatible = msg
-			} else {
-				logrus.Debugf("guest not ready: %v", err)
+		select {
+		case <-ctx.Done():
+			if latest != nil {
+				return latest, nil
 			}
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(time.Second):
-			}
-			continue
+			return nil, ctx.Err()
+		case <-time.After(checkInterval):
 		}
-		if !sawDown {
-			if !loggedWaitingReinstall {
-				logrus.Info("guest agent is still running; reinstall machbox-guest.pkg from MachboxGuest to continue")
-				loggedWaitingReinstall = true
-			}
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(time.Second):
-			}
-			continue
-		}
-		agent.LogGuest(info)
-		return &info, nil
 	}
+}
+
+// pollGuest returns the guest's setup result, and what it is still waiting
+// for: "" once it has a matching agent and automatic login.
+func pollGuest(ctx context.Context, c *agent.Client) (setupResult, string, error) {
+	var res setupResult
+	info, err := c.Info(ctx)
+	if err != nil {
+		return res, "", err
+	}
+	if info.OSName == "" {
+		info.OSName = "macOS"
+	}
+	res.Info = info
+	if err := agent.CompatibleAgent(info.AgentVersion); err != nil {
+		return res, fmt.Sprintf("%v; %s", err, setupHint), nil
+	}
+	report, err := c.Check(ctx)
+	if err != nil {
+		return res, "", err
+	}
+	res.Features = checkFeatures(&report)
+	if report.AutoLoginUser == "" {
+		return res, "automatic login is off; " + setupHint, nil
+	}
+	return res, "", nil
+}
+
+// checkFeatures returns the baseline features a check found, the agent
+// included: it ran the check.
+func checkFeatures(r *agent.CheckReport) []string {
+	features := []string{agent.FeatureAgent}
+	for _, f := range r.Features {
+		if agent.KnownFeature(f) && !slices.Contains(features, f) {
+			features = append(features, f)
+		}
+	}
+	return agent.WithSIP(features, r.SIPDisabled)
 }
 
 // finalizeBaseline drops runs_* snapshot directories that older versions

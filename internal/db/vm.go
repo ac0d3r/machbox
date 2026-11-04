@@ -1,6 +1,7 @@
 package db
 
 import (
+	"slices"
 	"time"
 )
 
@@ -13,7 +14,9 @@ type VM struct {
 	OSBuild   string `json:"os_build"`
 
 	AgentVersion string `json:"agent_version"`
-	SIPDisabled  bool   `gorm:"column:sip_disabled" json:"sip_disabled"`
+	// Features are what the baseline had when setup last finished (see
+	// agent.Features); only import and setup change a baseline.
+	Features []string `gorm:"serializer:json" json:"features"`
 
 	Error string `json:"error,omitempty"`
 
@@ -22,6 +25,9 @@ type VM struct {
 }
 
 func (VM) TableName() string { return "vms" }
+
+// HasFeature reports whether the baseline has feature f.
+func (vm *VM) HasFeature(f string) bool { return slices.Contains(vm.Features, f) }
 
 func SaveVM(vm *VM) error {
 	return _db.Save(vm).Error

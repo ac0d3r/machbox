@@ -9,7 +9,7 @@ export CGO_LDFLAGS := -Wl,-no_warn_duplicate_libraries
 
 # Guest image
 VOLUME_NAME   := MachboxGuest
-GUEST_PKG     := guest-agent/build/machbox-guest.pkg
+GUEST_SRC     := guest-agent/build/dmg
 GUEST_DMG     := guest-agent/guest.dmg
 
 # machbox assets
@@ -35,10 +35,10 @@ prepare-assets: build-agent
 
 build-agent:
 	rm -f $(GUEST_DMG)
-	$(MAKE) -C guest-agent package VERSION=$(VERSION)
+	$(MAKE) -C guest-agent package
 	@if [ ! -f "$(GUEST_DMG)" ]; then \
 		hdiutil create \
-			-srcfolder "$(GUEST_PKG)" \
+			-srcfolder "$(GUEST_SRC)" \
 			-volname "$(VOLUME_NAME)" \
 			-format UDRW \
 			-o "$(GUEST_DMG)"; \

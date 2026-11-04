@@ -1,48 +1,46 @@
 AGENT_NAME := machbox-guest
-PKG_ID := dev.machbox.guest
-VERSION := $(or $(VERSION),$(shell git describe --tags --always --dirty 2>/dev/null || echo dev))
+LABEL := dev.machbox.guest
+APP_NAME := Machbox Setup
 
 SIGN_IDENTITY := $(or $(SIGN_IDENTITY),-)
 
 BUILD_DIR := build
-PAYLOAD_DIR := $(BUILD_DIR)/payload
-PLIST_DST := $(PAYLOAD_DIR)/Library/LaunchDaemons
-BIN_DST := $(PAYLOAD_DIR)/usr/local/libexec
-
-SCRIPTS_DIR := pkg-scripts
-
-PKG_OUTPUT := $(BUILD_DIR)/$(AGENT_NAME).pkg
+DMG_DIR := $(BUILD_DIR)/dmg
+APP_DIR := $(DMG_DIR)/$(APP_NAME).app
 
 .PHONY: all clean build-agent package uninstall
 
 all: package
 
 build-agent:
-	CGO_ENABLED=0 GOOS=darwin go build -ldflags "-s -w" -trimpath -o "$(AGENT_NAME)" main.go
+	mkdir -p $(BUILD_DIR)
+	CGO_ENABLED=0 GOOS=darwin go build -ldflags "-s -w" -trimpath -o "$(BUILD_DIR)/$(AGENT_NAME)" .
 
 	codesign --force --sign "$(SIGN_IDENTITY)" \
+		--identifier "$(LABEL)" \
 		--options runtime \
-		"$(AGENT_NAME)"
+		"$(BUILD_DIR)/$(AGENT_NAME)"
 
+# Runs from the MachboxGuest volume and is never copied into the guest; its
+# install.sh copies the agent in.
 package: build-agent
-	mkdir -p $(PLIST_DST)
-	mkdir -p $(BIN_DST)
+	rm -rf "$(DMG_DIR)"
+	mkdir -p "$(APP_DIR)/Contents/MacOS" "$(APP_DIR)/Contents/Resources"
 
-	cp ${PKG_ID}.plist $(PLIST_DST)
-	mv $(AGENT_NAME) $(BIN_DST)/$(AGENT_NAME)
-	chmod 755 $(BIN_DST)/$(AGENT_NAME)
+	swiftc -O -parse-as-library -swift-version 5 \
+		-target arm64-apple-macos13.0 \
+		-o "$(APP_DIR)/Contents/MacOS/$(APP_NAME)" \
+		app/MachboxSetup.swift
 
-	set -o pipefail; pkgbuild \
-		--root $(PAYLOAD_DIR) \
-		--scripts $(SCRIPTS_DIR) \
-		--identifier $(PKG_ID) \
-		--version $(VERSION) \
-		$(PKG_OUTPUT) 2>&1 | grep -v '^write: Permission denied$$'
+	cp app/Info.plist "$(APP_DIR)/Contents/"
+	cp "$(BUILD_DIR)/$(AGENT_NAME)" $(LABEL).plist app/install.sh "$(APP_DIR)/Contents/Resources/"
+
+	codesign --force --sign "$(SIGN_IDENTITY)" --options runtime "$(APP_DIR)"
 
 clean:
 	rm -rf $(BUILD_DIR)
 
 uninstall:
-	sudo launchctl bootout system /Library/LaunchDaemons/${PKG_ID}.plist || true
-	sudo rm -f /Library/LaunchDaemons/${PKG_ID}.plist
+	sudo launchctl bootout system/$(LABEL) || true
+	sudo rm -f /Library/LaunchDaemons/$(LABEL).plist
 	sudo rm -f /usr/local/libexec/$(AGENT_NAME)

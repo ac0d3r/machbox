@@ -3,8 +3,11 @@ package plugin
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/ac0d3r/machbox/internal/agent"
 )
 
 // SIPState is the System Integrity Protection state a plugin needs.
@@ -22,6 +25,8 @@ type Requires struct {
 	// ">=14.0" or ">=14, <16".
 	MacOS string   `yaml:"macos"`
 	SIP   SIPState `yaml:"sip"`
+	// Features the baseline must have (agent.Features), e.g. [rosetta, clt].
+	Features []string `yaml:"features"`
 }
 
 func (r Requires) validate() error {
@@ -30,9 +35,15 @@ func (r Requires) validate() error {
 	}
 	switch r.SIP {
 	case SIPAny, SIPDisabled, SIPEnabled:
-		return nil
+	default:
+		return fmt.Errorf("sip: unknown state %q (disabled, enabled)", r.SIP)
 	}
-	return fmt.Errorf("sip: unknown state %q (disabled, enabled)", r.SIP)
+	for _, f := range r.Features {
+		if !agent.KnownFeature(f) {
+			return fmt.Errorf("features: unknown feature %q (%s)", f, strings.Join(agent.Features, ", "))
+		}
+	}
+	return nil
 }
 
 // CheckOS reports whether a guest running osVersion satisfies the macOS
@@ -55,16 +66,26 @@ func (r Requires) CheckOS(osVersion string) error {
 }
 
 // Check verifies a guest against all requirements. Baseline records carry
-// both values, so this works before boot; after boot it confirms them.
-func (r Requires) Check(osVersion string, sipDisabled bool) error {
+// all of them, so this works before boot; after boot it confirms them.
+func (r Requires) Check(osVersion string, features []string) error {
 	if err := r.CheckOS(osVersion); err != nil {
 		return err
 	}
+	sipDisabled := slices.Contains(features, agent.FeatureSIPDisabled)
 	switch {
 	case r.SIP == SIPDisabled && !sipDisabled:
 		return errors.New("guest SIP is enabled; plugin requires it disabled")
 	case r.SIP == SIPEnabled && sipDisabled:
 		return errors.New("guest SIP is disabled; plugin requires it enabled")
+	}
+	var missing []string
+	for _, f := range r.Features {
+		if !slices.Contains(features, f) {
+			missing = append(missing, f)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("guest lacks %s; add it with: machbox vm setup", strings.Join(missing, ", "))
 	}
 	return nil
 }
@@ -77,6 +98,9 @@ func (r Requires) String() string {
 	}
 	if r.SIP != SIPAny {
 		parts = append(parts, "SIP "+string(r.SIP))
+	}
+	if len(r.Features) > 0 {
+		parts = append(parts, "features "+strings.Join(r.Features, ", "))
 	}
 	if len(parts) == 0 {
 		return "none"

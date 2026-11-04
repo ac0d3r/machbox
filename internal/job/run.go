@@ -71,7 +71,9 @@ func (j *Job) run(ctx context.Context, baseline *db.VM, opts Options) error {
 	return r.Boot(ctx, opts.Boot, func(ctx context.Context, c *agent.Client, info agent.GuestInfo) error {
 		j.Guest = &info
 		j.trySave()
-		if err := j.plugin.Requires.Check(info.OSVersion, info.SIPDisabled); err != nil {
+		// Only SIP can be read live; the rest is the baseline's record.
+		live := agent.WithSIP(baseline.Features, info.SIPDisabled)
+		if err := j.plugin.Requires.Check(info.OSVersion, live); err != nil {
 			return fmt.Errorf("guest does not meet plugin requirements: %w", err)
 		}
 		user, err := waitSession(ctx, c)
@@ -122,7 +124,7 @@ func pickBaseline(identifier string, req plugin.Requires) (*db.VM, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := req.Check(b.OSVersion, b.SIPDisabled); err != nil {
+		if err := req.Check(b.OSVersion, b.Features); err != nil {
 			return nil, fmt.Errorf("baseline %s: %w", b.Name, err)
 		}
 		return b, nil
@@ -137,7 +139,7 @@ func pickBaseline(identifier string, req plugin.Requires) (*db.VM, error) {
 	}
 	var ok []*db.VM
 	for i := range all {
-		if req.Check(all[i].OSVersion, all[i].SIPDisabled) == nil {
+		if req.Check(all[i].OSVersion, all[i].Features) == nil {
 			ok = append(ok, &all[i])
 		}
 	}

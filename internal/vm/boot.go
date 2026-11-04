@@ -140,7 +140,7 @@ func (r *Run) withGuest(ctx context.Context, inst *boxvm.VMInstance, fn GuestFun
 	}
 
 	if err := agent.CompatibleAgent(info.AgentVersion); err != nil {
-		return fmt.Errorf("%w; run: machbox vm update-agent %s", err, r.Baseline.UUID)
+		return fmt.Errorf("%w; run: machbox vm setup %s", err, r.Baseline.UUID)
 	}
 	return fn(ctx, client, info)
 }

@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/sys/unix"
 	"gorm.io/gorm"
 )
 
@@ -72,22 +73,22 @@ func Import(ctx context.Context, opts ImportOptions) (vm *db.VM, err error) {
 		return nil, fmt.Errorf("import vm bundle: %w", err)
 	}
 
-	info, err := setup(ctx, dir, purposeImport)
+	res, err := setup(ctx, dir, purposeImport)
 	if err != nil {
 		return nil, fmt.Errorf("import %s failed: %w", id, err)
 	}
-	if info == nil {
+	if res == nil {
 		return nil, fmt.Errorf("import %s failed: setup returned no guest info (aborted?)", id)
 	}
 
 	vm = &db.VM{
 		UUID:         id,
 		Name:         name,
-		OSName:       info.OSName,
-		OSVersion:    info.OSVersion,
-		OSBuild:      info.BuildVersion,
-		AgentVersion: info.AgentVersion,
-		SIPDisabled:  info.SIPDisabled,
+		OSName:       res.Info.OSName,
+		OSVersion:    res.Info.OSVersion,
+		OSBuild:      res.Info.BuildVersion,
+		AgentVersion: res.Info.AgentVersion,
+		Features:     res.Features,
 	}
 	if err = db.CreateVM(vm); err != nil {
 		return nil, fmt.Errorf("save baseline: %w", err)
@@ -97,10 +98,10 @@ func Import(ctx context.Context, opts ImportOptions) (vm *db.VM, err error) {
 	return vm, nil
 }
 
-// UpdateAgent boots an imported baseline with the current guest.dmg attached
-// so the user can reinstall machbox-guest.pkg, then refreshes guest metadata
-// in the database. The on-disk baseline is kept on failure.
-func UpdateAgent(ctx context.Context, identifier string) (*db.VM, error) {
+// Reconfigure boots an imported baseline with the current guest.dmg attached
+// so the user can run Machbox Setup, then refreshes guest metadata in the
+// database. The on-disk baseline is kept on failure.
+func Reconfigure(ctx context.Context, identifier string) (*db.VM, error) {
 	vm, err := Resolve(identifier)
 	if err != nil {
 		return nil, err
@@ -111,27 +112,44 @@ func UpdateAgent(ctx context.Context, identifier string) (*db.VM, error) {
 		return nil, fmt.Errorf("baseline files %s: %w", dir, err)
 	}
 
-	logrus.Infof("updating guest agent for baseline %s (%s)", vm.Name, vm.UUID)
-	info, err := setup(ctx, dir, purposeUpdateAgent)
+	logrus.Infof("configuring baseline %s (%s)", vm.Name, vm.UUID)
+	res, err := setup(ctx, dir, purposeReconfigure)
 	if err != nil {
-		return nil, fmt.Errorf("update agent for %s failed: %w", vm.UUID, err)
+		return nil, fmt.Errorf("setup of %s failed: %w", vm.UUID, err)
 	}
-	if info == nil {
-		return nil, fmt.Errorf("update agent for %s failed: setup returned no guest info (aborted?)", vm.UUID)
+	if res == nil {
+		return nil, fmt.Errorf("setup of %s failed: no guest info (aborted?)", vm.UUID)
 	}
 
-	vm.OSName = info.OSName
-	vm.OSVersion = info.OSVersion
-	vm.OSBuild = info.BuildVersion
-	vm.AgentVersion = info.AgentVersion
-	vm.SIPDisabled = info.SIPDisabled
+	vm.OSName = res.Info.OSName
+	vm.OSVersion = res.Info.OSVersion
+	vm.OSBuild = res.Info.BuildVersion
+	vm.AgentVersion = res.Info.AgentVersion
+	vm.Features = res.Features
 	vm.Error = ""
 	if err := db.SaveVM(vm); err != nil {
-		return nil, fmt.Errorf("save baseline after agent update: %w", err)
+		return nil, fmt.Errorf("save baseline after setup: %w", err)
 	}
 
-	logrus.Infof("baseline %s agent updated to version %q", vm.UUID, vm.AgentVersion)
+	logrus.Infof("baseline %s configured, agent version %q", vm.UUID, vm.AgentVersion)
 	return vm, nil
+}
+
+// lockBaseline takes the exclusive lock of a baseline directory, held by
+// whatever writes to the baseline itself. Closing the file releases it.
+func lockBaseline(dir string) (*os.File, error) {
+	f, err := os.Open(dir) // #nosec G304 -- a managed baseline directory
+	if err != nil {
+		return nil, fmt.Errorf("open baseline: %w", err)
+	}
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		_ = f.Close()
+		if errors.Is(err, unix.EWOULDBLOCK) {
+			return nil, errors.New("baseline is in use by machbox vm import or setup")
+		}
+		return nil, fmt.Errorf("lock baseline: %w", err)
+	}
+	return f, nil
 }
 
 // List returns imported baselines.

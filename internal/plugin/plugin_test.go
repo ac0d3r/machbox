@@ -95,6 +95,7 @@ func TestParseManifestErrors(t *testing.T) {
 		"bad env tmpl":   base + "    steps: [{id: a, run: [x], env: {A: '${{ inputs.nope }}'}}]",
 		"dot output":     base + "    steps: [{id: a, run: [x], output: ./.}]",
 		"bad sip":        "manifest_version: 1\nname: p\nrequires: {sip: off}\nworkflows: {w: {steps: [{id: a, run: [x]}]}}",
+		"bad feature":    "manifest_version: 1\nname: p\nrequires: {features: [xcode]}\nworkflows: {w: {steps: [{id: a, run: [x]}]}}",
 	}
 	for name, manifest := range tests {
 		if _, err := Parse([]byte(manifest)); err == nil {
@@ -150,13 +151,14 @@ func TestRequires(t *testing.T) {
 			t.Errorf("CheckOS(%s) = %v, want ok=%v", v, err, ok)
 		}
 	}
-	if err := r.Check("15.0", true); err != nil {
+	sipOff := []string{"sip-disabled"}
+	if err := r.Check("15.0", sipOff); err != nil {
 		t.Error(err)
 	}
-	if r.Check("15.0", false) == nil {
+	if r.Check("15.0", nil) == nil {
 		t.Error("SIP enabled accepted")
 	}
-	if (Requires{SIP: SIPEnabled}).Check("15.0", true) == nil {
+	if (Requires{SIP: SIPEnabled}).Check("15.0", sipOff) == nil {
 		t.Error("SIP disabled accepted for sip: enabled")
 	}
 	if (Requires{MacOS: "==15"}).CheckOS("15.0.0") != nil {
@@ -165,8 +167,15 @@ func TestRequires(t *testing.T) {
 	if (Requires{MacOS: ">=14"}).CheckOS("") == nil {
 		t.Error("empty guest version accepted")
 	}
-	if (Requires{}).Check("", false) != nil {
+	if (Requires{}).Check("", nil) != nil {
 		t.Error("empty requirements should accept anything")
+	}
+	tools := Requires{Features: []string{"rosetta", "clt"}}
+	if err := tools.Check("15.0", []string{"agent", "rosetta", "clt"}); err != nil {
+		t.Error(err)
+	}
+	if err := tools.Check("15.0", []string{"rosetta"}); err == nil || !strings.Contains(err.Error(), "lacks clt") {
+		t.Errorf("missing clt: err = %v", err)
 	}
 }
 

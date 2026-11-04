@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"fmt"
+	"io"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -20,7 +22,7 @@ func newVMCommand() *cobra.Command {
 		newVMImportCommand(),
 		newVMListCommand(),
 		newVMRenameCommand(),
-		newVMUpdateAgentCommand(),
+		newVMSetupCommand(),
 		newVMRemoveCommand(),
 	)
 	return cmd
@@ -50,8 +52,7 @@ func newVMImportCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), rec.UUID)
-			return nil
+			return printBaselines(cmd.OutOrStdout(), *rec)
 		}),
 	}
 }
@@ -67,19 +68,7 @@ func newVMListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "UUID\tNAME\tOS\tSIP\tAGENT\tCREATED")
-			for i := range vms {
-				v := &vms[i]
-				sip := "enabled"
-				if v.SIPDisabled {
-					sip = "disabled"
-				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-					v.UUID, v.Name, formatOS(v.OSName, v.OSVersion, v.OSBuild),
-					sip, v.AgentVersion, v.CreatedAt.Format(time.RFC3339))
-			}
-			return w.Flush()
+			return printBaselines(cmd.OutOrStdout(), vms...)
 		}),
 	}
 }
@@ -105,23 +94,22 @@ func newVMRenameCommand() *cobra.Command {
 	return cmd
 }
 
-func newVMUpdateAgentCommand() *cobra.Command {
+func newVMSetupCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "update-agent <uuid-or-name>",
-		Short: "Reinstall the guest agent on an imported baseline",
+		Use:     "setup <uuid-or-name>",
+		Aliases: []string{"update-agent"},
+		Short:   "Update the guest agent or change the tools of an imported baseline",
 		Long: "Boots the baseline with the current MachboxGuest disk attached. " +
-			"In the VM window, open MachboxGuest and reinstall machbox-guest.pkg, " +
+			"In the VM window, open MachboxGuest and run Machbox Setup, " +
 			"then close the window when checks pass.",
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		RunE: withVMDB(func(cmd *cobra.Command, args []string) error {
-			rec, err := vm.UpdateAgent(cmd.Context(), args[0])
+			rec, err := vm.Reconfigure(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\tagent=%s\n",
-				rec.UUID, rec.Name, rec.AgentVersion)
-			return nil
+			return printBaselines(cmd.OutOrStdout(), *rec)
 		}),
 	}
 }
@@ -142,6 +130,23 @@ func newVMRemoveCommand() *cobra.Command {
 			return nil
 		}),
 	}
+}
+
+// printBaselines prints baselines as a table, the format of vm list.
+func printBaselines(out io.Writer, vms ...db.VM) error {
+	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "UUID\tNAME\tOS\tAGENT\tFEATURES\tCREATED")
+	for i := range vms {
+		v := &vms[i]
+		features := "-"
+		if len(v.Features) > 0 {
+			features = strings.Join(v.Features, ",")
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			v.UUID, v.Name, formatOS(v.OSName, v.OSVersion, v.OSBuild),
+			v.AgentVersion, features, v.CreatedAt.Format(time.RFC3339))
+	}
+	return w.Flush()
 }
 
 func formatOS(name, version, build string) string {

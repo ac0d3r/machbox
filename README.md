@@ -25,7 +25,7 @@ chmod +x machbox
 ## Build from Source
 
 - Go 1.27+
-- Xcode, for the macOS SDK, `codesign`, `pkgbuild`, and `hdiutil`
+- Xcode, for the macOS SDK, `swiftc`, `codesign`, and `hdiutil`
 
 ```bash
 git clone https://github.com/ac0d3r/machbox.git

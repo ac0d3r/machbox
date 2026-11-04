@@ -28,7 +28,7 @@ flowchart LR
     end
 
     CLI --> DB
-    CLI -->|import / update-agent| GuestDMG
+    CLI -->|import / vm setup| GuestDMG
     GuestDMG -.->|read-only disk| Guest
     Baseline -->|clonefile| Snap
     Snap -->|boot| Guest
@@ -50,7 +50,7 @@ Disk.img          config.json    # {"version":1,"cpu_count":â€¦,"memory_size":â€
 
 Booting never reads VirtualBuddy metadata again. Baselines imported by older versions (a whole `.vbvm` copy) are migrated in place on first load.
 
-Import and `vm update-agent` boot the baseline with a GUI and `guest.dmg` attached. The user installs `machbox-guest.pkg` from it; the host polls the agent until a compatible `AgentVersion` answers, then records the guest's OS version and SIP state. SIP may be on or off; plugins that need it off require `sip: disabled`, and baselines are chosen by those records before boot. The DMG is embedded in the binary and extracted to `data/guest-<sha256[:12]>.dmg` only when needed, atomically and read-only.
+Import and `vm setup` boot the baseline with a GUI and `guest.dmg` attached. The user runs Machbox Setup from it. Until the window closes, the host runs `machbox-guest check` through the agent every few seconds; the baseline is ready once a compatible `AgentVersion` answers with automatic login on. It then records the guest's OS version and the baseline's **features** from the last ready check: `agent`, `autologin`, and whichever of `rosetta`, `clt`, `ssh` are in place, plus `sip-disabled` when SIP is off (`agent.Features`). Only import and setup change a baseline, so the record stays accurate. SIP may be on or off; plugins that need it off require `sip: disabled`, plugins that need tools require `features`, and baselines are chosen by those records before boot. After boot, SIP is confirmed against the live guest. The DMG is embedded in the binary and extracted to `data/guest-<sha256[:12]>.dmg` only when needed, atomically and read-only.
 
 ## Runs
 
@@ -76,7 +76,11 @@ A run (`internal/vm.Run`) owns one directory, `~/.machbox/runs/run-*/`:
 | `POST /v1/exec/stream` | stream stdout as a chunked body; exit status in `X-Task-Error` / `X-Task-Timed-Out` trailers |
 | `GET /v1/files?root=&path=` | read a regular file at `path` inside `root`, opened through `os.Root` (no `..` or symlink escape) |
 
-Cancelling a request kills the task in the guest. A stream that hits its timeout ends normally with the output collected so far. Host and guest share `AgentVersion`; a mismatch requires `machbox vm update-agent`.
+Cancelling a request kills the task in the guest. A stream that hits its timeout ends normally with the output collected so far. Host and guest share `AgentVersion`; a mismatch requires `machbox vm setup`.
+
+Machbox Setup installs it. The SwiftUI app on the guest disk compares its bundled `machbox-guest` with the installed one and, when they differ, asks for the user's password and runs its `install.sh` as root through `sudo`: it copies the agent and its launchd plist, restarts it, and turns on automatic login, which needs the password itself. The script runs once and exits, so no privileged interface stays in the baseline, where a sample running as the user could reach it. The password goes over stdin, one line for `sudo` and one for the script.
+
+Everything else is the user's to set up; Machbox only checks it. `machbox-guest check` prints what is in place as JSON (`agent.CheckReport`). Full Disk Access is neither checked nor set up.
 
 ## Plugins and jobs
 
@@ -89,6 +93,7 @@ version: 0.1.0
 requires:                   # checked against the baseline record before boot, and the live guest after
   macos: ">=13.0"           # comma-separated constraints: >= <= == > <
   sip: disabled             # disabled | enabled | omitted (any)
+  # features: [rosetta, clt] # baseline features, see below; omitted (any)
 workflows:
   analyze:
     inputs:                 # declaration order = positional argument order
@@ -154,14 +159,14 @@ On the gateway itself (192.168.127.1) the guest reaches only DHCP and DNS; DNS i
 
 Every frame, refused ones included, goes to `network.pcap` in the job directory, written by the host, never pulled from the guest.
 
-`vm import` and `vm update-agent` always boot with `NAT`.
+`vm import` and `vm setup` always boot with `NAT`.
 
 ## Packages
 
 | Package | Role |
 |---------|------|
-| `cmd` | CLI: `vm import/list/rename/update-agent/remove`, `plugin install/list/update/remove`, `run` |
-| `internal/vm` | baseline lifecycle (import, update-agent, resolve) and disposable runs |
+| `cmd` | CLI: `vm import/list/rename/setup/remove`, `plugin install/list/update/remove`, `run` |
+| `internal/vm` | baseline lifecycle (import, setup, resolve) and disposable runs |
 | `internal/agent` | guest agent HTTP API: server (guest) and client (host) |
 | `internal/plugin` | `plugin.yml` loading, validation, templates, requirements, workflow arguments |
 | `internal/plugin/store` | installed plugins: GitHub release download, verification, extraction |
@@ -172,4 +177,4 @@ Every frame, refused ones included, goes to `network.pcap` in the job directory,
 | `pkg/vm/config` | baseline bundle format, VirtualBuddy import, snapshot, `Virtualization.framework` configuration |
 | `pkg/vm/gateway` | `--network Internet`: gvisor-tap-vsock stack, egress policy, pcap capture |
 | `pkg/vsock` | guest-side AF_VSOCK listener |
-| `guest-agent` | `machbox-guest` daemon and `.pkg` packaging |
+| `guest-agent` | `machbox-guest` daemon and its `check`, `app/` Machbox Setup and its `install.sh` |

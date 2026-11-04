@@ -16,8 +16,18 @@ import (
 	"github.com/ac0d3r/machbox/pkg/vsock"
 )
 
+const usage = "usage: machbox-guest [check]"
+
 func main() {
-	os.Exit(run())
+	switch {
+	case len(os.Args) == 1:
+		os.Exit(run())
+	case len(os.Args) == 2 && os.Args[1] == "check":
+		os.Exit(runCheck())
+	default:
+		fmt.Fprintln(os.Stderr, usage)
+		os.Exit(2)
+	}
 }
 
 func run() int {
