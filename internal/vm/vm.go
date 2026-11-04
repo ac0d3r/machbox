@@ -23,7 +23,7 @@ import (
 // ImportOptions configures a baseline import.
 type ImportOptions struct {
 	VbvmPath string // source VirtualBuddy bundle; never modified
-	Name     string // display name (may be duplicated)
+	Name     string // display name, unique among baselines
 }
 
 // Import APFS-clones a VBVM into the managed baseline directory, runs setup
@@ -36,6 +36,9 @@ func Import(ctx context.Context, opts ImportOptions) (vm *db.VM, err error) {
 	}
 	if strings.TrimSpace(opts.VbvmPath) == "" {
 		return nil, errors.New("vbvm path is required")
+	}
+	if err := checkNameFree(name, ""); err != nil {
+		return nil, err
 	}
 
 	src, err := filepath.Abs(opts.VbvmPath)
@@ -90,6 +93,10 @@ func Import(ctx context.Context, opts ImportOptions) (vm *db.VM, err error) {
 		return nil, fmt.Errorf("import %s failed: setup returned no guest info (aborted?)", id)
 	}
 
+	// Again: setup took long enough for another baseline to take the name.
+	if err := checkNameFree(name, ""); err != nil {
+		return nil, err
+	}
 	vm = &db.VM{
 		UUID:         id,
 		Name:         name,
@@ -163,11 +170,8 @@ func Duplicate(identifier, newName string) (*db.VM, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Baselines are looked up by name, so a second one would make both ambiguous.
-	if same, err := db.FindVMsByName(newName); err != nil {
+	if err := checkNameFree(newName, ""); err != nil {
 		return nil, err
-	} else if len(same) > 0 {
-		return nil, fmt.Errorf("a baseline named %q already exists", newName)
 	}
 
 	id, err := newUUID()
@@ -252,6 +256,22 @@ func flockBaseline(dir string, how int) (*os.File, error) {
 	return f, nil
 }
 
+// checkNameFree fails if a baseline other than except (a UUID, or "") is
+// named name. Baselines are looked up by name, so a second one would make
+// both ambiguous.
+func checkNameFree(name, except string) error {
+	same, err := db.FindVMsByName(name)
+	if err != nil {
+		return err
+	}
+	for i := range same {
+		if same[i].UUID != except {
+			return fmt.Errorf("a baseline named %q already exists", name)
+		}
+	}
+	return nil
+}
+
 // List returns imported baselines.
 func List() ([]db.VM, error) {
 	return db.ListVMs()
@@ -266,6 +286,9 @@ func Rename(identifier, newName string) (*db.VM, error) {
 
 	vm, err := Resolve(identifier)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkNameFree(newName, vm.UUID); err != nil {
 		return nil, err
 	}
 
