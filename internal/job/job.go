@@ -5,7 +5,7 @@
 //	job.json          inputs, guest, status of every step
 //	logs/<step>.log   step stdout (stderr is in the step error)
 //	outputs/<path>    each step's declared output
-//	network.pcap      guest traffic, with --network Internet
+//	network.pcap      guest traffic, with --pcap
 package job
 
 import (

@@ -216,7 +216,7 @@ func TestWorkflowNetwork(t *testing.T) {
 	manifest := func(network string) string {
 		return "manifest_version: 1\nname: p\nworkflows:\n  w:\n    network: " + network + "\n    steps:\n      - id: a\n        run: [x]\n"
 	}
-	for in, want := range map[string]string{"internet": "Internet", "NAT": "NAT", "none": "", `""`: ""} {
+	for in, want := range map[string]string{"Gateway-Public": "gateway-public", "gateway": "gateway", "NAT": "nat", "none": "", `""`: ""} {
 		p, err := Parse([]byte(manifest(in)))
 		if err != nil {
 			t.Fatalf("network %s: %v", in, err)
@@ -225,7 +225,7 @@ func TestWorkflowNetwork(t *testing.T) {
 			t.Errorf("network %s = %q, want %q", in, got, want)
 		}
 	}
-	if _, err := Parse([]byte(manifest("bridged"))); err == nil {
+	if _, err := Parse([]byte(manifest("internet"))); err == nil {
 		t.Error("unknown network accepted")
 	}
 }

@@ -32,7 +32,8 @@ Flags go before the plugin:
 | Flag | |
 |------|-|
 | `--vm <uuid-or-name>` | baseline to use (default: the only one meeting the plugin's requirements) |
-| `--network <mode>` | `none`, `NAT`, or `Internet` (public addresses only, captured to a pcap); default: the workflow's `network`, else `none` |
+| `--network <mode>` | `none`, `nat`, `gateway`, or `gateway-public` (public addresses only); default: the workflow's `network`, else `none` |
+| `--pcap` | with a gateway network: save guest traffic to `network.pcap` in the job directory |
 | `--gui` | show the VM window |
 | `--show-output` | also print step output |
 

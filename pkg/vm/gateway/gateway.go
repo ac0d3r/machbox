@@ -1,6 +1,6 @@
 // Package gateway runs a user-mode network (gvisor-tap-vsock) on the host for
 // a VM attached through a file-handle network device. The guest gets DHCP,
-// DNS and outbound connections to public addresses only; see policy.
+// DNS and outbound connections; see policy for what it cannot reach.
 package gateway
 
 import (
@@ -51,9 +51,18 @@ type Gateway struct {
 	switchDone chan struct{}
 }
 
-// Start creates the gateway. capture, if not empty, receives every frame
-// the guest sends or receives as pcap, refused ones included.
-func Start(capture string) (g *Gateway, err error) {
+// Options configures a gateway.
+type Options struct {
+	// Capture, if not empty, receives every frame the guest sends or
+	// receives as pcap, refused ones included.
+	Capture string
+	// PublicOnly limits the guest to public addresses: no private or
+	// link-local networks and none of the host's addresses.
+	PublicOnly bool
+}
+
+// Start creates the gateway.
+func Start(opts Options) (g *Gateway, err error) {
 	g = &Gateway{}
 	defer func() {
 		if err != nil {
@@ -70,8 +79,8 @@ func Start(capture string) (g *Gateway, err error) {
 	}); err != nil {
 		return nil, fmt.Errorf("create virtual network: %w", err)
 	}
-	if capture != "" {
-		if g.pcap, err = newPcapWriter(capture); err != nil {
+	if opts.Capture != "" {
+		if g.pcap, err = newPcapWriter(opts.Capture); err != nil {
 			return nil, fmt.Errorf("create capture: %w", err)
 		}
 	}
@@ -96,7 +105,7 @@ func Start(capture string) (g *Gateway, err error) {
 		return nil, err
 	}
 
-	p := &policy{gateway: netip.MustParseAddr(gatewayIP)}
+	p := &policy{gateway: netip.MustParseAddr(gatewayIP), publicOnly: opts.PublicOnly}
 	ctx, cancel := context.WithCancel(context.Background())
 	g.stopSwitch, g.switchDone = cancel, make(chan struct{})
 	go func() {

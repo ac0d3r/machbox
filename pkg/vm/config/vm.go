@@ -14,12 +14,16 @@ const (
 	DefaultDisplayHeight        = int64(1200)
 	DefaultDisplayPixelsPerInch = int64(80)
 
-	NetworkNAT = "NAT"
-	// NetworkInternet reaches public addresses only, through a host gateway.
-	NetworkInternet = "Internet"
+	// NetworkNAT is vz NAT (vmnet): the system forwards the traffic.
+	NetworkNAT = "nat"
+	// NetworkGateway goes through machbox's user-mode gateway on the host,
+	// which can capture the traffic.
+	NetworkGateway = "gateway"
+	// NetworkGatewayPublic is NetworkGateway limited to public addresses.
+	NetworkGatewayPublic = "gateway-public"
 )
 
-var NetworkModes = []string{NetworkNAT, NetworkInternet}
+var NetworkModes = []string{NetworkNAT, NetworkGateway, NetworkGatewayPublic}
 
 // ParseNetwork returns the network for mode: "none" (or empty) or one of
 // NetworkModes, case-insensitively.
@@ -38,8 +42,13 @@ func ParseNetwork(mode string) (Network, error) {
 type Network struct {
 	Enable bool
 	Mode   string
-	// File is the VM end of a connected datagram socket (NetworkInternet).
+	// File is the VM end of a connected datagram socket (the gateway modes).
 	File *os.File
+}
+
+// Gateway reports whether n goes through the host gateway.
+func (n Network) Gateway() bool {
+	return n.Enable && (n.Mode == NetworkGateway || n.Mode == NetworkGatewayPublic)
 }
 
 type VMOptions struct {
@@ -313,9 +322,9 @@ func configureNetwork(
 		if attachment, err = vz.NewNATNetworkDeviceAttachment(); err != nil {
 			return fmt.Errorf("create NAT network device attachment: %w", err)
 		}
-	case NetworkInternet:
+	case NetworkGateway, NetworkGatewayPublic:
 		if cfg.File == nil {
-			return errors.New("internet network needs a socket")
+			return errors.New("gateway network needs a socket")
 		}
 		if attachment, err = vz.NewFileHandleNetworkDeviceAttachment(cfg.File); err != nil {
 			return fmt.Errorf("create file handle network device attachment: %w", err)

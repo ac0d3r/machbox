@@ -5,7 +5,7 @@ machbox runs macOS guests on Apple's `Virtualization.framework`. The core does f
 - **Baseline management**: import a VirtualBuddy VM once, keep it in machbox's own bundle format.
 - **Disposable runs**: every boot works on an APFS copy-on-write snapshot plus a read-only share, discarded afterwards.
 - **Guest agent**: an HTTP API inside the guest, reached over virtio-vsock, that runs host-issued tasks.
-- **Guest network**: none by default (a workflow may set its own); `--network Internet` gives public-only access through a host gateway that captures every frame.
+- **Guest network**: none by default (a workflow may set its own); `--network gateway` goes through a host gateway (`gateway-public`: public addresses only), which with `--pcap` saves every frame.
 
 ```mermaid
 flowchart LR
@@ -18,7 +18,7 @@ flowchart LR
             Snap["vm/<br>APFS snapshot"]
             Share["share/<br>read-only share"]
         end
-        Gateway["network gateway<br>(--network Internet)"]
+        Gateway["network gateway<br>(--network gateway*)"]
     end
 
     subgraph Guest["Guest VM (macOS, auto-login)"]
@@ -131,7 +131,7 @@ On the host, a job keeps only `~/.machbox/jobs/<id>/`:
 | `job.json` | plugin, inputs, baseline, guest info, status/error/timing of every step |
 | `logs/<step>.log` | step stdout and stderr |
 | `outputs/<output>` | each step's output, including partial output of a failed step |
-| `network.pcap` | with `--network Internet`: every guest frame, refused ones included, captured on the host |
+| `network.pcap` | with `--pcap`: every guest frame, refused ones included, captured on the host |
 
 Installed plugins ([usage](./plugins.md)) live in `~/.machbox/plugins/<owner>/<repo>/`: the repository, not the manifest `name`, identifies a plugin, so two plugins sharing a name never replace each other. `plugin install` takes a GitHub release's `.tar.gz` (`<repo>.tar.gz` if there are several) with `plugin.yml` at its root or in its only directory. It checks `<archive>.sha256` or GitHub's asset digest when present, accepts only regular files and directories, and records the tag in `.machbox-source.json`; `plugin update` reinstalls when the latest tag differs, swapping the directory in one rename. `GITHUB_TOKEN`, if set, authenticates the API requests.
 
@@ -146,20 +146,21 @@ The guest network is `machbox run --network`, else the workflow's default (`work
 | Mode | Guest network |
 |------|---------------|
 | `none` | no network device |
-| `NAT` | vz NAT: the guest reaches whatever the host can, its LAN included |
-| `Internet` | user-mode gateway on the host: public addresses only, every frame captured |
+| `nat` | vz NAT (vmnet): the guest reaches whatever the host can, its LAN included; the system forwards the traffic, so it cannot be captured |
+| `gateway` | user-mode gateway on the host: the guest reaches whatever the host can, its LAN included, except the host's loopback; `--pcap` saves every frame |
+| `gateway-public` | the same gateway, public addresses only; `--pcap` saves every frame |
 
-`Internet` (`pkg/vm/gateway`) attaches the guest to a gvisor-tap-vsock stack over a datagram socketpair (`VZFileHandleNetworkDeviceAttachment`); `Run.Boot` owns the gateway's lifetime. The stack's forwarders dial whatever address a packet is for, so a relay between the VM and the stack checks every guest frame first and drops those for:
+The gateway modes (`pkg/vm/gateway`) attach the guest to a gvisor-tap-vsock stack over a datagram socketpair (`VZFileHandleNetworkDeviceAttachment`); `Run.Boot` owns the gateway's lifetime. The stack's forwarders dial whatever address a packet is for, so a relay between the VM and the stack checks every guest frame first. Both modes drop frames for loopback, multicast, broadcast and `0.0.0.0/8` (which reaches the host's loopback on macOS). `gateway-public` also drops those for:
 
 - private addresses (10/8, 172.16/12, 192.168/16, fc00::/7), the guest subnet (192.168.127.0/24) included;
-- loopback, link-local (169.254/16, fe80::/10, cloud metadata included), multicast, broadcast and `0.0.0.0/8` (which reaches the host's loopback on macOS);
+- link-local (169.254/16, fe80::/10, cloud metadata included);
 - the host's own interface addresses, re-read every 5 s.
 
-On the gateway itself (192.168.127.1) the guest reaches only DHCP and DNS; DNS is resolved by the host's resolver, so internal names resolve but their addresses stay unreachable. IPv6 is not routed. Refused frames are dropped silently, so a refused connection times out in the guest rather than failing fast; each refused unicast destination is logged once (up to 64); multicast and broadcast, routine OS chatter, are only captured.
+On the gateway itself (192.168.127.1) the guest reaches only DHCP and DNS; DNS is resolved by the host's resolver, so with `gateway-public` internal names resolve but their addresses stay unreachable. IPv6 is not routed. Refused frames are dropped silently, so a refused connection times out in the guest rather than failing fast; each refused unicast destination is logged once (up to 64); multicast and broadcast, routine OS chatter, are dropped without a log.
 
-Every frame, refused ones included, goes to `network.pcap` in the job directory, written by the host, never pulled from the guest.
+With `--pcap`, every frame, refused ones included, goes to `network.pcap` in the job directory, written by the host, never pulled from the guest.
 
-`vm import` and `vm setup` always boot with `NAT`.
+`vm import` and `vm setup` always boot with `nat`.
 
 ## Packages
 
@@ -175,6 +176,6 @@ Every frame, refused ones included, goes to `network.pcap` in the job directory,
 | `internal/db` | SQLite baseline records |
 | `pkg/vm` | VM instance: start/stop, state, GUI, vsock connect |
 | `pkg/vm/config` | baseline bundle format, VirtualBuddy import, snapshot, `Virtualization.framework` configuration |
-| `pkg/vm/gateway` | `--network Internet`: gvisor-tap-vsock stack, egress policy, pcap capture |
+| `pkg/vm/gateway` | `--network gateway`, `gateway-public`: gvisor-tap-vsock stack, egress policy, pcap capture |
 | `pkg/vsock` | guest-side AF_VSOCK listener |
 | `guest-agent` | `machbox-guest` daemon and its `check`, `app/` Machbox Setup and its `install.sh` |

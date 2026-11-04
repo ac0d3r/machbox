@@ -70,6 +70,9 @@ func newRunCommand() *cobra.Command {
 			if opts.Boot.Network, err = config.ParseNetwork(network); err != nil {
 				return err
 			}
+			if opts.Capture && !opts.Boot.Network.Gateway() {
+				return fmt.Errorf("--pcap needs --network %s or %s", config.NetworkGateway, config.NetworkGatewayPublic)
+			}
 			if echo {
 				opts.Echo = cmd.ErrOrStderr()
 			}
@@ -88,6 +91,9 @@ func newRunCommand() *cobra.Command {
 		"baseline UUID or unique name (default: the only one meeting the plugin's requirements)")
 	cmd.Flags().StringVar(&network, "network", "",
 		fmt.Sprintf("guest network: none, %s (default: the workflow's network, else none)", strings.Join(config.NetworkModes, ", ")))
+	cmd.Flags().BoolVar(&opts.Capture, "pcap", false,
+		fmt.Sprintf("save guest traffic to network.pcap in the job directory (needs --network %s or %s)",
+			config.NetworkGateway, config.NetworkGatewayPublic))
 	cmd.Flags().BoolVar(&opts.Boot.GUI, "gui", false, "show the VM window")
 	cmd.Flags().BoolVar(&echo, "show-output", false, "also print step output (always kept in the job's logs)")
 	return cmd

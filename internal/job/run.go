@@ -31,6 +31,9 @@ type Options struct {
 	// Echo, if not nil, also receives every step's output, with control
 	// characters replaced; logs keep the raw bytes.
 	Echo io.Writer
+	// Capture writes guest traffic to network.pcap in the job directory;
+	// only the gateway networks support it.
+	Capture bool
 }
 
 // Run executes workflow wf with inputs in a fresh run of a baseline. The
@@ -64,7 +67,10 @@ func (j *Job) run(ctx context.Context, baseline *db.VM, opts Options) error {
 	if err := j.share(r.ShareCopy); err != nil {
 		return err
 	}
-	if opts.Boot.Network.Enable && opts.Boot.Network.Mode == config.NetworkInternet {
+	if opts.Capture {
+		if !opts.Boot.Network.Gateway() {
+			return fmt.Errorf("pcap needs --network %s or %s", config.NetworkGateway, config.NetworkGatewayPublic)
+		}
 		opts.Boot.Capture = filepath.Join(j.Dir, captureName)
 	}
 

@@ -20,7 +20,7 @@ import (
 // BootOptions configures a run's VM.
 type BootOptions struct {
 	Network config.Network
-	// Capture, if not empty, is where the Internet network writes its pcap.
+	// Capture, if not empty, is where a gateway network writes its pcap.
 	Capture string
 	// GUI shows the VM window. Boot must then be called on the main thread.
 	GUI bool
@@ -36,20 +36,12 @@ func (r *Run) Boot(ctx context.Context, opts BootOptions, fn GuestFunc) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	network := opts.Network
-	if network.Enable && network.Mode == config.NetworkInternet {
-		gw, err := gateway.Start(opts.Capture)
-		if err != nil {
-			return fmt.Errorf("start network gateway: %w", err)
-		}
-		// Boot only returns after the VM has stopped (or the stop timed out).
-		defer func() {
-			if err := gw.Close(); err != nil {
-				logrus.Warnf("close network gateway: %v", err)
-			}
-		}()
-		network.File = gw.VMFile()
+	network, stopNetwork, err := startNetwork(opts.Network, opts.Capture)
+	if err != nil {
+		return err
 	}
+	// Boot only returns after the VM has stopped (or the stop timed out).
+	defer stopNetwork()
 
 	vmcfg, err := r.VMConfig(config.VMOptions{
 		DisplayWidth:  config.DefaultDisplayWidth,
@@ -113,6 +105,28 @@ func (r *Run) Boot(ctx context.Context, opts BootOptions, fn GuestFunc) error {
 		return fmt.Errorf("VM stopped unexpectedly: %w", runErr)
 	}
 	return runErr
+}
+
+// startNetwork starts the host gateway when n needs one and returns the
+// network for the VM configuration. stop closes the gateway, flushing the
+// capture; call it once the VM has stopped.
+func startNetwork(n config.Network, capture string) (_ config.Network, stop func(), err error) {
+	if !n.Gateway() {
+		return n, func() {}, nil
+	}
+	gw, err := gateway.Start(gateway.Options{
+		Capture:    capture,
+		PublicOnly: n.Mode == config.NetworkGatewayPublic,
+	})
+	if err != nil {
+		return n, nil, fmt.Errorf("start network gateway: %w", err)
+	}
+	n.File = gw.VMFile()
+	return n, func() {
+		if err := gw.Close(); err != nil {
+			logrus.Warnf("close network gateway: %v", err)
+		}
+	}, nil
 }
 
 // agentDialer dials the guest agent with the flow control its listener uses.
