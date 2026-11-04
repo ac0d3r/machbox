@@ -2,6 +2,7 @@ package vm
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -82,6 +83,35 @@ func TestCloneBaselineRefusesLockedSource(t *testing.T) {
 	}
 	if err := cloneBaseline(src, dst); err != nil {
 		t.Errorf("after unlock: %v", err)
+	}
+}
+
+func TestBaselineLocks(t *testing.T) {
+	dir := writeBaseline(t)
+	r1, err := readLockBaseline(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2, err := readLockBaseline(dir)
+	if err != nil {
+		t.Fatalf("second shared lock: %v", err)
+	}
+	if _, err := lockBaseline(dir); !errors.Is(err, errBaselineInUse) {
+		t.Errorf("exclusive lock under shared ones: err = %v", err)
+	}
+	_ = r1.Close()
+	_ = r2.Close()
+
+	w, err := lockBaseline(dir)
+	if err != nil {
+		t.Fatalf("exclusive lock once released: %v", err)
+	}
+	if _, err := readLockBaseline(dir); !errors.Is(err, errBaselineInUse) {
+		t.Errorf("shared lock under an exclusive one: err = %v", err)
+	}
+	_ = w.Close()
+	if _, err := lockBaseline(filepath.Join(dir, "missing")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("missing baseline: err = %v", err)
 	}
 }
 

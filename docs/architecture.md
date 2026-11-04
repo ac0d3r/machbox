@@ -48,7 +48,9 @@ AuxiliaryStorage  HardwareModel  MachineIdentifier
 Disk.img          config.json    # {"version":1,"cpu_count":…,"memory_size":…}
 ```
 
-`vm duplicate` clones a baseline the same way, keeping its machine identity. `vm setup` holds an exclusive `flock` on the baseline directory, so it is never cloned or removed mid-write.
+`vm duplicate` clones a baseline the same way, keeping its machine identity.
+
+Commands coordinate through a `flock` on the baseline directory. `vm import` and `vm setup` hold it exclusively until the record is saved, and `vm remove` while it deletes; copying it (a run's snapshot, `vm duplicate`) holds it shared, only while copying. So copies go on together, but never of a baseline mid-write or mid-removal. Nothing waits: a command that finds a conflicting lock fails at once, since setup can take an hour.
 
 Booting never reads VirtualBuddy metadata again. Baselines imported by older versions (a whole `.vbvm` copy) are migrated in place on first load.
 

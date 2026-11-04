@@ -48,16 +48,11 @@ type setupResult struct {
 // agent runs with automatic login; it records the features of the last check
 // that was ready, so what the user sets up after that counts too. SIP may be
 // in either state; plugins that need it disabled say so in their requirements.
+// The caller holds the baseline's exclusive lock until it has saved the result.
 func setup(ctx context.Context, dir string, purpose setupPurpose) (*setupResult, error) {
 	// Main thread is pinned in main(); do not UnlockOSThread.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-
-	lock, err := lockBaseline(dir)
-	if err != nil {
-		return nil, err
-	}
-	defer lock.Close()
 
 	bundle, err := loadBundle(dir)
 	if err != nil {

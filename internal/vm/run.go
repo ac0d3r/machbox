@@ -51,6 +51,14 @@ type Run struct {
 func NewRun(baseline *db.VM) (r *Run, err error) {
 	SweepRuns()
 
+	// Only while the snapshot is taken: never of a baseline being set up,
+	// and never torn by one starting midway, file by file.
+	baseLock, err := readLockBaseline(assets.VMPath(baseline.UUID))
+	if err != nil {
+		return nil, fmt.Errorf("baseline %s: %w", baseline.Name, err)
+	}
+	defer baseLock.Close()
+
 	bundle, err := loadBundle(assets.VMPath(baseline.UUID))
 	if err != nil {
 		return nil, fmt.Errorf("load baseline %s: %w", baseline.UUID, err)

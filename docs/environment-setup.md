@@ -119,5 +119,5 @@ machbox vm setup <new-name>
 
 The copy is an APFS clone: it is instant and takes no extra space until the two
 diverge. It keeps the source's machine identity, which an installed macOS needs to
-boot, so do not run the source and the copy at the same time. A baseline cannot be
-duplicated while `machbox vm import` or `machbox vm setup` is using it.
+boot, so do not run the source and the copy at the same time. While `machbox vm
+setup` or `machbox vm remove` is using a baseline, it cannot be duplicated or run.

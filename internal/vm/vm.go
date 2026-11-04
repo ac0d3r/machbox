@@ -74,6 +74,13 @@ func Import(ctx context.Context, opts ImportOptions) (vm *db.VM, err error) {
 	if _, err = srcBundle.Import(dir); err != nil {
 		return nil, fmt.Errorf("import vm bundle: %w", err)
 	}
+	lock, err := lockBaseline(dir)
+	if err != nil {
+		return nil, err
+	}
+	// Held until the record exists. Nothing can look dir up before that,
+	// but setup expects its caller to hold the lock.
+	defer lock.Close()
 
 	res, err := setup(ctx, dir, purposeImport)
 	if err != nil {
@@ -113,6 +120,13 @@ func Reconfigure(ctx context.Context, identifier string) (*db.VM, error) {
 	if _, err := os.Stat(dir); err != nil {
 		return nil, fmt.Errorf("baseline files %s: %w", dir, err)
 	}
+	// Held until the record is saved: released any earlier, a vm remove could
+	// delete the baseline and the save would bring its record back.
+	lock, err := lockBaseline(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Close()
 
 	logrus.Infof("configuring baseline %s (%s)", vm.Name, vm.UUID)
 	res, err := setup(ctx, dir, purposeReconfigure)
@@ -181,9 +195,9 @@ func Duplicate(identifier, newName string) (*db.VM, error) {
 }
 
 // cloneBaseline clones the baseline at src to dst, which must not exist. It
-// holds src's lock: a baseline being configured is mid-write.
+// holds src's shared lock: a baseline being configured is mid-write.
 func cloneBaseline(src, dst string) (err error) {
-	lock, err := lockBaseline(src)
+	lock, err := readLockBaseline(src)
 	if err != nil {
 		return err
 	}
@@ -202,17 +216,36 @@ func cloneBaseline(src, dst string) (err error) {
 	return nil
 }
 
+// errBaselineInUse is returned when another machbox process holds a
+// conflicting lock on a baseline.
+var errBaselineInUse = errors.New("baseline is in use by another machbox command " +
+	"(vm import, setup, duplicate or remove, or a run being created); try again when it is done")
+
 // lockBaseline takes the exclusive lock of a baseline directory, held by
-// whatever writes to the baseline itself. Closing the file releases it.
+// whatever writes to the baseline or removes it: no other lock, shared or
+// exclusive, is granted meanwhile. Closing the file releases it.
 func lockBaseline(dir string) (*os.File, error) {
+	return flockBaseline(dir, unix.LOCK_EX)
+}
+
+// readLockBaseline takes a shared lock of a baseline directory, held while
+// copying it (a run's snapshot, a duplicate): copies go on
+// together, never while the baseline is written or removed.
+func readLockBaseline(dir string) (*os.File, error) {
+	return flockBaseline(dir, unix.LOCK_SH)
+}
+
+// flockBaseline locks dir without waiting: a conflicting holder is a
+// command that can take an hour (setup), so it fails at once instead.
+func flockBaseline(dir string, how int) (*os.File, error) {
 	f, err := os.Open(dir) // #nosec G304 -- a managed baseline directory
 	if err != nil {
 		return nil, fmt.Errorf("open baseline: %w", err)
 	}
-	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+	if err := unix.Flock(int(f.Fd()), how|unix.LOCK_NB); err != nil {
 		_ = f.Close()
 		if errors.Is(err, unix.EWOULDBLOCK) {
-			return nil, errors.New("baseline is in use by machbox vm import or setup")
+			return nil, errBaselineInUse
 		}
 		return nil, fmt.Errorf("lock baseline: %w", err)
 	}
