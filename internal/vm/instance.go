@@ -69,13 +69,12 @@ func (s InstanceShare) GuestPath() string {
 
 // InstanceMeta is instance.json.
 type InstanceMeta struct {
-	// Network is what the instance last started with, the default of the
-	// next start; empty is none. Shares are not kept: each start grants
-	// them anew, so a read-write share never outlives the command that
-	// asked for it.
-	Network   string    `json:"network,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	StartedAt time.Time `json:"started_at,omitzero"`
+	// Network and Shares are what the instance last started with, the
+	// defaults of the next start; an empty Network is none.
+	Network   string          `json:"network,omitempty"`
+	Shares    []InstanceShare `json:"shares,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
+	StartedAt time.Time       `json:"started_at,omitzero"`
 }
 
 // Instance is an instance directory.
@@ -291,7 +290,7 @@ type StartOptions struct {
 // Start boots the instance in place and returns once it has stopped: when
 // the guest shuts itself down, the window is closed, or ctx is cancelled,
 // which shuts the guest down cleanly. The host does not idle-sleep
-// meanwhile. opts' network becomes the instance's default.
+// meanwhile. opts' network and shares become the instance's defaults.
 func (in *Instance) Start(ctx context.Context, opts StartOptions) error {
 	lock, err := in.lock()
 	if err != nil {
@@ -341,6 +340,7 @@ func (in *Instance) Start(ctx context.Context, opts StartOptions) error {
 		}
 	}
 	in.Meta.Network = networkName(opts.Network)
+	in.Meta.Shares = opts.Shares
 	in.Meta.StartedAt = time.Now()
 	if err := writeJSON(filepath.Join(in.Dir, instanceMetaName), &in.Meta); err != nil {
 		logrus.Warnf("save instance %s: %v", in.Name, err)

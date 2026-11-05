@@ -76,12 +76,12 @@ An instance (`internal/vm.Instance`) is a persistent clone of a baseline for int
 | Path (`~/.machbox/vms/<uuid>/instances/<name>/`) | Purpose |
 |------|---------|
 | `Disk.img`, `config.json`, … | the bundle, APFS-cloned from the baseline when created, then booted in place |
-| `instance.json` | network mode of the last start (the next start's default), creation and last start time |
+| `instance.json` | network mode and shares of the last start (the next start's defaults), creation and last start time |
 | `.lock` | exclusive `flock` held while the instance runs or is removed |
 
 `machbox start <name> --vm <baseline>` clones under a hidden `.new-*` name, holding the baseline's lock, and renames it into place; `machbox start <name>` boots an existing one. Names are unique across baselines. Clones copy only the bundle files, so neither `vm duplicate` nor a new instance picks up another baseline's instances, and `vm setup` changes only the baseline.
 
-Shares are host directories at `/Volumes/My Shared Files/<name>` in the guest: one virtiofs device with the macOS automount tag and a multiple-directory share, read-write unless `--share-ro`, and given anew on every start, never saved. An instance does not need its agent. It runs until the guest shuts down, its window is closed or the process gets SIGINT, SIGTERM or SIGHUP; the guest is then shut down through the agent (`shutdown -h now`), or the power button without one, and forced off after two minutes or on a second signal. `caffeinate -i -w <pid>` keeps the host from idle-sleeping meanwhile. The instance keeps the baseline's machine identity, as runs do.
+Shares are host directories at `/Volumes/My Shared Files/<name>` in the guest: one virtiofs device with the macOS automount tag and a multiple-directory share, read-write unless `--share-ro`. An instance does not need its agent. It runs until the guest shuts down, its window is closed or the process gets SIGINT, SIGTERM or SIGHUP; the guest is then shut down through the agent (`shutdown -h now`), or the power button without one, and forced off after two minutes or on a second signal. `caffeinate -i -w <pid>` keeps the host from idle-sleeping meanwhile. The instance keeps the baseline's machine identity, as runs do.
 
 `machbox run` picks baselines from the database only, so an instance and whatever is signed in to in it never run a plugin's samples. `vm remove` lists a baseline's instances and asks before removing them with it; it refuses while one is running.
 

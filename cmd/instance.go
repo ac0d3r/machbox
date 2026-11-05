@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -78,7 +79,7 @@ func printInstances(out io.Writer, ins []vm.Instance) error {
 		}
 	}
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tBASELINE\tNETWORK\tSTATE\tCREATED\tSTARTED")
+	fmt.Fprintln(w, "NAME\tBASELINE\tNETWORK\tSHARES\tSTATE\tCREATED\tSTARTED")
 	for i := range ins {
 		in := &ins[i]
 		baseline := names[in.BaselineUUID]
@@ -89,8 +90,15 @@ func printInstances(out io.Writer, ins []vm.Instance) error {
 		if in.Running() {
 			state = "running"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", in.Name, baseline, orDash(in.Meta.Network),
-			state, formatTime(in.Meta.CreatedAt), formatTime(in.Meta.StartedAt))
+		shares := make([]string, len(in.Meta.Shares))
+		for j, s := range in.Meta.Shares {
+			shares[j] = s.Path
+			if s.ReadOnly {
+				shares[j] += " (ro)"
+			}
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", in.Name, baseline, orDash(in.Meta.Network),
+			orDash(strings.Join(shares, ", ")), state, formatTime(in.Meta.CreatedAt), formatTime(in.Meta.StartedAt))
 	}
 	return w.Flush()
 }

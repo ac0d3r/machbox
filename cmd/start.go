@@ -23,6 +23,7 @@ func newStartCommand() *cobra.Command {
 		network  string
 		shareRW  []string
 		shareRO  []string
+		noShare  bool
 		opts     vm.StartOptions
 	)
 	cmd := &cobra.Command{
@@ -33,12 +34,12 @@ func newStartCommand() *cobra.Command {
 			"Runs until the guest shuts down, the window is closed, or Ctrl-C, which shuts the guest down cleanly; " +
 			"the host does not idle-sleep meanwhile.\n\n" +
 			"Shared directories appear in the guest under " + vm.SharedFolder + "/<name>. " +
-			"--network is saved: the next start without it uses the same. Shares are not: " +
-			"each start shares only the directories it names.\n\n" +
+			"--network and the share flags are saved: the next start without them uses the same; " +
+			"share flags replace the saved shares, --no-share removes them.\n\n" +
 			"machbox run never uses instances, so what is signed in to in one stays out of plugin runs. " +
 			"Removing the baseline removes its instances.",
 		Example: "  machbox start cc --vm sonoma --network gateway-public --share ~/src/foo   # create and start\n" +
-			"  machbox start cc --gui                                                     # start again, with the window, no shares",
+			"  machbox start cc --gui                                                     # start again, same network and shares, with the window",
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		RunE: withVMDB(func(cmd *cobra.Command, args []string) error {
@@ -47,6 +48,9 @@ func newStartCommand() *cobra.Command {
 			var err error
 			if opts.Network, err = config.ParseNetwork(network); err != nil {
 				return err
+			}
+			if noShare && len(shareRW)+len(shareRO) > 0 {
+				return errors.New("--no-share cannot be combined with --share or --share-ro")
 			}
 			if opts.Shares, err = parseShares(shareRW, shareRO); err != nil {
 				return err
@@ -69,6 +73,12 @@ func newStartCommand() *cobra.Command {
 			if !cmd.Flags().Changed("network") {
 				if opts.Network, err = config.ParseNetwork(in.Meta.Network); err != nil {
 					return err
+				}
+			}
+			if !noShare && len(opts.Shares) == 0 && len(in.Meta.Shares) > 0 {
+				opts.Shares = in.Meta.Shares
+				if err := vm.CheckShares(opts.Shares); err != nil {
+					return fmt.Errorf("saved shares of %s: %w; change them with --share or --no-share", in.Name, err)
 				}
 			}
 
@@ -99,9 +109,10 @@ func newStartCommand() *cobra.Command {
 		fmt.Sprintf("guest network: none, %s (default: the instance's last, else none)",
 			strings.Join(config.NetworkModes, ", ")))
 	cmd.Flags().StringArrayVar(&shareRW, "share", nil,
-		"share a host directory read-write for this start, repeatable")
+		"share a host directory read-write, repeatable; replaces the saved shares")
 	cmd.Flags().StringArrayVar(&shareRO, "share-ro", nil,
-		"share a host directory read-only for this start, repeatable")
+		"share a host directory read-only, repeatable; replaces the saved shares")
+	cmd.Flags().BoolVar(&noShare, "no-share", false, "start without shares, and forget the saved ones")
 	cmd.Flags().BoolVar(&opts.GUI, "gui", false, "show the VM window")
 	return cmd
 }

@@ -8,22 +8,22 @@ must persist in the guest, such as a tool you sign in to once.
 
 ```bash
 machbox start cc --vm <baseline> --network gateway-public --share ~/sandbox/foo   # first time: clone the baseline into "cc", then boot it
-machbox start cc --gui                                                           # later: boot "cc" again, with the window and no shares
+machbox start cc --gui                                                           # later: boot "cc" again, same network and shares, with the window
 ```
 
 | Flag | |
 |------|-|
 | `--vm <uuid-or-name>` | baseline to create the instance from; only when the instance does not exist yet |
 | `--network <mode>` | `none`, `nat`, `gateway` or `gateway-public`; default: the instance's last, else `none` |
-| `--share <dir>` | share a host directory read-write for this start; repeatable |
-| `--share-ro <dir>` | share a host directory read-only for this start; repeatable |
+| `--share <dir>` | share a host directory read-write; repeatable |
+| `--share-ro <dir>` | share a host directory read-only; repeatable |
+| `--no-share` | start without shares, and forget the saved ones |
 | `--gui` | show the VM window |
 
 The clone is instant and takes no extra space until it diverges from the baseline.
-`--network` is saved: a start without it uses what the instance last started with.
-Shares are not: each start shares only the directories named on its command line, so
-access to a host directory never carries over to a later start. Instance names are
-unique across baselines.
+`--network` and the share flags are saved in the instance: a start without them uses
+what it last started with. Share flags replace the saved shares as a whole, and
+`--no-share` removes them. Instance names are unique across baselines.
 
 `machbox start` stays in the foreground until the guest shuts down, the window is
 closed, or you press Ctrl-C or close the terminal, which shuts the guest down cleanly through its agent
@@ -48,7 +48,7 @@ from it and a review of the diff.
 ## Manage Instances
 
 ```bash
-machbox instance list          # name, baseline, network, running or stopped
+machbox instance list          # name, baseline, network, shares, running or stopped
 machbox instance remove cc     # delete a stopped instance and its disk, after asking (-y: don't ask)
 ```
 
