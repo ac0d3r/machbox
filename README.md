@@ -1,6 +1,6 @@
 # Machbox
 
-**Machbox** — a tool that runs automated workflows in disposable macOS VMs, for analysis and research.
+**Machbox** — disposable and persistent macOS VMs for analysis and research.
 
 ## System Requirements
 
