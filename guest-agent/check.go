@@ -89,6 +89,7 @@ func passwordMatches(user, password string) (bool, error) {
 	if user == "" || user != filepath.Base(user) || strings.HasPrefix(user, ".") {
 		return false, fmt.Errorf("invalid user name %q", user)
 	}
+	// #nosec G304 -- user is a single path element, checked above, in a root-only directory
 	data, err := os.ReadFile(filepath.Join(localUsersDir, user+".plist"))
 	if err != nil {
 		return false, err
