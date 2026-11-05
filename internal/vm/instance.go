@@ -170,7 +170,16 @@ func CreateInstance(baseline *db.VM, name string, network config.Network) (*Inst
 		return nil, err
 	}
 
-	in, err := createInstanceAt(assets.VMPath(baseline.UUID), baseline.UUID, name, networkName(network))
+	in, err := createInstanceAt(assets.VMPath(baseline.UUID), baseline.UUID, name, networkName(network), func() error {
+		// Again, now that nothing else can take the name: another baseline
+		// may have got an instance called name while this one was cloned.
+		if _, err := FindInstance(name); err == nil {
+			return fmt.Errorf("an instance named %q already exists", name)
+		} else if !errors.Is(err, ErrInstanceNotFound) {
+			return err
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -179,8 +188,10 @@ func CreateInstance(baseline *db.VM, name string, network config.Network) (*Inst
 }
 
 // createInstanceAt clones the baseline at baselineDir into its instance
-// called name.
-func createInstanceAt(baselineDir, baselineUUID, name, network string) (*Instance, error) {
+// called name. nameFree, if not nil, is checked right before the instance
+// appears, under a lock every create takes there, so two creates cannot
+// both find a name free.
+func createInstanceAt(baselineDir, baselineUUID, name, network string, nameFree func() error) (*Instance, error) {
 	// Through the rename: vm remove must not delete the baseline in between.
 	lock, err := readLockBaseline(baselineDir)
 	if err != nil {
@@ -206,7 +217,7 @@ func createInstanceAt(baselineDir, baselineUUID, name, network string) (*Instanc
 	}
 	err = writeJSON(filepath.Join(tmp, instanceMetaName), &in.Meta)
 	if err == nil {
-		err = os.Rename(tmp, in.Dir)
+		err = publishInstance(filepath.Dir(baselineDir), tmp, in.Dir, nameFree)
 	}
 	if err != nil {
 		if rmErr := os.RemoveAll(tmp); rmErr != nil {
@@ -215,6 +226,26 @@ func createInstanceAt(baselineDir, baselineUUID, name, network string) (*Instanc
 		return nil, fmt.Errorf("create instance %s: %w", name, err)
 	}
 	return in, nil
+}
+
+// publishInstance renames the clone tmp into place at dir once nameFree
+// passes, both under the exclusive lock of vmsDir. The lock is only held for
+// that, so it is waited for.
+func publishInstance(vmsDir, tmp, dir string, nameFree func() error) error {
+	f, err := os.Open(vmsDir) // #nosec G304 -- the managed baselines directory
+	if err != nil {
+		return fmt.Errorf("open baselines directory: %w", err)
+	}
+	defer f.Close()
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
+		return fmt.Errorf("lock baselines directory: %w", err)
+	}
+	if nameFree != nil {
+		if err := nameFree(); err != nil {
+			return err
+		}
+	}
+	return os.Rename(tmp, dir)
 }
 
 func (in *Instance) loadMeta() error {
@@ -252,7 +283,16 @@ func (in *Instance) lock() (*os.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open instance lock: %w", err)
 	}
-	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+	// Running holds a shared lock for a moment: a few tries tell it from a
+	// running instance, which holds the lock for good.
+	for try := 0; ; try++ {
+		err = unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		if !errors.Is(err, unix.EWOULDBLOCK) || try == lockTries-1 {
+			break
+		}
+		time.Sleep(lockRetryInterval)
+	}
+	if err != nil {
 		_ = f.Close()
 		if errors.Is(err, unix.EWOULDBLOCK) {
 			return nil, fmt.Errorf("instance %s is running", in.Name)
@@ -261,6 +301,11 @@ func (in *Instance) lock() (*os.File, error) {
 	}
 	return f, nil
 }
+
+const (
+	lockTries         = 5
+	lockRetryInterval = 20 * time.Millisecond
+)
 
 // RemoveInstance deletes a stopped instance.
 func RemoveInstance(in *Instance) error {

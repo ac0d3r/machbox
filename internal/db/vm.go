@@ -1,13 +1,17 @@
 package db
 
 import (
+	"errors"
 	"slices"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 type VM struct {
 	UUID string `gorm:"primaryKey;type:text" json:"uuid"`
-	Name string `gorm:"index;type:text" json:"name"`
+	// Name is unique: baselines are looked up by name.
+	Name string `gorm:"uniqueIndex:idx_vms_name;type:text" json:"name"`
 
 	OSName    string `json:"os_name"`
 	OSVersion string `json:"os_version"`
@@ -30,11 +34,20 @@ func (VM) TableName() string { return "vms" }
 func (vm *VM) HasFeature(f string) bool { return slices.Contains(vm.Features, f) }
 
 func SaveVM(vm *VM) error {
-	return _db.Save(vm).Error
+	return nameTaken(_db.Save(vm).Error)
 }
 
 func CreateVM(vm *VM) error {
-	return _db.Create(vm).Error
+	return nameTaken(_db.Create(vm).Error)
+}
+
+// nameTaken turns a unique-constraint error, which only the name can raise
+// (UUIDs are random), into ErrNameTaken.
+func nameTaken(err error) error {
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return ErrNameTaken
+	}
+	return err
 }
 
 func DeleteVM(uuid string) error {

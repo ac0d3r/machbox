@@ -20,6 +20,9 @@ const (
 var (
 	broadcast   = netip.AddrFrom4([4]byte{255, 255, 255, 255})
 	thisNetwork = netip.MustParsePrefix("0.0.0.0/8") // 0.0.0.0 reaches the host's loopback
+	// sharedAddressSpace is carrier-grade NAT (RFC 6598), and where
+	// Tailscale and similar overlays number their peers: not public.
+	sharedAddressSpace = netip.MustParsePrefix("100.64.0.0/10")
 )
 
 // policy decides which guest frames reach the gateway's stack. The stack's
@@ -27,7 +30,7 @@ var (
 // connection never made.
 type policy struct {
 	gateway netip.Addr
-	// publicOnly also refuses private and link-local networks.
+	// publicOnly also refuses private, link-local and shared networks.
 	publicOnly bool
 	// interfaceAddrs lists the host's addresses; net.InterfaceAddrs if nil.
 	interfaceAddrs func() ([]net.Addr, error)
@@ -82,14 +85,14 @@ func (p *policy) allowIPv4(pkt []byte) (bool, netip.Addr) {
 // blocked reports whether the guest must not reach ip. The host itself is
 // never reachable: the gateway dials from the host, so a connection to one
 // of its own addresses goes over loopback, past its firewall. Multicast and
-// broadcast are not forwarded. publicOnly adds private and link-local
-// networks.
+// broadcast are not forwarded. publicOnly adds private, link-local and
+// shared (CGNAT, overlay VPN) networks.
 func (p *policy) blocked(ip netip.Addr) bool {
 	ip = ip.Unmap()
 	if ip.IsLoopback() || ip.IsMulticast() || ip.IsUnspecified() || thisNetwork.Contains(ip) || ip == broadcast {
 		return true
 	}
-	if p.publicOnly && (ip.IsPrivate() || ip.IsLinkLocalUnicast()) {
+	if p.publicOnly && (ip.IsPrivate() || ip.IsLinkLocalUnicast() || sharedAddressSpace.Contains(ip)) {
 		return true
 	}
 	return p.isHostAddr(ip)
