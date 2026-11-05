@@ -247,9 +247,13 @@ func LogGuest(info GuestInfo, features []string) {
 	if f == "" {
 		f = "-"
 	}
-	logrus.Infof("guest ready: %s %s (%s), host %q, agent %s as %s, features: %s",
+	ip := ""
+	if len(info.IPs) > 0 {
+		ip = ", ip " + strings.Join(info.IPs, ",")
+	}
+	logrus.Infof("guest ready: %s %s (%s), host %q, agent %s as %s%s, features: %s",
 		info.OSName, info.OSVersion, info.BuildVersion,
-		info.Hostname, info.AgentVersion, info.Username, f)
+		info.Hostname, info.AgentVersion, info.Username, ip, f)
 	if info.Username != "root" {
 		logrus.Warnf("guest agent running as non-root user: %s", info.Username)
 	}

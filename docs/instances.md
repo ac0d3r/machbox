@@ -28,7 +28,9 @@ unique across baselines.
 `machbox start` stays in the foreground until the guest shuts down, the window is
 closed, or you press Ctrl-C or close the terminal, which shuts the guest down cleanly through its agent
 (forced off after two minutes); a second Ctrl-C forces it off at once. The host
-does not idle-sleep meanwhile. To keep an instance running after
+does not idle-sleep meanwhile. With a network, the `guest ready` line shows the
+guest's IP address; with `nat` the host can reach it, e.g. with `ssh` once Remote Login
+is on in the guest. To keep an instance running after
 you log out of the terminal, start it in `tmux` or `screen`.
 
 ## Shared Directories

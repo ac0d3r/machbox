@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -47,6 +49,7 @@ func run() int {
 		Info: func() (agent.GuestInfo, error) {
 			live := info
 			live.ConsoleUser = consoleUser()
+			live.IPs = interfaceIPs()
 			return live, nil
 		},
 		MountShare: mountVirtioFS,
@@ -109,6 +112,40 @@ func consoleUser() string {
 		return ""
 	}
 	return u.Username
+}
+
+// interfaceIPs returns the IPv4 addresses of the interfaces that are up.
+func interfaceIPs() []string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var addrs []net.Addr
+	for _, ifc := range ifaces {
+		if ifc.Flags&net.FlagUp == 0 {
+			continue
+		}
+		if a, err := ifc.Addrs(); err == nil {
+			addrs = append(addrs, a...)
+		}
+	}
+	return reachableIPv4(addrs)
+}
+
+// reachableIPv4 keeps the IPv4 addresses another host could reach.
+func reachableIPv4(addrs []net.Addr) []string {
+	var out []string
+	for _, a := range addrs {
+		p, err := netip.ParsePrefix(a.String())
+		if err != nil {
+			continue
+		}
+		ip := p.Addr().Unmap()
+		if ip.Is4() && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() {
+			out = append(out, ip.String())
+		}
+	}
+	return out
 }
 
 func sipDisabled(csrutilStatus string) bool {

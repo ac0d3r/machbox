@@ -33,6 +33,10 @@ type GuestInfo struct {
 	// ConsoleUser is the user logged in at the console once their desktop
 	// (Finder) is up; empty at the login window. Read on every request.
 	ConsoleUser string `json:"console_user,omitempty"`
+	// IPs are the guest's IPv4 addresses, loopback and link-local left
+	// out; none without a network. Read on every request: DHCP may finish
+	// after the agent starts. Older agents do not report them.
+	IPs []string `json:"ips,omitempty"`
 }
 
 // WorkDir tells the guest where to store files and run tasks.

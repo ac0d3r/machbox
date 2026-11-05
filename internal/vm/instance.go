@@ -362,8 +362,12 @@ func (in *Instance) Start(ctx context.Context, opts StartOptions) error {
 			}
 			return
 		}
+		client.Store(c)
 		if err := agent.CompatibleAgent(info.AgentVersion); err != nil {
 			logrus.Warnf("%v; the instance keeps running", err)
+		}
+		if opts.Network.Enable {
+			info = waitForIP(waitCtx, c, info)
 		}
 		// An instance drifts from its baseline: check what it has now.
 		features := agent.WithSIP(nil, info.SIPDisabled)
@@ -373,7 +377,6 @@ func (in *Instance) Start(ctx context.Context, opts StartOptions) error {
 			logrus.Debugf("guest check: %v", err)
 		}
 		agent.LogGuest(info, features)
-		client.Store(c)
 		logrus.Infof("instance %s is up; press Ctrl-C to shut it down", in.Name)
 	}()
 
@@ -412,6 +415,30 @@ func (in *Instance) Start(ctx context.Context, opts StartOptions) error {
 		return fmt.Errorf("show graphic: %w", graphicErr)
 	}
 	return nil
+}
+
+// ipTimeout is how long a networked guest gets to obtain an address once
+// its agent is up.
+const ipTimeout = 30 * time.Second
+
+// waitForIP returns the guest's info once it reports an address, or the
+// last info after ipTimeout: DHCP may finish after the agent starts.
+func waitForIP(ctx context.Context, c *agent.Client, info agent.GuestInfo) agent.GuestInfo {
+	deadline := time.After(ipTimeout)
+	for len(info.IPs) == 0 {
+		select {
+		case <-ctx.Done():
+			return info
+		case <-deadline:
+			logrus.Warnf("guest reported no IP address within %s (or its agent predates IP reporting)", ipTimeout)
+			return info
+		case <-time.After(time.Second):
+		}
+		if next, err := c.Info(ctx); err == nil {
+			info = next
+		}
+	}
+	return info
 }
 
 // shutdownGuest shuts the guest down through its agent, or the power button
