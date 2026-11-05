@@ -1,15 +1,22 @@
 package main
 
 import (
+	"crypto/pbkdf2"
+	"crypto/sha512"
+	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/ac0d3r/machbox/internal/agent"
+
+	"howett.net/plist"
 )
 
 // runCheck prints what is in place in this guest as an agent.CheckReport.
@@ -58,11 +65,68 @@ func autoLoginUser() string {
 	if err != nil {
 		return ""
 	}
-	// #nosec G204 -- dscl takes the password only as an argument.
-	if exec.Command("/usr/bin/dscl", "/Search", "-authonly", name, decodeKCPassword(data)).Run() != nil {
+	// Compared in process: a password on a command line (dscl -authonly)
+	// is visible to every process in the guest.
+	ok, err := passwordMatches(name, decodeKCPassword(data))
+	if err != nil {
+		// A user not in the local node, or a record without a PBKDF2 hash:
+		// the setting and kcpassword are all there is to go by.
+		fmt.Fprintf(os.Stderr, "check automatic login password: %v\n", err)
+		return name
+	}
+	if !ok {
 		return ""
 	}
 	return name
+}
+
+// localUsersDir holds the local node's user records, readable by root only.
+const localUsersDir = "/var/db/dslocal/nodes/Default/users"
+
+// passwordMatches reports whether password is user's, checked against the
+// SALTED-SHA512-PBKDF2 hash in their local record.
+func passwordMatches(user, password string) (bool, error) {
+	if user == "" || user != filepath.Base(user) || strings.HasPrefix(user, ".") {
+		return false, fmt.Errorf("invalid user name %q", user)
+	}
+	data, err := os.ReadFile(filepath.Join(localUsersDir, user+".plist"))
+	if err != nil {
+		return false, err
+	}
+	return shadowHashMatches(data, password)
+}
+
+// shadowHashMatches checks password against a user record (a plist whose
+// ShadowHashData holds a plist of hashes).
+func shadowHashMatches(record []byte, password string) (bool, error) {
+	var rec struct {
+		ShadowHashData [][]byte `plist:"ShadowHashData"`
+	}
+	if _, err := plist.Unmarshal(record, &rec); err != nil {
+		return false, fmt.Errorf("user record: %w", err)
+	}
+	if len(rec.ShadowHashData) == 0 {
+		return false, errors.New("user record has no ShadowHashData")
+	}
+	var hashes struct {
+		PBKDF2 *struct {
+			Entropy    []byte `plist:"entropy"`
+			Iterations int    `plist:"iterations"`
+			Salt       []byte `plist:"salt"`
+		} `plist:"SALTED-SHA512-PBKDF2"`
+	}
+	if _, err := plist.Unmarshal(rec.ShadowHashData[0], &hashes); err != nil {
+		return false, fmt.Errorf("ShadowHashData: %w", err)
+	}
+	h := hashes.PBKDF2
+	if h == nil || len(h.Entropy) == 0 || len(h.Salt) == 0 || h.Iterations <= 0 {
+		return false, errors.New("no SALTED-SHA512-PBKDF2 hash")
+	}
+	key, err := pbkdf2.Key(sha512.New, password, h.Salt, h.Iterations, len(h.Entropy))
+	if err != nil {
+		return false, err
+	}
+	return subtle.ConstantTimeCompare(key, h.Entropy) == 1, nil
 }
 
 const kcpasswordPath = "/etc/kcpassword"
