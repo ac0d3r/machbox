@@ -174,7 +174,8 @@ The guest network is `machbox run --network`, else the workflow's default (`work
 The gateway modes (`pkg/vm/gateway`) attach the guest to a gvisor-tap-vsock stack over a datagram socketpair (`VZFileHandleNetworkDeviceAttachment`); `Run.Boot` owns the gateway's lifetime. The stack's forwarders dial whatever address a packet is for, so a relay between the VM and the stack checks every guest frame first. Both modes drop frames for loopback, multicast, broadcast, `0.0.0.0/8` (which reaches the host's loopback on macOS) and the host's own interface addresses, re-read every 5 s: the gateway dials from the host, so a connection to one of them would go over loopback, past the host's firewall. `gateway-public` also drops those for:
 
 - private addresses (10/8, 172.16/12, 192.168/16, fc00::/7), the guest subnet (192.168.127.0/24) included;
-- link-local (169.254/16, fe80::/10, cloud metadata included).
+- link-local (169.254/16, fe80::/10, cloud metadata included);
+- shared address space (100.64/10): carrier-grade NAT, and the peers of Tailscale and similar overlay VPNs.
 
 On the gateway itself (192.168.127.1) the guest reaches only DHCP and DNS; DNS is resolved by the host's resolver, so with `gateway-public` internal names resolve but their addresses stay unreachable. IPv6 is not routed. Refused frames are dropped silently, so a refused connection times out in the guest rather than failing fast; each refused unicast destination is logged once (up to 64); multicast and broadcast, routine OS chatter, are dropped without a log.
 

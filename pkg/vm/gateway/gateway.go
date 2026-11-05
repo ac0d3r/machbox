@@ -56,8 +56,8 @@ type Options struct {
 	// Capture, if not empty, receives every frame the guest sends or
 	// receives as pcap, refused ones included.
 	Capture string
-	// PublicOnly limits the guest to public addresses: no private or
-	// link-local networks. The host's own addresses are refused either way.
+	// PublicOnly limits the guest to public addresses: no private,
+	// link-local or shared (CGNAT, overlay VPN) networks. The host's own addresses are refused either way.
 	PublicOnly bool
 }
 
