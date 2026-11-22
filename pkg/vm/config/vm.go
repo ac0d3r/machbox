@@ -1,8 +1,10 @@
 package config
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 
@@ -368,11 +370,30 @@ func configureNetwork(
 		if err != nil {
 			return fmt.Errorf("create virtio network device configuration: %w", err)
 		}
+		mac, err := appleMACAddress()
+		if err != nil {
+			return err
+		}
+		dev.SetMACAddress(mac)
 		devices = append(devices, dev)
 	}
 
 	vmcfg.SetNetworkDevicesVirtualMachineConfiguration(devices)
 	return nil
+}
+
+// appleMACAddress returns a random address under an Apple OUI: vz's default
+// locally administered one gives the VM away.
+func appleMACAddress() (*vz.MACAddress, error) {
+	addr := net.HardwareAddr{0x3c, 0x22, 0xfb, 0, 0, 0}
+	if _, err := rand.Read(addr[3:]); err != nil {
+		return nil, fmt.Errorf("generate MAC address: %w", err)
+	}
+	mac, err := vz.NewMACAddress(addr)
+	if err != nil {
+		return nil, fmt.Errorf("create MAC address: %w", err)
+	}
+	return mac, nil
 }
 
 func normalizeDisks(

@@ -22,7 +22,7 @@ func NewRootCommand(version string) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:           "machbox",
-		Short:         "Disposable and persistent macOS VMs for analysis and research",
+		Short:         "Automated macOS VM workflows for analysis and research",
 		Version:       version,
 		SilenceErrors: true,
 		CompletionOptions: cobra.CompletionOptions{
