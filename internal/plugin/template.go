@@ -18,10 +18,12 @@ var exprRe = regexp.MustCompile(`\$\{\{\s*([^{}]*?)\s*\}\}`)
 //	${{ inputs.<name> }}       input value (file inputs: relative path)
 //	${{ output }}              this step's output
 //	${{ steps.<id>.output }}   an earlier step's output
+//	${{ steps.<id>.status }}   an earlier step's status (job.Status)
 //	${{ plugin_dir }}          read-only plugin directory
 type Vars struct {
 	Inputs    map[string]string
 	Outputs   map[string]string // step id → output, for steps that declare one
+	Statuses  map[string]string // step id → status, for steps already done
 	PluginDir string
 }
 
@@ -77,6 +79,12 @@ func (v Vars) resolve(st *Step, ref string) (string, error) {
 		val, ok := v.Outputs[parts[1]]
 		if !ok {
 			return "", fmt.Errorf("%s: no earlier step %q with an output", ref, parts[1])
+		}
+		return val, nil
+	case len(parts) == 3 && parts[0] == "steps" && parts[2] == "status":
+		val, ok := v.Statuses[parts[1]]
+		if !ok {
+			return "", fmt.Errorf("%s: no earlier step %q", ref, parts[1])
 		}
 		return val, nil
 	}

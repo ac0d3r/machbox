@@ -304,11 +304,12 @@ func (st *Step) validate(wf *Workflow, earlier map[string]*Step) error {
 	}
 
 	// Expanding against placeholder values checks every reference.
-	vars := Vars{Inputs: map[string]string{}, Outputs: map[string]string{}}
+	vars := Vars{Inputs: map[string]string{}, Outputs: map[string]string{}, Statuses: map[string]string{}}
 	for _, in := range wf.Inputs {
 		vars.Inputs[in.Name] = ""
 	}
 	for id, prev := range earlier {
+		vars.Statuses[id] = ""
 		if prev.Output != "" {
 			vars.Outputs[id] = prev.Output
 		}

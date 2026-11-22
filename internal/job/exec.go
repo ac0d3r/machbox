@@ -81,6 +81,7 @@ func (j *Job) execute(ctx context.Context, g Guest, wd agent.WorkDir, echo io.Wr
 	vars := plugin.Vars{
 		Inputs:    map[string]string{},
 		Outputs:   map[string]string{},
+		Statuses:  map[string]string{},
 		PluginDir: path.Join(wd.SharePath, sharePlugin),
 	}
 	for _, in := range j.workflow.Inputs {
@@ -109,11 +110,13 @@ func (j *Job) execute(ctx context.Context, g Guest, wd agent.WorkDir, echo io.Wr
 		rec := j.Steps[i]
 		if !st.When.Runs(firstErr != nil) {
 			rec.Status = StatusSkipped
+			vars.Statuses[st.ID] = string(rec.Status)
 			j.trySave()
 			logrus.Infof("step %s: skipped", st.ID)
 			continue
 		}
 		err := j.runStep(ctx, g, wd, st, rec, vars, echo)
+		vars.Statuses[st.ID] = string(rec.Status)
 		if err != nil && !st.ContinueOnError && firstErr == nil {
 			firstErr = fmt.Errorf("step %s: %w", st.ID, err)
 		}

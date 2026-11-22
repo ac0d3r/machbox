@@ -49,7 +49,7 @@ workflows:
         run: [sh, -c, "echo should not run"]
       - id: cleanup
         when: failure
-        run: [sh, -c, "echo cleanup in $PWD"]
+        run: [sh, -c, 'echo cleanup in $PWD after $0 $1', "${{ steps.dynamic.status }}", "${{ steps.after.status }}"]
 `
 
 var testTools = map[string]string{
@@ -105,7 +105,7 @@ func TestExecuteWorkflow(t *testing.T) {
 		`{"name":"Sample.bin"}`+"\n"+`{"partial":true}`+"\n")
 	assertFile(t, filepath.Join(j.Dir, "logs", "static.log"), "static on inputs/sample/Sample.bin (none)\n")
 	assertFile(t, filepath.Join(j.Dir, "logs", "slow.log"), "slow\n")
-	assertFile(t, filepath.Join(j.Dir, "logs", "cleanup.log"), "cleanup in "+wd.WorkPath+"\n")
+	assertFile(t, filepath.Join(j.Dir, "logs", "cleanup.log"), "cleanup in "+wd.WorkPath+" after failed skipped\n")
 	if _, err := os.Stat(filepath.Join(j.Dir, "logs", "after.log")); !os.IsNotExist(err) {
 		t.Errorf("skipped step has a log: %v", err)
 	}

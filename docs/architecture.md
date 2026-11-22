@@ -139,7 +139,7 @@ workflows:
         output: report/report.json
 ```
 
-Templates only substitute: `${{ inputs.<name> }}`, `${{ output }}`, `${{ steps.<id>.output }}` (an earlier step), `${{ plugin_dir }}`. A command with a slash (`tools/x`) is resolved in the plugin directory; a bare name in the guest `PATH` (the agent's includes Homebrew and `/usr/local/bin`; an `env` PATH replaces it). Only the command is resolved this way: a relative path in an argument is relative to the workdir, so pass plugin files as `${{ plugin_dir }}/<path>`, e.g. `run: [bash, "${{ plugin_dir }}/scripts/x.sh"]`.
+Templates only substitute: `${{ inputs.<name> }}`, `${{ output }}`, `${{ steps.<id>.output }}` and `${{ steps.<id>.status }}` (an earlier step; `succeeded`, `failed`, `timed_out` or `skipped`), `${{ plugin_dir }}`. A command with a slash (`tools/x`) is resolved in the plugin directory; a bare name in the guest `PATH` (the agent's includes Homebrew and `/usr/local/bin`; an `env` PATH replaces it). Only the command is resolved this way: a relative path in an argument is relative to the workdir, so pass plugin files as `${{ plugin_dir }}/<path>`, e.g. `run: [bash, "${{ plugin_dir }}/scripts/x.sh"]`.
 
 Before the first step, a job waits up to 5 minutes for the baseline's automatic login (the agent starts earlier, at the login window). Steps run as root, like the agent. Running the sample as the logged-in user (baselines log in automatically, see `environment-setup.md`) is up to the plugin: its root tools drop privileges when they launch the sample. Host safety never relies on that.
 
