@@ -91,6 +91,9 @@ func TestParseManifestErrors(t *testing.T) {
 		"malformed":      base + "    steps: [{id: a, run: [x, '${{ inputs.a']}]",
 		"file default":   base + "    inputs: {f: {type: file, default: x}}\n    steps: [{id: a, run: [x]}]",
 		"bad input type": base + "    inputs: {f: {type: int}}\n    steps: [{id: a, run: [x]}]",
+		"bool default":   base + "    inputs: {f: {type: boolean, default: yes}}\n    steps: [{id: a, run: [x]}]",
+		"file values":    base + "    inputs: {f: {type: file, values: [a]}}\n    steps: [{id: a, run: [x]}]",
+		"value default":  base + "    inputs: {f: {values: [a, b], default: c}}\n    steps: [{id: a, run: [x]}]",
 		"bad constraint": "manifest_version: 1\nname: p\nrequires: {macos: '14'}\nworkflows: {w: {steps: [{id: a, run: [x]}]}}",
 		"bad env name":   base + "    env: {1BAD: x}\n    steps: [{id: a, run: [x]}]",
 		"bad env tmpl":   base + "    steps: [{id: a, run: [x], env: {A: '${{ inputs.nope }}'}}]",
@@ -239,6 +242,53 @@ workflows:
 	}
 	if env, _ := wf.Steps[1].Environ(wf.Env, vars); !reflect.DeepEqual(env, []string{"MODE=fast", "PATH=/opt/homebrew/bin:/usr/bin:/bin"}) {
 		t.Errorf("step b env = %q", env)
+	}
+}
+
+func TestInputTypes(t *testing.T) {
+	p, err := Parse([]byte(`
+manifest_version: 1
+name: p
+workflows:
+  w:
+    inputs:
+      sample:   { type: file, required: true }
+      disguise: { type: boolean }
+      verbose:  { type: boolean, default: true }
+      mode:     { values: [fast, slow], default: fast }
+    steps: [{id: a, run: [x]}]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wf, _ := p.Workflow("w")
+
+	tests := []struct {
+		args []string
+		want map[string]string
+	}{
+		{[]string{"x"}, map[string]string{"sample": "x", "disguise": "false", "verbose": "true", "mode": "fast"}},
+		{[]string{"--disguise", "x", "--verbose=false", "--mode", "slow"},
+			map[string]string{"sample": "x", "disguise": "true", "verbose": "false", "mode": "slow"}},
+	}
+	for _, tt := range tests {
+		got, err := wf.ParseArgs(tt.args)
+		if err != nil || !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("ParseArgs(%q) = %v, %v; want %v", tt.args, got, err, tt.want)
+		}
+	}
+	for _, args := range [][]string{{"x", "--disguise=on"}, {"x", "--mode", "medium"}, {"x", "true"}} {
+		if _, err := wf.ParseArgs(args); err == nil {
+			t.Errorf("ParseArgs(%q) succeeded", args)
+		}
+	}
+
+	var usage strings.Builder
+	wf.Usage(&usage, "run")
+	for _, s := range []string{"[--disguise]", "string (fast|slow)"} {
+		if !strings.Contains(usage.String(), s) {
+			t.Errorf("usage lacks %q:\n%s", s, usage.String())
+		}
 	}
 }
 

@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/ac0d3r/machbox/pkg/vm/config"
@@ -68,15 +70,30 @@ const (
 	// InputFile is a host path; the file or directory is copied into the
 	// guest workdir and tools receive its path relative to it.
 	InputFile InputType = "file"
+	// InputBoolean is "true" or "false" (default); a bare --name sets it.
+	InputBoolean InputType = "boolean"
 )
 
 // Input is a workflow parameter.
 type Input struct {
-	Name        string    `yaml:"-"`
-	Type        InputType `yaml:"type"`
-	Required    bool      `yaml:"required"`
-	Default     string    `yaml:"default"`
-	Description string    `yaml:"description"`
+	Name     string    `yaml:"-"`
+	Type     InputType `yaml:"type"`
+	Required bool      `yaml:"required"`
+	Default  string    `yaml:"default"`
+	// Values, if set, are the only ones a string input accepts.
+	Values      []string `yaml:"values"`
+	Description string   `yaml:"description"`
+}
+
+// check validates a value given for the input.
+func (in *Input) check(val string) error {
+	switch {
+	case in.Type == InputBoolean && val != "true" && val != "false":
+		return fmt.Errorf("input %s: %q is not true or false", in.Name, val)
+	case len(in.Values) > 0 && val != "" && !slices.Contains(in.Values, val):
+		return fmt.Errorf("input %s: %q is not one of %s", in.Name, val, strings.Join(in.Values, ", "))
+	}
+	return nil
 }
 
 // Inputs keeps the declaration order of the inputs mapping; positional
@@ -245,11 +262,21 @@ func (wf *Workflow) validate() error {
 		case "":
 			in.Type = InputString
 		case InputString, InputFile:
+		case InputBoolean:
+			if in.Default == "" {
+				in.Default = "false"
+			}
 		default:
 			return fmt.Errorf("input %s: unknown type %q", in.Name, in.Type)
 		}
 		if in.Type == InputFile && in.Default != "" {
 			return fmt.Errorf("input %s: file inputs cannot have a default", in.Name)
+		}
+		if len(in.Values) > 0 && in.Type != InputString {
+			return fmt.Errorf("input %s: only string inputs take values", in.Name)
+		}
+		if err := in.check(in.Default); err != nil {
+			return fmt.Errorf("default: %w", err)
 		}
 	}
 

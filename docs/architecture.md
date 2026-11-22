@@ -118,9 +118,11 @@ requires:                   # checked against the baseline record before boot, a
   # features: [rosetta, clt] # baseline features, see below; omitted (any)
 workflows:
   analyze:
-    inputs:                 # declaration order = positional argument order
+    inputs:                 # declaration order = positional argument order (booleans excluded)
       sample:   { type: file, required: true }   # file: copied into the guest workdir
       duration: { default: "10" }                # string (default type)
+      mode:     { values: [fast, slow], default: fast }  # values: the only ones accepted
+      verbose:  { type: boolean }                # "true" or "false" (default); a bare --verbose sets it
     requires: { features: [clt] }                # adds to the plugin's; sip here wins
     env:                    # every step; a step's env overrides it; values are templates
       DEMO_DATA: "${{ plugin_dir }}/data"
