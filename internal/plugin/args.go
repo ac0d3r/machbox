@@ -12,8 +12,10 @@ import (
 var ErrHelp = errors.New("help requested")
 
 // ParseArgs maps command-line arguments to input values. Inputs are given
-// as --name value or --name=value; positional arguments fill the inputs not
-// set by name, in declaration order. Defaults apply afterwards.
+// as --name value or --name=value (booleans: --name alone, or followed by
+// true or false); positional
+// arguments fill the other inputs not set by name, in declaration order.
+// Defaults apply afterwards.
 func (wf *Workflow) ParseArgs(args []string) (map[string]string, error) {
 	values := map[string]string{}
 	var positional []string
@@ -33,8 +35,15 @@ func (wf *Workflow) ParseArgs(args []string) (map[string]string, error) {
 		}
 
 		name, val, hasVal := strings.Cut(strings.TrimPrefix(arg, "--"), "=")
-		if wf.Inputs.Lookup(name) == nil {
+		in := wf.Inputs.Lookup(name)
+		switch {
+		case in == nil:
 			return nil, fmt.Errorf("workflow %s has no input %q", wf.Name, name)
+		case !hasVal && in.Type == InputBoolean:
+			val, hasVal = "true", true
+			if len(args) > 0 && (args[0] == "true" || args[0] == "false") {
+				val, args = args[0], args[1:]
+			}
 		}
 		if !hasVal {
 			if len(args) == 0 {
@@ -49,7 +58,7 @@ func (wf *Workflow) ParseArgs(args []string) (map[string]string, error) {
 	}
 
 	for _, in := range wf.Inputs {
-		if _, set := values[in.Name]; set || len(positional) == 0 {
+		if _, set := values[in.Name]; set || len(positional) == 0 || in.Type == InputBoolean {
 			continue
 		}
 		values[in.Name] = positional[0]
@@ -60,7 +69,10 @@ func (wf *Workflow) ParseArgs(args []string) (map[string]string, error) {
 	}
 
 	for _, in := range wf.Inputs {
-		if _, set := values[in.Name]; set {
+		if val, set := values[in.Name]; set {
+			if err := in.check(val); err != nil {
+				return nil, err
+			}
 			continue
 		}
 		switch {
@@ -77,9 +89,12 @@ func (wf *Workflow) ParseArgs(args []string) (map[string]string, error) {
 func (wf *Workflow) Usage(w io.Writer, prefix string) {
 	var synopsis []string
 	for _, in := range wf.Inputs {
-		if in.Required {
+		switch {
+		case in.Type == InputBoolean:
+			synopsis = append(synopsis, fmt.Sprintf("[--%s]", in.Name))
+		case in.Required:
 			synopsis = append(synopsis, fmt.Sprintf("[--%s] <%s>", in.Name, in.Name))
-		} else {
+		default:
 			synopsis = append(synopsis, fmt.Sprintf("[--%s <%s>]", in.Name, in.Name))
 		}
 	}
@@ -87,10 +102,13 @@ func (wf *Workflow) Usage(w io.Writer, prefix string) {
 	if len(wf.Inputs) == 0 {
 		return
 	}
-	fmt.Fprintln(w, "\nInputs (positional arguments fill them in this order):")
+	fmt.Fprintln(w, "\nInputs (positional arguments fill the non-boolean ones in this order):")
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	for _, in := range wf.Inputs {
 		attrs := string(in.Type)
+		if len(in.Values) > 0 {
+			attrs += " (" + strings.Join(in.Values, "|") + ")"
+		}
 		switch {
 		case in.Required:
 			attrs += ", required"
