@@ -55,6 +55,7 @@ func NewRootCommand(version string) *cobra.Command {
 		newRunCommand(),
 		newStartCommand(),
 		newInstanceCommand(),
+		newJobCommand(),
 	)
 
 	return cmd

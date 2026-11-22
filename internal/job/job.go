@@ -6,6 +6,7 @@
 //	logs/<step>.log   step stdout (stderr is in the step error)
 //	outputs/<path>    each step's declared output
 //	network.pcap      guest traffic, with --pcap
+//	.lock             held while the job runs
 package job
 
 import (
@@ -88,6 +89,7 @@ type Job struct {
 
 	plugin   *plugin.Plugin
 	workflow *plugin.Workflow
+	lock     *os.File
 }
 
 // New validates inputs (as returned by Workflow.ParseArgs) and creates the
@@ -141,7 +143,12 @@ func create(dir string, p *plugin.Plugin, wf *plugin.Workflow, inputs map[string
 			return nil, fmt.Errorf("create job directory: %w", err)
 		}
 	}
+	var err error
+	if j.lock, err = lock(dir); err != nil {
+		return nil, err
+	}
 	if err := j.save(); err != nil {
+		_ = j.lock.Close()
 		return nil, err
 	}
 	return j, nil
@@ -163,6 +170,9 @@ func (j *Job) finish(err error) {
 	}
 	if err := j.save(); err != nil {
 		logrus.Warnf("save job record: %v", err)
+	}
+	if j.lock != nil {
+		_ = j.lock.Close()
 	}
 }
 

@@ -39,7 +39,7 @@ Flags go before the plugin:
 
 An installed plugin is a plain directory: edit its `plugin.yml` (`~/.machbox/plugins/<owner>/<repo>/`) to change, say, a workflow's `network`. `plugin update` replaces the edits.
 
-The job directory, `~/.machbox/jobs/<id>/`, is printed when the job ends: step logs, outputs and `job.json`.
+The job directory, `~/.machbox/jobs/<id>/`, is printed when the job ends: step logs, outputs and `job.json`. `machbox job prune` removes the finished ones, after asking (`-y` to skip).
 
 `<plugin>` may also be a plugin directory, which takes precedence over an installed plugin of the same name, e.g. while developing one: `machbox run ./machbox-plugin analyze ./sample.zip`.
 
