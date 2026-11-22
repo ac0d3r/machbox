@@ -23,6 +23,7 @@ func TestPrune(t *testing.T) {
 		return dir
 	}
 
+	mkjob("a-nolock", old)
 	mkjob("b-new", time.Now())
 	if f, err := lock(mkjob("c-done", old)); err != nil {
 		t.Fatal(err)
@@ -42,7 +43,7 @@ func TestPrune(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"c-done"}; !reflect.DeepEqual(ids, want) {
+	if want := []string{"a-nolock", "c-done"}; !reflect.DeepEqual(ids, want) {
 		t.Errorf("finished = %v, want %v", ids, want)
 	}
 	for _, id := range ids {

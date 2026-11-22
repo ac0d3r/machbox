@@ -77,7 +77,10 @@ func tryLock(dir string) (release func(), err error) {
 		return nil, ErrRunning
 	}
 	// #nosec G304 -- dir is under the managed jobs directory.
-	f, err := os.OpenFile(filepath.Join(dir, lockName), os.O_CREATE|os.O_RDWR, 0o600)
+	f, err := os.OpenFile(filepath.Join(dir, lockName), os.O_RDWR, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		return func() {}, nil // no lock file: finished
+	}
 	if err != nil {
 		return nil, err
 	}
