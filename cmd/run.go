@@ -88,7 +88,7 @@ func newRunCommand() *cobra.Command {
 	}
 	cmd.Flags().SetInterspersed(false)
 	cmd.Flags().StringVarP(&opts.Baseline, "vm", "m", "",
-		"baseline UUID or unique name (default: the only one meeting the plugin's requirements)")
+		"baseline UUID or unique name (default: the only one meeting the workflow's requirements)")
 	cmd.Flags().StringVar(&network, "network", "",
 		fmt.Sprintf("guest network: none, %s (default: the workflow's network, else none)", strings.Join(config.NetworkModes, ", ")))
 	cmd.Flags().BoolVar(&opts.Capture, "pcap", false,

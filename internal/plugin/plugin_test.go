@@ -179,6 +179,35 @@ func TestRequires(t *testing.T) {
 	}
 }
 
+func TestWorkflowRequires(t *testing.T) {
+	p, err := Parse([]byte(`
+manifest_version: 1
+name: p
+requires: {macos: ">=14", features: [clt]}
+workflows:
+  a:
+    steps: [{id: s, run: [x]}]
+  b:
+    requires: {macos: "<16", sip: disabled, features: [rosetta, clt]}
+    steps: [{id: s, run: [x]}]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]Requires{
+		"a": {MacOS: ">=14", Features: []string{"clt"}},
+		"b": {MacOS: ">=14, <16", SIP: SIPDisabled, Features: []string{"clt", "rosetta"}},
+	}
+	for name, w := range want {
+		if got := p.Workflows[name].Requires; !reflect.DeepEqual(got, w) {
+			t.Errorf("workflow %s requires = %+v, want %+v", name, got, w)
+		}
+	}
+	if !reflect.DeepEqual(p.Requires.Features, []string{"clt"}) {
+		t.Errorf("plugin features changed: %v", p.Requires.Features)
+	}
+}
+
 func TestStepEnviron(t *testing.T) {
 	p, err := Parse([]byte(`
 manifest_version: 1

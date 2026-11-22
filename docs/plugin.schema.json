@@ -13,8 +13,17 @@
     },
     "name": { "$ref": "#/definitions/ident" },
     "version": { "type": "string" },
+    "requires": { "$ref": "#/definitions/requires" },
+    "workflows": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/definitions/ident" },
+      "additionalProperties": { "$ref": "#/definitions/workflow" }
+    }
+  },
+  "definitions": {
     "requires": {
-      "description": "Guest requirements; checked against the baseline before boot and the live guest after.",
+      "description": "Guest requirements; checked against the baseline before boot and the live guest after. A workflow's add to the plugin's: both macos constraints apply, its sip wins, features add up.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -32,14 +41,6 @@
         }
       }
     },
-    "workflows": {
-      "type": "object",
-      "minProperties": 1,
-      "propertyNames": { "$ref": "#/definitions/ident" },
-      "additionalProperties": { "$ref": "#/definitions/workflow" }
-    }
-  },
-  "definitions": {
     "ident": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
     "env": {
       "description": "Environment variables; values are templates like run arguments. A PATH is also where commands without a slash are looked up.",
@@ -58,6 +59,7 @@
           "propertyNames": { "$ref": "#/definitions/ident" },
           "additionalProperties": { "$ref": "#/definitions/input" }
         },
+        "requires": { "$ref": "#/definitions/requires" },
         "network": {
           "description": "Guest network when machbox run has no --network. gateway-public: public addresses only.",
           "enum": ["none", "nat", "gateway", "gateway-public"],

@@ -49,6 +49,8 @@ type Plugin struct {
 type Workflow struct {
 	Name   string `yaml:"-"`
 	Inputs Inputs `yaml:"inputs"`
+	// Requires adds to the plugin's; after Parse it holds both.
+	Requires Requires `yaml:"requires"`
 	// Network is the guest network when machbox run has no --network:
 	// none (default) or a config.NetworkModes value, canonicalized by Parse.
 	Network string `yaml:"network"`
@@ -213,6 +215,10 @@ func (p *Plugin) validate() error {
 			return fmt.Errorf("workflow %s is empty", name)
 		}
 		wf.Name = name
+		if err := wf.Requires.validate(); err != nil {
+			return fmt.Errorf("workflow %s: requires: %w", name, err)
+		}
+		wf.Requires = p.Requires.merge(wf.Requires)
 		if err := wf.validate(); err != nil {
 			return fmt.Errorf("workflow %s: %w", name, err)
 		}

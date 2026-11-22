@@ -46,6 +46,28 @@ func (r Requires) validate() error {
 	return nil
 }
 
+// merge returns r narrowed by o: both macOS constraints apply, o's SIP
+// state wins and the features add up.
+func (r Requires) merge(o Requires) Requires {
+	m := r
+	switch {
+	case m.MacOS == "":
+		m.MacOS = o.MacOS
+	case o.MacOS != "":
+		m.MacOS += ", " + o.MacOS
+	}
+	if o.SIP != SIPAny {
+		m.SIP = o.SIP
+	}
+	m.Features = slices.Clone(r.Features)
+	for _, f := range o.Features {
+		if !slices.Contains(m.Features, f) {
+			m.Features = append(m.Features, f)
+		}
+	}
+	return m
+}
+
 // CheckOS reports whether a guest running osVersion satisfies the macOS
 // constraint.
 func (r Requires) CheckOS(osVersion string) error {
@@ -74,9 +96,9 @@ func (r Requires) Check(osVersion string, features []string) error {
 	sipDisabled := slices.Contains(features, agent.FeatureSIPDisabled)
 	switch {
 	case r.SIP == SIPDisabled && !sipDisabled:
-		return errors.New("guest SIP is enabled; plugin requires it disabled")
+		return errors.New("guest SIP is enabled; the workflow requires it disabled")
 	case r.SIP == SIPEnabled && sipDisabled:
-		return errors.New("guest SIP is disabled; plugin requires it enabled")
+		return errors.New("guest SIP is disabled; the workflow requires it enabled")
 	}
 	var missing []string
 	for _, f := range r.Features {
