@@ -12,7 +12,8 @@ import (
 var ErrHelp = errors.New("help requested")
 
 // ParseArgs maps command-line arguments to input values. Inputs are given
-// as --name value or --name=value (a bare --name for booleans); positional
+// as --name value or --name=value (booleans: --name alone, or followed by
+// true or false); positional
 // arguments fill the other inputs not set by name, in declaration order.
 // Defaults apply afterwards.
 func (wf *Workflow) ParseArgs(args []string) (map[string]string, error) {
@@ -40,6 +41,9 @@ func (wf *Workflow) ParseArgs(args []string) (map[string]string, error) {
 			return nil, fmt.Errorf("workflow %s has no input %q", wf.Name, name)
 		case !hasVal && in.Type == InputBoolean:
 			val, hasVal = "true", true
+			if len(args) > 0 && (args[0] == "true" || args[0] == "false") {
+				val, args = args[0], args[1:]
+			}
 		}
 		if !hasVal {
 			if len(args) == 0 {

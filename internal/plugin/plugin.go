@@ -263,6 +263,9 @@ func (wf *Workflow) validate() error {
 			in.Type = InputString
 		case InputString, InputFile:
 		case InputBoolean:
+			if in.Required {
+				return fmt.Errorf("input %s: boolean inputs cannot be required", in.Name)
+			}
 			if in.Default == "" {
 				in.Default = "false"
 			}

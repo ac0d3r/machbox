@@ -92,6 +92,7 @@ func TestParseManifestErrors(t *testing.T) {
 		"file default":   base + "    inputs: {f: {type: file, default: x}}\n    steps: [{id: a, run: [x]}]",
 		"bad input type": base + "    inputs: {f: {type: int}}\n    steps: [{id: a, run: [x]}]",
 		"bool default":   base + "    inputs: {f: {type: boolean, default: yes}}\n    steps: [{id: a, run: [x]}]",
+		"bool required":  base + "    inputs: {f: {type: boolean, required: true}}\n    steps: [{id: a, run: [x]}]",
 		"file values":    base + "    inputs: {f: {type: file, values: [a]}}\n    steps: [{id: a, run: [x]}]",
 		"value default":  base + "    inputs: {f: {values: [a, b], default: c}}\n    steps: [{id: a, run: [x]}]",
 		"bad constraint": "manifest_version: 1\nname: p\nrequires: {macos: '14'}\nworkflows: {w: {steps: [{id: a, run: [x]}]}}",
@@ -270,6 +271,8 @@ workflows:
 		{[]string{"x"}, map[string]string{"sample": "x", "disguise": "false", "verbose": "true", "mode": "fast"}},
 		{[]string{"--disguise", "x", "--verbose=false", "--mode", "slow"},
 			map[string]string{"sample": "x", "disguise": "true", "verbose": "false", "mode": "slow"}},
+		{[]string{"--disguise", "true", "--verbose", "false", "x"},
+			map[string]string{"sample": "x", "disguise": "true", "verbose": "false", "mode": "fast"}},
 	}
 	for _, tt := range tests {
 		got, err := wf.ParseArgs(tt.args)
