@@ -37,9 +37,25 @@ install_file() {
 	tmp=
 }
 
+# The daemon runs as root from $agent: whoever can write to its directory,
+# or rename that away within its parent, can replace it.
+root_only() {
+	[ "$(stat -f %Su "$1")" = root ] && [ $(( 0$(stat -f %Lp "$1") & 022 )) -eq 0 ]
+}
+libexec=$(dirname "$agent")
+for d in /usr /usr/local; do
+	if [ -e "$d" ] && ! root_only "$d"; then
+		echo "$d is writable by users other than root, so the agent could be replaced. Make it root-owned and not group- or world-writable, then install again." >&2
+		exit 1
+	fi
+done
+
 echo "Installing the agent"
 launchctl bootout "system/$label" 2>/dev/null || true
-mkdir -p "$(dirname "$agent")"
+mkdir -p "$libexec"
+# Ours to fix: nothing else belongs in it.
+chown root:wheel "$libexec"
+chmod go-w "$libexec"
 install_file "$res/machbox-guest" "$agent" 755
 install_file "$res/$label.plist" "$plist" 644
 # bootout returns before the service is gone; bootstrap fails until it is.

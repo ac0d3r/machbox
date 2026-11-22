@@ -1,8 +1,10 @@
 package db
 
 import (
+	"errors"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	sqlite "gorm.io/driver/sqlite"
@@ -28,7 +30,7 @@ func (vmV2) TableName() string { return "vms" }
 
 func openTestDB(t *testing.T, model any, rows ...any) *gorm.DB {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "old.sqlite")))
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "old.sqlite")), &gorm.Config{TranslateError: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,5 +88,51 @@ func TestMigrateV2MovesSIPColumnIntoFeatures(t *testing.T) {
 	}
 	if db.Migrator().HasColumn(&VM{}, "sip_disabled") {
 		t.Error("sip_disabled column kept")
+	}
+}
+
+// vmV3 is the baselines table with a non-unique index on name.
+type vmV3 struct {
+	UUID     string   `gorm:"primaryKey;type:text"`
+	Name     string   `gorm:"index;type:text"`
+	Features []string `gorm:"serializer:json"`
+}
+
+func (vmV3) TableName() string { return "vms" }
+
+func TestMigrateMakesNamesUnique(t *testing.T) {
+	db := openTestDB(t, &vmV3{}, &vmV3{UUID: "a", Name: "a"})
+	if err := migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrate(db); err != nil { // already unique: nothing to do
+		t.Fatal(err)
+	}
+	_db = db
+	t.Cleanup(func() { _db = nil })
+	if err := CreateVM(&VM{UUID: "b", Name: "a"}); !errors.Is(err, ErrNameTaken) {
+		t.Errorf("duplicate create: err = %v, want ErrNameTaken", err)
+	}
+	b := &VM{UUID: "b", Name: "b"}
+	if err := CreateVM(b); err != nil {
+		t.Fatal(err)
+	}
+	b.Name = "a"
+	if err := SaveVM(b); !errors.Is(err, ErrNameTaken) {
+		t.Errorf("duplicate rename: err = %v, want ErrNameTaken", err)
+	}
+}
+
+func TestMigrateRefusesDuplicateNames(t *testing.T) {
+	db := openTestDB(t, &vmV2{},
+		&vmV2{UUID: "a", Name: "same", SIPDisabled: true},
+		&vmV2{UUID: "b", Name: "same"})
+	err := migrate(db)
+	if err == nil || !strings.Contains(err.Error(), "same") {
+		t.Fatalf("err = %v, want one naming the duplicate", err)
+	}
+	// All or nothing: the old schema is still there to migrate again.
+	if !db.Migrator().HasColumn(&VM{}, "sip_disabled") || db.Migrator().HasColumn(&VM{}, "features") {
+		t.Error("failed migration left a partial schema")
 	}
 }

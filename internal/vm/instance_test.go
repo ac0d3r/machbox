@@ -1,17 +1,21 @@
 package vm
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ac0d3r/machbox/pkg/vm/config"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestCreateInstanceClonesIntoBaseline(t *testing.T) {
 	base := writeBaseline(t)
-	in, err := createInstanceAt(base, "u", "cc", config.NetworkGatewayPublic)
+	in, err := createInstanceAt(base, "u", "cc", config.NetworkGatewayPublic, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +28,7 @@ func TestCreateInstanceClonesIntoBaseline(t *testing.T) {
 
 	// The instance is the baseline's own subdirectory, but not part of it:
 	// cloning the baseline again (duplicate, another instance) leaves it out.
-	if _, err := createInstanceAt(base, "u", "other", ""); err != nil {
+	if _, err := createInstanceAt(base, "u", "other", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(base, instancesDirName, "other", instancesDirName)); !os.IsNotExist(err) {
@@ -45,7 +49,7 @@ func TestCreateInstanceClonesIntoBaseline(t *testing.T) {
 
 func TestCreateInstanceKeepsExisting(t *testing.T) {
 	base := writeBaseline(t)
-	in, err := createInstanceAt(base, "u", "cc", "")
+	in, err := createInstanceAt(base, "u", "cc", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +57,7 @@ func TestCreateInstanceKeepsExisting(t *testing.T) {
 	if err := os.WriteFile(marker, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := createInstanceAt(base, "u", "cc", ""); err == nil {
+	if _, err := createInstanceAt(base, "u", "cc", "", nil); err == nil {
 		t.Fatal("second instance with the same name created")
 	}
 	if _, err := os.Stat(marker); err != nil {
@@ -69,14 +73,34 @@ func TestCreateInstanceKeepsExisting(t *testing.T) {
 }
 
 func TestInstanceLock(t *testing.T) {
-	in, err := createInstanceAt(writeBaseline(t), "u", "cc", "")
+	in, err := createInstanceAt(writeBaseline(t), "u", "cc", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if in.Running() {
 		t.Error("never started, reported running")
 	}
+
+	// A Running probe in another process holds a shared lock for a moment;
+	// start must not take it for a running instance.
+	probe, err := os.OpenFile(filepath.Join(in.Dir, instanceLockName), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Flock(int(probe.Fd()), unix.LOCK_SH|unix.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(lockRetryInterval)
+		_ = probe.Close()
+	}()
 	lock, err := in.lock()
+	if err != nil {
+		t.Fatalf("lock during a probe: %v", err)
+	}
+	_ = lock.Close()
+
+	lock, err = in.lock()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,5 +171,20 @@ func TestAutomountShares(t *testing.T) {
 		if _, err := automountShares(shares); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+func TestCreateInstanceChecksNameBeforePublishing(t *testing.T) {
+	base := writeBaseline(t)
+	taken := errors.New("taken")
+	if _, err := createInstanceAt(base, "u", "cc", "", func() error { return taken }); !errors.Is(err, taken) {
+		t.Fatalf("err = %v, want the name check's", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(base, instancesDirName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("left behind: %v", entries)
 	}
 }
