@@ -147,7 +147,8 @@ func (s *Server) handleWorkDir(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if wd.WorkPath != "" {
-		if err := os.MkdirAll(wd.WorkPath, 0o750); err != nil {
+		// #nosec G301 -- processes a step drops to another user keep it as cwd.
+		if err := os.MkdirAll(wd.WorkPath, 0o755); err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Errorf("mkdir workdir: %w", err))
 			return
 		}
