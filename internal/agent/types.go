@@ -10,6 +10,7 @@ const ShareTag = "machbox"
 // HTTP API served by the guest agent over vsock.
 const (
 	pathInfo       = "/v1/info"
+	pathCheck      = "/v1/check"
 	pathWorkDir    = "/v1/workdir"
 	pathExec       = "/v1/exec"
 	pathExecStream = "/v1/exec/stream"

@@ -29,6 +29,7 @@ const (
 // Server is the guest-agent HTTP API.
 type Server struct {
 	Info       func() (GuestInfo, error)
+	Check      func() (CheckReport, error)
 	MountShare func(sharePath string) error
 }
 
@@ -55,6 +56,7 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+pathInfo, s.handleInfo)
+	mux.HandleFunc("GET "+pathCheck, s.handleCheck)
 	mux.HandleFunc("POST "+pathWorkDir, s.handleWorkDir)
 	mux.HandleFunc("POST "+pathExec, s.handleExec)
 	mux.HandleFunc("POST "+pathExecStream, s.handleExecStream)
@@ -118,6 +120,19 @@ func (s *Server) handleInfo(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, info)
+}
+
+func (s *Server) handleCheck(w http.ResponseWriter, _ *http.Request) {
+	if s.Check == nil {
+		writeError(w, http.StatusNotFound, errors.New("no check in this agent"))
+		return
+	}
+	r, err := s.Check()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("check guest: %w", err))
+		return
+	}
+	writeJSON(w, http.StatusOK, r)
 }
 
 func (s *Server) handleWorkDir(w http.ResponseWriter, r *http.Request) {

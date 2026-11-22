@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -44,6 +45,9 @@ func startAgent(t *testing.T) *testAgent {
 	srv := &Server{
 		Info: func() (GuestInfo, error) {
 			return GuestInfo{OSName: "macOS", AgentVersion: AgentVersion, Username: "root"}, nil
+		},
+		Check: func() (CheckReport, error) {
+			return CheckReport{AgentVersion: AgentVersion, Features: []string{FeatureFullDiskAccess}}, nil
 		},
 		MountShare: func(p string) error { ta.mounted <- p; return nil },
 	}
@@ -358,5 +362,29 @@ func TestCombinedOutput(t *testing.T) {
 	got, err := ta.client.RunTask(ctx, &Task{Command: "sh", Args: script, CombinedOutput: true})
 	if err != nil || got != "out\nerr" {
 		t.Errorf("combined RunTask = %q, %v", got, err)
+	}
+}
+
+func TestCheck(t *testing.T) {
+	ta := startAgent(t)
+	r, err := ta.client.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.AgentVersion != AgentVersion || len(r.Features) != 1 || r.Features[0] != FeatureFullDiskAccess {
+		t.Errorf("report = %+v", r)
+	}
+}
+
+// An agent from before /v1/check: setup waits until it is updated.
+func TestCheckWithoutAgentSupport(t *testing.T) {
+	srv := httptest.NewServer((&Server{}).Handler())
+	defer srv.Close()
+	c := NewClient(func(ctx context.Context) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, "tcp", srv.Listener.Addr().String())
+	})
+	if _, err := c.Check(context.Background()); err == nil {
+		t.Error("check succeeded against an agent without it")
 	}
 }

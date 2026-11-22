@@ -18,14 +18,12 @@ import (
 	"github.com/ac0d3r/machbox/pkg/vsock"
 )
 
-const usage = "usage: machbox-guest [check]"
+const usage = "usage: machbox-guest"
 
 func main() {
 	switch {
 	case len(os.Args) == 1:
 		os.Exit(run())
-	case len(os.Args) == 2 && os.Args[1] == "check":
-		os.Exit(runCheck())
 	default:
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
@@ -37,6 +35,9 @@ func run() int {
 	defer stop()
 
 	info := collectGuestInfo()
+	// Replace the last agent's report now: it may claim a grant this build
+	// lacks, and Setup should not wait for the host to ask.
+	go func() { _, _ = check() }()
 
 	ln, err := vsock.Listen(agent.DefaultVsockPort)
 	if err != nil {
@@ -52,6 +53,7 @@ func run() int {
 			live.IPs = interfaceIPs()
 			return live, nil
 		},
+		Check:      check,
 		MountShare: mountVirtioFS,
 	}
 	fmt.Printf("[agent] listening on vsock %d\n", agent.DefaultVsockPort)

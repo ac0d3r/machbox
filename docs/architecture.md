@@ -55,7 +55,7 @@ Commands coordinate through a `flock` on the baseline directory. `vm import` and
 
 Booting never reads VirtualBuddy metadata again. Baselines imported by old versions (a whole `.vbvm` copy, without `config.json`) are refused: remove them and import again.
 
-Import and `vm setup` boot the baseline with a GUI and `guest.dmg` attached. The user runs Machbox Setup from it. Until the window closes, the host runs `machbox-guest check` through the agent every few seconds; the baseline is ready once a compatible `AgentVersion` answers with automatic login on. It then records the guest's OS version and the baseline's **features** from the last ready check: `agent`, `autologin`, and whichever of `rosetta`, `clt`, `ssh` are in place, plus `sip-disabled` when SIP is off (`agent.Features`). Only import and setup change a baseline, so the record stays accurate. SIP may be on or off; plugins that need it off require `sip: disabled`, plugins that need tools require `features`, and baselines are chosen by those records before boot. After boot, SIP is confirmed against the live guest. The DMG is embedded in the binary and extracted to `data/guest-<sha256[:12]>.dmg` only when needed, atomically and read-only.
+Import and `vm setup` boot the baseline with a GUI and `guest.dmg` attached. The user runs Machbox Setup from it. Until the window closes, the host has the agent check the guest every few seconds (`GET /v1/check`); the baseline is ready once a compatible `AgentVersion` answers with automatic login on. It then records the guest's OS version and the baseline's **features** from the last ready check: `agent`, `autologin`, and whichever of `rosetta`, `clt`, `ssh`, `full-disk-access` are in place, plus `sip-disabled` when SIP is off (`agent.Features`). Only import and setup change a baseline, so the record stays accurate. SIP may be on or off; plugins that need it off require `sip: disabled`, plugins that need tools require `features`, and baselines are chosen by those records before boot. After boot, SIP is confirmed against the live guest. The DMG is embedded in the binary and extracted to `data/guest-<sha256[:12]>.dmg` only when needed, atomically and read-only.
 
 ## Runs
 
@@ -92,6 +92,7 @@ Shares are host directories at `/Volumes/My Shared Files/<name>` in the guest: o
 | Endpoint | Description |
 |----------|-------------|
 | `GET /v1/info` | OS, agent user, SIP state, `agent_version`, and the console user once their desktop is up |
+| `GET /v1/check` | what is in place (`agent.CheckReport`); also written to `agent.CheckFile` for Machbox Setup |
 | `POST /v1/workdir` | mount the share and create a writable work dir |
 | `POST /v1/exec` | run a task to completion; JSON result |
 | `POST /v1/exec/stream` | stream stdout as a chunked body; exit status in `X-Task-Error` / `X-Task-Timed-Out` trailers |
@@ -101,7 +102,7 @@ Cancelling a request kills the task in the guest. A stream that hits its timeout
 
 Machbox Setup installs it. The SwiftUI app on the guest disk compares its bundled `machbox-guest` with the installed one and, when they differ, asks for the user's password and runs its `install.sh` as root through `sudo`: it copies the agent and its launchd plist, restarts it, and turns on automatic login, which needs the password itself. The script runs once and exits, so no privileged interface stays in the baseline, where a sample running as the user could reach it. The password goes over stdin, one line for `sudo` and one for the script.
 
-Everything else is the user's to set up; Machbox only checks it. `machbox-guest check` prints what is in place as JSON (`agent.CheckReport`). Full Disk Access is neither checked nor set up.
+Everything else is the user's to set up; Machbox only checks it. The agent's check reports what is in place (`agent.CheckReport`).
 
 ## Plugins and jobs
 

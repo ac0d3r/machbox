@@ -25,7 +25,7 @@ const bootTimeout = 15 * time.Minute
 // slow link.
 const setupTimeout = 2 * time.Hour
 
-// checkInterval is how often setup runs `machbox-guest check`.
+// checkInterval is how often setup has the agent check the guest.
 const checkInterval = 3 * time.Second
 
 const setupHint = "run Machbox Setup from the MachboxGuest volume in the VM window"
