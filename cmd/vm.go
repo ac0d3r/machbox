@@ -171,12 +171,8 @@ func newVMRemoveCommand() *cobra.Command {
 					return ErrAborted
 				}
 			}
-			rec, err = vm.Remove(rec.UUID)
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", rec.UUID, rec.Name)
-			return nil
+			_, err = vm.Remove(rec.UUID)
+			return err
 		}),
 	}
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "remove without asking")
