@@ -108,6 +108,8 @@ func TestSetWorkdir(t *testing.T) {
 	}
 	if info, err := os.Stat(wd.WorkPath); err != nil || !info.IsDir() {
 		t.Errorf("workdir not created: %v", err)
+	} else if info.Mode().Perm()&0o005 != 0o005 {
+		t.Errorf("workdir mode %v: other users cannot enter it", info.Mode().Perm())
 	}
 }
 
