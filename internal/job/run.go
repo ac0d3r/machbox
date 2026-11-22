@@ -26,7 +26,7 @@ var sessionPoll = 2 * time.Second
 // Options configures Run.
 type Options struct {
 	// Baseline is a UUID or unique name. Empty picks the only baseline that
-	// meets the plugin's requirements.
+	// meets the workflow's requirements.
 	Baseline string
 	Boot     vm.BootOptions
 	// Echo, if not nil, also receives every step's output, with control
@@ -40,7 +40,7 @@ type Options struct {
 // Run executes workflow wf with inputs in a fresh run of a baseline. The
 // job is returned once its directory exists, also when it then fails.
 func Run(ctx context.Context, p *plugin.Plugin, wf *plugin.Workflow, inputs map[string]string, opts Options) (*Job, error) {
-	baseline, err := pickBaseline(opts.Baseline, p.Requires)
+	baseline, err := pickBaseline(opts.Baseline, wf.Requires)
 	if err != nil {
 		return nil, err
 	}
@@ -83,8 +83,8 @@ func (j *Job) run(ctx context.Context, baseline *db.VM, opts Options) error {
 		j.trySave()
 		// Only SIP can be read live; the rest is the baseline's record.
 		live := agent.WithSIP(baseline.Features, info.SIPDisabled)
-		if err := j.plugin.Requires.Check(info.OSVersion, live); err != nil {
-			return fmt.Errorf("guest does not meet plugin requirements: %w", err)
+		if err := j.workflow.Requires.Check(info.OSVersion, live); err != nil {
+			return fmt.Errorf("guest does not meet the workflow's requirements: %w", err)
 		}
 		user, err := waitSession(ctx, c)
 		if err != nil {
@@ -171,10 +171,10 @@ func pickBaseline(identifier string, req plugin.Requires) (*db.VM, error) {
 	}
 	switch len(ok) {
 	case 0:
-		return nil, fmt.Errorf("no baseline meets the plugin's requirements (%s); see: machbox vm list", req)
+		return nil, fmt.Errorf("no baseline meets the workflow's requirements (%s); see: machbox vm list", req)
 	case 1:
 		return ok[0], nil
 	default:
-		return nil, errors.New("several baselines meet the plugin's requirements; choose one with --vm (see: machbox vm list)")
+		return nil, errors.New("several baselines meet the workflow's requirements; choose one with --vm (see: machbox vm list)")
 	}
 }

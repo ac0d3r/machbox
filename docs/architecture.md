@@ -121,6 +121,7 @@ workflows:
     inputs:                 # declaration order = positional argument order
       sample:   { type: file, required: true }   # file: copied into the guest workdir
       duration: { default: "10" }                # string (default type)
+    requires: { features: [clt] }                # adds to the plugin's; sip here wins
     env:                    # every step; a step's env overrides it; values are templates
       DEMO_DATA: "${{ plugin_dir }}/data"
     steps:
