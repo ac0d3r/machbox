@@ -67,12 +67,20 @@ In the VM window:
    in by itself, and stores it in recoverable form. With FileVault on, automatic login
    is impossible and Machbox Setup says so; turn FileVault off (see above) and install
    again.
-3. When the host logs that setup checks passed, the baseline is usable. Set up what
+3. With SIP on, give the agent Full Disk Access (see below).
+4. When the host logs that setup checks passed, the baseline is usable. Set up what
    your plugins need from the optional list (below), then close the VM window to
    finish the import.
 
 > Everything in a baseline is visible to, and usable by, what you run in it. Set up
 > only what your plugins need, or keep separate baselines for separate purposes.
+
+### Full Disk Access for the Agent (SIP On)
+
+With SIP on, the agent needs Full Disk Access to read the share (the run's inputs and
+plugin files). In Machbox Setup, press **Open in System Settings…**, drag
+`machbox-guest` into the list, then **Restart Agent…**. Updating the agent drops the
+grant: grant it again.
 
 ### Optional Items
 
@@ -83,10 +91,15 @@ Machbox checks these and never installs them; each has a button to start on it:
 | Remote Login (SSH) | `ssh` | System Settings → General → Sharing → Remote Login |
 | Xcode Command Line Tools | `clt` | Apple's installer (`xcode-select --install`) |
 | Rosetta 2 | `rosetta` | `softwareupdate --install-rosetta`, which asks for your password |
+| Computer name | — | `scutil --set` renames the computer, which asks for your password |
 
-The host checks the guest every few seconds while the window is open, with
-`machbox-guest check` run by the agent, and records what was in place when the
-window closed. Remote Login needs a network, which only setup always has: runs have
+The host has the agent check the guest every few seconds while the window is open,
+and records what was in place when the window closed.
+
+Computer name renames "<user>'s Virtual Machine" to "<user>'s MacBook Pro" (the Mac
+with the guest's chip). It is only the name: the guest's tools still report a VM.
+
+Remote Login needs a network, which only setup always has: runs have
 none unless `--network` or the workflow provides it.
 
 ## Update the Agent or Change the Tools of a Baseline

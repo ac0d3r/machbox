@@ -28,7 +28,7 @@
           "description": "Features the baseline must have, recorded by Machbox Setup.",
           "type": "array",
           "uniqueItems": true,
-          "items": { "enum": ["agent", "autologin", "rosetta", "clt", "ssh", "sip-disabled"] }
+          "items": { "enum": ["agent", "autologin", "rosetta", "clt", "ssh", "full-disk-access", "sip-disabled"] }
         }
       }
     },

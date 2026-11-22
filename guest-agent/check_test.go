@@ -3,11 +3,16 @@ package main
 import (
 	"crypto/pbkdf2"
 	"crypto/sha512"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/netip"
+	"os"
+	"path/filepath"
+	"slices"
 	"testing"
 
+	"github.com/ac0d3r/machbox/internal/agent"
 	"howett.net/plist"
 )
 
@@ -41,6 +46,31 @@ func TestReachableIPv4(t *testing.T) {
 	}
 	if got := fmt.Sprint(reachableIPv4(addrs)); got != "[192.168.64.5 10.0.0.2]" {
 		t.Errorf("reachableIPv4 = %s", got)
+	}
+}
+
+func TestSaveCheck(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "check.json")
+	want := agent.CheckReport{AgentVersion: agent.AgentVersion, Features: []string{agent.FeatureFullDiskAccess}}
+	for range 2 { // the second replaces the first
+		if err := saveCheck(file, want); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got agent.CheckReport
+	if err := json.Unmarshal(data, &got); err != nil || !slices.Equal(got.Features, want.Features) {
+		t.Errorf("saved %s (%v)", data, err)
+	}
+	if info, _ := os.Stat(file); info.Mode().Perm() != 0o644 {
+		t.Errorf("mode %v, want 0644 for Setup to read", info.Mode().Perm())
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Errorf("left %d files, want only the report", len(entries))
 	}
 }
 

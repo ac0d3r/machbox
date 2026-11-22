@@ -1,11 +1,16 @@
 // Machbox Setup installs or updates the guest agent, with automatic login,
-// and shows what else the guest has. `machbox-guest check` does the checking;
-// everything beyond the agent is the user's to set up.
+// and shows what else the guest has. The agent does the checking and leaves
+// its report in checkFile; everything beyond the agent is the user's to set up.
 import AppKit
 import CryptoKit
 import SwiftUI
+import SystemConfiguration
 
 let agentPath = "/usr/local/libexec/machbox-guest"
+let agentLabel = "dev.machbox.guest"
+/// agent.CheckFile. Setup does not check itself: TCC would judge Full Disk
+/// Access by Setup's grant, not the agent's.
+let checkFile = "/var/run/dev.machbox.guest.check.json"
 
 struct CheckReport: Decodable {
     let agent_version: String
@@ -37,11 +42,40 @@ struct Extra: Identifiable {
         case privileged(String, [String])
     }
 
-    let id: String // a feature in the check report
+    let id: String // a feature in the check report, unless done says otherwise
     let title: String
     let detail: String
     let actionTitle: String
     let action: Action
+    var done: (() -> Bool)? = nil
+}
+
+/// The Mac with this VM's chip, which macOS names "<user>'s Virtual Machine".
+let macName: String = {
+    var size = 0
+    sysctlbyname("machdep.cpu.brand_string", nil, &size, nil, 0)
+    var buf = [CChar](repeating: 0, count: max(size, 1))
+    sysctlbyname("machdep.cpu.brand_string", &buf, &size, nil, 0)
+    let chip = String(cString: buf).replacingOccurrences(of: "(Virtual)", with: "")
+        .trimmingCharacters(in: .whitespaces)
+    return chip == "Apple M1" || chip == "Apple M2" ? "MacBook Air" : "MacBook Pro"
+}()
+
+/// The names macOS gives a new Mac; passed to sh as arguments, never parsed.
+let rename: Extra.Action = {
+    let owner = NSFullUserName().isEmpty ? NSUserName() : NSFullUserName()
+    let local = String(NSUserName().map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
+        + "s-" + macName.replacingOccurrences(of: " ", with: "-")
+    let script = "scutil --set ComputerName \"$1\" && scutil --set LocalHostName \"$2\""
+    return .privileged("/bin/sh", ["-c", script, "sh", "\(owner)’s \(macName)", local])
+}()
+
+func renamed() -> Bool {
+    let names = [SCDynamicStoreCopyComputerName(nil, nil) as String?, SCDynamicStoreCopyLocalHostName(nil) as String?]
+    return names.allSatisfy { name in
+        guard let name else { return false }
+        return !name.contains("Virtual Machine") && !name.contains("Virtual-Machine")
+    }
 }
 
 let extras = [
@@ -57,6 +91,11 @@ let extras = [
           detail: "Runs x86_64 code.",
           actionTitle: "Install…",
           action: .privileged("/usr/sbin/softwareupdate", ["--install-rosetta", "--agree-to-license"])),
+    Extra(id: "rename", title: "Computer name",
+          detail: "Renames “…’s Virtual Machine” to “…’s \(macName)”.",
+          actionTitle: "Rename…",
+          action: rename,
+          done: renamed),
 ]
 
 // MARK: - Processes
@@ -95,12 +134,12 @@ func sha256(_ path: String) -> String? {
 /// What the password sheet is for.
 enum Privileged: Identifiable {
     case install
-    case extra(Extra)
+    case command(id: String, title: String, path: String, args: [String])
 
     var id: String {
         switch self {
         case .install: return "install"
-        case let .extra(e): return e.id
+        case let .command(id, _, _, _): return id
         }
     }
 }
@@ -118,35 +157,34 @@ final class Model: ObservableObject {
 
     var ready: Bool { agent == .current && !(report?.autologin_user ?? "").isEmpty }
 
-    func has(_ feature: String) -> Bool { report?.features.contains(feature) ?? false }
+    func done(_ extra: Extra) -> Bool {
+        guard let report else { return false }
+        return extra.done?() ?? report.features.contains(extra.id)
+    }
 
     func refresh() {
         let bundled = resources.appendingPathComponent("machbox-guest").path
         DispatchQueue.global().async {
             let state = Self.agentState(bundled: bundled)
-            // Only this build is sure to know `check` (an older agent runs as
-            // the daemon instead), so a missing or other build is all there is
-            // to show until it is installed.
+            // Only this build is sure to write the report, and only while it
+            // runs; /var/run starts empty at boot.
             var report: CheckReport?
-            if state == .current || state == .notLoaded {
-                let (status, out) = run(agentPath, ["check"])
-                if status == 0 {
-                    report = try? JSONDecoder().decode(CheckReport.self, from: Data(out.utf8))
-                }
+            if state == .current, let data = FileManager.default.contents(atPath: checkFile) {
+                report = try? JSONDecoder().decode(CheckReport.self, from: data)
             }
             DispatchQueue.main.async {
                 self.agent = state
                 self.report = report
-                if report == nil && (state == .current || state == .notLoaded) {
-                    self.error = Self.checkFailed
-                } else if self.error == Self.checkFailed {
+                if report == nil && state == .current {
+                    self.error = Self.noCheck
+                } else if self.error == Self.noCheck {
                     self.error = nil
                 }
             }
         }
     }
 
-    private static let checkFailed = "machbox-guest check returned nothing."
+    private static let noCheck = "Waiting for the agent's check."
 
     nonisolated static func agentState(bundled: String) -> AgentState {
         guard let have = sha256(agentPath) else { return .missing }
@@ -168,9 +206,26 @@ final class Model: ObservableObject {
             }
         case let .command(path, args):
             DispatchQueue.global().async { _ = run(path, args) }
-        case .privileged:
-            asking = .extra(extra)
+        case let .privileged(path, args):
+            asking = .command(id: extra.id, title: "Install \(extra.title)", path: path, args: args)
         }
+    }
+
+    /// Opens the Full Disk Access pane with the agent selected in the Finder,
+    /// to drag into it; its path is copied too, for + then ⌘⇧G.
+    func grantFullDiskAccess() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(agentPath, forType: .string)
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: agentPath)])
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    /// A running process gets a new Full Disk Access grant only once restarted.
+    func restartAgent() {
+        asking = .command(id: "restart", title: "Restart the Machbox agent",
+                          path: "/bin/launchctl", args: ["kickstart", "-k", "system/\(agentLabel)"])
     }
 
     /// Runs what the password sheet was for; calls back with an error to show
@@ -198,11 +253,7 @@ final class Model: ObservableObject {
                 (status, output) = run("/usr/bin/sudo",
                                        ["-S", "-p", "", "--", "/bin/sh", resources + "/install.sh", resources, user],
                                        stdin: password + "\n" + password + "\n")
-            case let .extra(extra):
-                guard case let .privileged(path, args) = extra.action else {
-                    DispatchQueue.main.async { self.busy = false }
-                    return
-                }
+            case let .command(_, _, path, args):
                 (status, output) = run("/usr/bin/sudo", ["-S", "-p", "", "--", path] + args, stdin: password + "\n")
             }
             DispatchQueue.main.async {
@@ -260,7 +311,7 @@ struct PasswordSheet: View {
     private var title: String {
         switch what {
         case .install: return model.agent == .missing ? "Install the Machbox agent" : "Update the Machbox agent"
-        case let .extra(e): return "Install \(e.title)"
+        case let .command(_, title, _, _): return title
         }
     }
 
@@ -268,7 +319,7 @@ struct PasswordSheet: View {
         switch what {
         case .install:
             return "Used to install the agent as root, and stored in this VM for automatic login, in recoverable form."
-        case .extra: return "Used to install as root."
+        case .command: return "Used to run it as root."
         }
     }
 
@@ -348,6 +399,23 @@ struct ContentView: View {
                             Badge(done: false)
                         }
                     }
+                    if let report = model.report, !report.sip_disabled {
+                        let granted = report.features.contains("full-disk-access")
+                        Row(title: "Full Disk Access for the agent",
+                            detail: "SIP is on: without it, runs cannot read their inputs. Drag machbox-guest from the Finder into the list (or + then ⌘⇧G, ⌘V), then restart the agent: it gets the grant only then.") {
+                            VStack(alignment: .trailing, spacing: 4) {
+                                Badge(done: granted)
+                                if !granted {
+                                    Button("Open in System Settings…", action: model.grantFullDiskAccess)
+                                        .controlSize(.small)
+                                        .disabled(model.busy)
+                                    Button("Restart Agent…", action: model.restartAgent)
+                                        .controlSize(.small)
+                                        .disabled(model.busy)
+                                }
+                            }
+                        }
+                    }
                     if !model.ready {
                         HStack {
                             Spacer()
@@ -364,8 +432,8 @@ struct ContentView: View {
                     ForEach(model.report == nil ? [] : extras) { extra in
                         Row(title: extra.title, detail: extra.detail) {
                             VStack(alignment: .trailing, spacing: 4) {
-                                Badge(done: model.has(extra.id))
-                                if !model.has(extra.id) {
+                                Badge(done: model.done(extra))
+                                if !model.done(extra) {
                                     Button(extra.actionTitle) { model.perform(extra) }
                                         .controlSize(.small)
                                         .disabled(model.busy)
@@ -402,6 +470,10 @@ struct ContentView: View {
         .onAppear(perform: model.refresh)
         // Coming back from System Settings or an installer: show what changed.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            if !model.busy { model.refresh() }
+        }
+        // The agent rewrites its report at start and whenever the host asks (every 3 s).
+        .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
             if !model.busy { model.refresh() }
         }
     }

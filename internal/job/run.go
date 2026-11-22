@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/ac0d3r/machbox/internal/agent"
@@ -41,6 +42,9 @@ type Options struct {
 func Run(ctx context.Context, p *plugin.Plugin, wf *plugin.Workflow, inputs map[string]string, opts Options) (*Job, error) {
 	baseline, err := pickBaseline(opts.Baseline, p.Requires)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkShareAccess(baseline, wf, inputs); err != nil {
 		return nil, err
 	}
 	j, err := New(p, wf, inputs, baseline)
@@ -122,6 +126,22 @@ func waitSession(ctx context.Context, g interface {
 		case <-time.After(sessionPoll):
 		}
 	}
+}
+
+// checkShareAccess fails before boot when the guest could not read the
+// inputs: with SIP on, TCC keeps the share from an agent without Full Disk
+// Access.
+func checkShareAccess(b *db.VM, wf *plugin.Workflow, inputs map[string]string) error {
+	if slices.Contains(b.Features, agent.FeatureSIPDisabled) || slices.Contains(b.Features, agent.FeatureFullDiskAccess) {
+		return nil
+	}
+	for _, in := range wf.Inputs {
+		if in.Type == plugin.InputFile && inputs[in.Name] != "" {
+			return fmt.Errorf("baseline %s has SIP on and its agent lacks Full Disk Access, so the guest cannot read inputs; "+
+				"grant it in Machbox Setup (machbox vm setup %s, see docs/environment-setup.md)", b.Name, b.Name)
+		}
+	}
+	return nil
 }
 
 func pickBaseline(identifier string, req plugin.Requires) (*db.VM, error) {

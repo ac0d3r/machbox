@@ -19,8 +19,9 @@ import (
 	"howett.net/plist"
 )
 
-// runCheck prints what is in place in this guest as an agent.CheckReport.
-func runCheck() int {
+// check reports what is in place in this guest, and leaves the report in
+// agent.CheckFile for Machbox Setup.
+func check() (agent.CheckReport, error) {
 	r := agent.CheckReport{
 		AgentVersion:  agent.AgentVersion,
 		ConsoleUser:   consoleUser(),
@@ -39,17 +40,41 @@ func runCheck() int {
 		{agent.FeatureRosetta, succeeds("/usr/sbin/pkgutil", "--pkg-info", "com.apple.pkg.RosettaUpdateAuto")},
 		{agent.FeatureCLT, succeeds("/usr/bin/xcode-select", "-p")},
 		{agent.FeatureSSH, sshListening()},
+		{agent.FeatureFullDiskAccess, fullDiskAccess()},
 	} {
 		if c.ok {
 			r.Features = append(r.Features, c.feature)
 		}
 	}
 	r.Features = agent.WithSIP(r.Features, r.SIPDisabled)
-	if err := json.NewEncoder(os.Stdout).Encode(r); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+	if err := saveCheck(agent.CheckFile, r); err != nil {
+		fmt.Fprintf(os.Stderr, "save check: %v\n", err)
 	}
-	return 0
+	return r, nil
+}
+
+// saveCheck replaces file, which Setup may be reading.
+func saveCheck(file string, r agent.CheckReport) error {
+	data, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(file), ".machbox-check.*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name()) // a no-op once renamed
+	_, err = tmp.Write(data)
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil { // #nosec G302 -- Setup runs as the user
+		return err
+	}
+	return os.Rename(tmp.Name(), file)
 }
 
 // autoLoginUser returns the user macOS logs in at boot. As root, also
@@ -166,4 +191,17 @@ func sshListening() bool {
 
 func succeeds(name string, args ...string) bool {
 	return exec.Command(name, args...).Run() == nil // #nosec G204 -- fixed commands
+}
+
+// fullDiskAccess reports whether the agent may read what only Full Disk
+// Access opens, as the share needs with SIP on. A grant reaches a running
+// agent only once it restarts.
+func fullDiskAccess() bool {
+	f, err := os.Open("/Library/Application Support/com.apple.TCC/TCC.db")
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	_, err = f.Read(make([]byte, 1))
+	return err == nil
 }
