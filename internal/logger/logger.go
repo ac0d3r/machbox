@@ -46,6 +46,8 @@ func Init(cfg *Config) error {
 		logrus.SetFormatter(&nested.Formatter{
 			TimestampFormat: TimeFormat,
 			HideKeys:        false,
+			// Escape codes are for a terminal: a pipe or the log file gets plain text.
+			NoColors: cfg.Output != "" || !isTerminal(os.Stdout),
 		})
 	}
 
@@ -70,4 +72,9 @@ func Init(cfg *Config) error {
 
 	logrus.SetOutput(io.MultiWriter(writers...))
 	return nil
+}
+
+func isTerminal(f *os.File) bool {
+	info, err := f.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
