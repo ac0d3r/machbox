@@ -84,6 +84,7 @@ func TestParseManifestErrors(t *testing.T) {
 		"bad when":       base + "    steps: [{id: a, run: [x], when: sometimes}]",
 		"unknown input":  base + "    steps: [{id: a, run: [x, '${{ inputs.nope }}']}]",
 		"later step":     base + "    steps: [{id: a, run: [x, '${{ steps.b.output }}']}, {id: b, run: [x], output: o}]",
+		"later status":   base + "    steps: [{id: a, run: [x, '${{ steps.b.status }}']}, {id: b, run: [x]}]",
 		"no output":      base + "    steps: [{id: a, run: [x]}, {id: b, run: [x, '${{ steps.a.output }}']}]",
 		"own output":     base + "    steps: [{id: a, run: [x, '${{ output }}']}]",
 		"unknown var":    base + "    steps: [{id: a, run: [x, '${{ env.HOME }}']}]",

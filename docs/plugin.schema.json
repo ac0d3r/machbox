@@ -92,7 +92,7 @@
       "properties": {
         "id": { "$ref": "#/definitions/ident" },
         "run": {
-          "description": "argv; ${{ inputs.<name> }}, ${{ output }}, ${{ steps.<id>.output }} and ${{ plugin_dir }} are substituted. A command with a slash is resolved in the plugin directory; relative paths in arguments are relative to the workdir, so use ${{ plugin_dir }}/<path> for plugin files.",
+          "description": "argv; ${{ inputs.<name> }}, ${{ output }}, ${{ steps.<id>.output }}, ${{ steps.<id>.status }} and ${{ plugin_dir }} are substituted. A command with a slash is resolved in the plugin directory; relative paths in arguments are relative to the workdir, so use ${{ plugin_dir }}/<path> for plugin files.",
           "type": "array",
           "minItems": 1,
           "items": { "type": "string" }
