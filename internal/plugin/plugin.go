@@ -107,13 +107,25 @@ func (in *Inputs) UnmarshalYAML(node *yaml.Node) error {
 	}
 	for i := 0; i < len(node.Content); i += 2 {
 		input := &Input{}
-		if err := node.Content[i+1].Decode(input); err != nil {
-			return err
+		if err := decodeStrict(node.Content[i+1], input); err != nil {
+			return fmt.Errorf("line %d: input %s: %w", node.Content[i].Line, node.Content[i].Value, err)
 		}
 		input.Name = node.Content[i].Value
 		*in = append(*in, input)
 	}
 	return nil
+}
+
+// decodeStrict is node.Decode with unknown fields rejected, which a
+// custom unmarshaler does not inherit from the outer decoder.
+func decodeStrict(node *yaml.Node, v any) error {
+	data, err := yaml.Marshal(node)
+	if err != nil {
+		return err
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	return dec.Decode(v)
 }
 
 // Lookup returns the input called name, or nil.
