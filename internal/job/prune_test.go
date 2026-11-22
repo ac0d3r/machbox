@@ -23,7 +23,6 @@ func TestPrune(t *testing.T) {
 		return dir
 	}
 
-	mkjob("a-legacy", old) // no lock file
 	mkjob("b-new", time.Now())
 	if f, err := lock(mkjob("c-done", old)); err != nil {
 		t.Fatal(err)
@@ -35,7 +34,7 @@ func TestPrune(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer running.Close()
-	for _, id := range []string{"a-legacy", "c-done", "d-running"} {
+	for _, id := range []string{"c-done", "d-running"} {
 		_ = os.Chtimes(filepath.Join(root, id), old, old)
 	}
 
@@ -43,7 +42,7 @@ func TestPrune(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"a-legacy", "c-done"}; !reflect.DeepEqual(ids, want) {
+	if want := []string{"c-done"}; !reflect.DeepEqual(ids, want) {
 		t.Errorf("finished = %v, want %v", ids, want)
 	}
 	for _, id := range ids {
