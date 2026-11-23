@@ -45,7 +45,7 @@ func NewRootCommand(version string) *cobra.Command {
 	cmd.PersistentFlags().StringVar(&opts.log.level, "log-level",
 		"info", "log level: debug, info, warn, error")
 	cmd.PersistentFlags().StringVar(&opts.log.output, "log-output",
-		"", "log file path, empty for stdout")
+		"", "also write logs to this file (rotated); they always go to stderr")
 	cmd.PersistentFlags().BoolVar(&opts.log.JSON, "log-json",
 		false, "enable JSON log output")
 

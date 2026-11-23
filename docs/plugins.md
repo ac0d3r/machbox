@@ -9,6 +9,8 @@ machbox plugin install https://github.com/user/machbox-plugin                  #
 machbox plugin install https://github.com/user/machbox-plugin --version v0.1.0 # a given release
 ```
 
+Installing a repository that is already installed fails (use `plugin update`); `--force` reinstalls it.
+
 The repository identifies a plugin. Commands below take `owner/repo`, or the plugin's name (`name` in its `plugin.yml`, here `example`) while only one installed plugin has it.
 
 ```sh
@@ -31,8 +33,8 @@ Flags go before the plugin:
 
 | Flag | |
 |------|-|
-| `--vm <uuid-or-name>` | baseline to use (default: the only one meeting the workflow's requirements) |
-| `--network <mode>` | `none`, `nat`, `gateway`, or `gateway-public` (public addresses only); default: the workflow's `network`, else `none` |
+| `-m`, `--vm <uuid-or-name>` | baseline to use (default: the only one meeting the workflow's requirements) |
+| `--network <mode>` | `none`, `nat`, `gateway` or `gateway-public` ([what each reaches](./architecture.md#network)); default: the workflow's `network`, else `none` |
 | `--pcap` | with a gateway network: save guest traffic to `network.pcap` in the job directory |
 | `--gui` | show the VM window |
 | `--show-output` | also print step output |
@@ -53,3 +55,5 @@ machbox plugin remove user/machbox-plugin
 ## Writing a plugin
 
 See [Plugins and jobs](./architecture.md#plugins-and-jobs) for the manifest and how steps run, and `testdata/plugins/demo` for a working example. To be installable, a release needs one `.tar.gz` asset holding `plugin.yml` and the built tools, at its root or in a single top-level directory; publish `<archive>.sha256` alongside it to have downloads verified.
+
+[`plugin.schema.json`](./plugin.schema.json) describes the manifest for editors. Map it to `**/plugin.yml` (VS Code: `"yaml.schemas"` in settings) or start the file with `# yaml-language-server: $schema=<path to it>`; otherwise editors may apply SchemaStore's Bukkit `plugin.yml` schema and report a missing `main`.
