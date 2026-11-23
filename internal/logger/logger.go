@@ -47,7 +47,7 @@ func Init(cfg *Config) error {
 			TimestampFormat: TimeFormat,
 			HideKeys:        false,
 			// Escape codes are for a terminal: a pipe or the log file gets plain text.
-			NoColors: cfg.Output != "" || !isTerminal(os.Stdout),
+			NoColors: cfg.Output != "" || !isTerminal(os.Stderr),
 		})
 	}
 
@@ -58,7 +58,7 @@ func Init(cfg *Config) error {
 	logrus.SetLevel(level)
 
 	var writers []io.Writer
-	writers = append(writers, os.Stdout)
+	writers = append(writers, os.Stderr)
 	if cfg.Output != "" {
 		fileWriter := &lumberjack.Logger{
 			Filename:   cfg.Output,
