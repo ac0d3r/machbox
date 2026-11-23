@@ -35,6 +35,16 @@ make build
 
 The compiled binary will be at `bin/machbox`.
 
+## Quick Start
+
+```bash
+machbox vm import /path/to/<vm>.vbvm base     # once: import a VirtualBuddy VM, then run Machbox Setup in it
+machbox plugin install https://github.com/ac0d3r/machbox-malware
+machbox run ac0d3r/machbox-malware            # list its workflows
+```
+
+Every command takes `--log-level` (`debug`, `info`, `warn`, `error`), `--log-output <file>` (logs go to stderr, and also to this file, rotated) and `--log-json`.
+
 ## Usage
 
 - [Environment Setup](./docs/environment-setup.md): prepare and import a VirtualBuddy VM baseline.

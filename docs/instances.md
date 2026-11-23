@@ -13,8 +13,8 @@ machbox start cc --gui                                                          
 
 | Flag | |
 |------|-|
-| `--vm <uuid-or-name>` | baseline to create the instance from; only when the instance does not exist yet |
-| `--network <mode>` | `none`, `nat`, `gateway` or `gateway-public`; default: the instance's last, else `none` |
+| `-m`, `--vm <uuid-or-name>` | baseline to create the instance from; only when the instance does not exist yet |
+| `--network <mode>` | `none`, `nat`, `gateway` or `gateway-public` ([what each reaches](./architecture.md#network)); default: the instance's last, else `none` |
 | `--share <dir>` | share a host directory read-write; repeatable |
 | `--share-ro <dir>` | share a host directory read-only; repeatable |
 | `--no-share` | start without shares, and forget the saved ones |
@@ -52,9 +52,9 @@ machbox instance list          # name, baseline, network, shares, running or sto
 machbox instance remove cc     # delete a stopped instance and its disk, after asking (-y: don't ask)
 ```
 
-An instance lives in its baseline's directory (`~/.machbox/vms/<uuid>/instances/<name>/`).
-`machbox vm remove` lists the baseline's instances and asks before removing them
-with it; it refuses while one is running.
+An instance lives in its baseline's directory (`~/.machbox/vms/<uuid>/instances/<name>/`),
+so `machbox vm remove` removes it with the baseline (see
+[Manage Baselines](./environment-setup.md#manage-baselines)).
 
 ## Isolation
 

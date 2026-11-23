@@ -1,6 +1,6 @@
 # Architecture
 
-machbox runs macOS guests on Apple's `Virtualization.framework`. The core does four things:
+machbox runs macOS guests on Apple's `Virtualization.framework`. The core does five things:
 
 - **Baseline management**: import a VirtualBuddy VM once, keep it in machbox's own bundle format.
 - **Disposable runs**: every boot works on an APFS copy-on-write snapshot plus a read-only share, discarded afterwards.
@@ -55,7 +55,9 @@ Commands coordinate through a `flock` on the baseline directory. `vm import` and
 
 Booting never reads VirtualBuddy metadata again. Baselines imported by old versions (a whole `.vbvm` copy, without `config.json`) are refused: remove them and import again.
 
-Import and `vm setup` boot the baseline with a GUI and `guest.dmg` attached. The user runs Machbox Setup from it. Until the window closes, the host has the agent check the guest every few seconds (`GET /v1/check`); the baseline is ready once a compatible `AgentVersion` answers with automatic login on. It then records the guest's OS version and the baseline's **features** from the last ready check: `agent`, `autologin`, and whichever of `rosetta`, `clt`, `ssh`, `full-disk-access` are in place, plus `sip-disabled` when SIP is off (`agent.Features`). Only import and setup change a baseline, so the record stays accurate. SIP may be on or off; plugins that need it off require `sip: disabled`, plugins that need tools require `features`, and baselines are chosen by those records before boot. After boot, SIP is confirmed against the live guest. The DMG is embedded in the binary and extracted to `data/guest-<sha256[:12]>.dmg` only when needed, atomically and read-only.
+Import and `vm setup` boot the baseline with a GUI and `guest.dmg` attached. The user runs Machbox Setup from it. Until the window closes, the host has the agent check the guest every few seconds (`GET /v1/check`); the baseline is ready once a compatible `AgentVersion` answers with automatic login on. The DMG is embedded in the binary and extracted to `data/guest-<sha256[:12]>.dmg` only when needed, atomically and read-only.
+
+When the window closes, the host records the guest's OS version and the baseline's **features** from the last ready check: `agent`, `autologin`, and whichever of `rosetta`, `clt`, `ssh`, `full-disk-access` are in place, plus `sip-disabled` when SIP is off (`agent.Features`). Only import and setup change a baseline, so the record stays accurate. Plugins that need SIP off require `sip: disabled`, plugins that need tools require `features`, and baselines are chosen by those records before boot; after boot, SIP is confirmed against the live guest.
 
 ## Runs
 
@@ -102,7 +104,7 @@ Cancelling a request kills the task in the guest. A stream that hits its timeout
 
 Machbox Setup installs it. The SwiftUI app on the guest disk compares its bundled `machbox-guest` with the installed one and, when they differ, asks for the user's password and runs its `install.sh` as root through `sudo`: it copies the agent and its launchd plist, restarts it, and turns on automatic login, which needs the password itself. The script runs once and exits, so no privileged interface stays in the baseline, where a sample running as the user could reach it. The password goes over stdin, one line for `sudo` and one for the script.
 
-Everything else is the user's to set up; Machbox only checks it. The agent's check reports what is in place (`agent.CheckReport`).
+Everything else is the user's to set up; Machbox only checks it.
 
 ## Plugins and jobs
 
@@ -143,7 +145,7 @@ workflows:
 
 Templates only substitute: `${{ inputs.<name> }}`, `${{ output }}`, `${{ steps.<id>.output }}` and `${{ steps.<id>.status }}` (an earlier step; `succeeded`, `failed`, `timed_out` or `skipped`), `${{ plugin_dir }}`. A command with a slash (`tools/x`) is resolved in the plugin directory; a bare name in the guest `PATH` (the agent's includes Homebrew and `/usr/local/bin`; an `env` PATH replaces it). Only the command is resolved this way: a relative path in an argument is relative to the workdir, so pass plugin files as `${{ plugin_dir }}/<path>`, e.g. `run: [bash, "${{ plugin_dir }}/scripts/x.sh"]`.
 
-Before the first step, a job waits up to 5 minutes for the baseline's automatic login (the agent starts earlier, at the login window). Steps run as root, like the agent. Running the sample as the logged-in user (baselines log in automatically, see `environment-setup.md`) is up to the plugin: its root tools drop privileges when they launch the sample. Host safety never relies on that.
+Before the first step, a job waits up to 5 minutes for the baseline's automatic login (the agent starts earlier, at the login window). Steps run as root, like the agent. Running the sample as the logged-in user (baselines log in automatically, see [Environment Setup](./environment-setup.md)) is up to the plugin: its root tools drop privileges when they launch the sample. Host safety never relies on that.
 
 Once a sample runs, it controls the guest, agent included, so the host trusts nothing the guest sends to be small or timely: it enforces every timeout itself (plus a 30 s grace), caps step logs at 64 MiB and outputs at 512 MiB, and strips control characters from guest error text before storing or printing it.
 
@@ -159,8 +161,6 @@ On the host, a job keeps only `~/.machbox/jobs/<id>/`:
 | `network.pcap` | with `--pcap`: every guest frame, refused ones included, captured on the host |
 
 Installed plugins ([usage](./plugins.md)) live in `~/.machbox/plugins/<owner>/<repo>/`: the repository, not the manifest `name`, identifies a plugin, so two plugins sharing a name never replace each other. `plugin install` takes a GitHub release's `.tar.gz` (`<repo>.tar.gz` if there are several) with `plugin.yml` at its root or in its only directory. It checks `<archive>.sha256` or GitHub's asset digest when present, accepts only regular files and directories, and records the tag in `.machbox-source.json`; `plugin update` reinstalls when the latest tag differs, swapping the directory in one rename. `GITHUB_TOKEN`, if set, authenticates the API requests.
-
-`docs/plugin.schema.json` describes the manifest for editors. Map it to `**/plugin.yml` (VS Code: `"yaml.schemas"` in settings) or start the file with `# yaml-language-server: $schema=<path to it>`; otherwise editors may apply SchemaStore's Bukkit `plugin.yml` schema and report a missing `main`.
 
 `internal/job` tests run the demo plugin's workflows against a loopback agent.
 
@@ -191,7 +191,7 @@ With `--pcap`, every frame, refused ones included, goes to `network.pcap` in the
 
 | Package | Role |
 |---------|------|
-| `cmd` | CLI: `vm import/list/rename/duplicate/setup/remove`, `plugin install/list/update/remove`, `run`, `start`, `instance list/remove` |
+| `cmd` | CLI: `vm import/list/rename/duplicate/setup/remove`, `plugin install/list/update/remove`, `run`, `job prune`, `start`, `instance list/remove` |
 | `internal/vm` | baseline lifecycle (import, setup, duplicate, resolve), disposable runs and persistent instances |
 | `internal/agent` | guest agent HTTP API: server (guest) and client (host) |
 | `internal/plugin` | `plugin.yml` loading, validation, templates, requirements, workflow arguments |
@@ -199,6 +199,7 @@ With `--pcap`, every frame, refused ones included, goes to `network.pcap` in the
 | `internal/job` | job directory and record, step execution in the guest, output collection |
 | `internal/assets` | `~/.machbox` layout, embedded guest DMG |
 | `internal/db` | SQLite baseline records |
+| `internal/logger` | logrus setup for `--log-level`, `--log-output`, `--log-json` |
 | `pkg/vm` | VM instance: start/stop, state, GUI, vsock connect |
 | `pkg/vm/config` | baseline bundle format, VirtualBuddy import, snapshot, `Virtualization.framework` configuration |
 | `pkg/vm/gateway` | `--network gateway`, `gateway-public`: gvisor-tap-vsock stack, egress policy, pcap capture |

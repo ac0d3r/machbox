@@ -4,13 +4,14 @@ Only needs to be done once. After setup, the imported baseline can be reused for
 
 ## Create a Base VM with VirtualBuddy
 
-- Open [VirtualBuddy](https://github.com/insidegui/VirtualBuddy) and create a new macOS VM.
+1. Open [VirtualBuddy](https://github.com/insidegui/VirtualBuddy) and create a new macOS VM.
 
-    - Optional (during creation, uncheck "Enable VirtualBuddy Guest App")
+   Optionally, uncheck "Enable VirtualBuddy Guest App" during creation: Machbox
+   does not use it.
 
-      <img src="imgs/Disabled_VirtualBuddy_Guest_App.png" alt="Uncheck Guest App" width="350" />
+   <img src="imgs/Disabled_VirtualBuddy_Guest_App.png" alt="Uncheck Guest App" width="350" />
 
-3. Complete the macOS setup inside the VM (region, account, etc.).
+2. Complete the macOS setup inside the VM (region, account, etc.).
 
 > **Keep the baseline free of anything personal.** Every run starts from it, so
 > whatever it holds is readable by the code you run, which gets root.
@@ -38,7 +39,7 @@ behaves differently when SIP is off. You can keep one baseline of each kind.
 
 1. In VirtualBuddy, enable **Boot in recovery mode** for the VM.
 
-<img src="imgs/enable_Boot_in_recovery_mode.png" alt="Disable SIP" width="300" />
+   <img src="imgs/enable_Boot_in_recovery_mode.png" alt="Boot in recovery mode" width="300" />
 
 2. Start the VM and open **Utilities → Terminal** from the menu bar.
 
@@ -50,12 +51,12 @@ behaves differently when SIP is off. You can keep one baseline of each kind.
 
 4. Restart the VM normally.
 
-## Run Machbox Setup
+## Import and Run Machbox Setup
 
 On the host, run the command below. It opens the VM window:
 
 ```bash
-machbox vm import /path/to/your_Machbox.vbvm <name>
+machbox vm import /path/to/<vm>.vbvm <name>
 ```
 
 In the VM window:
@@ -115,10 +116,10 @@ as above: it shows **Update Agent…** when the installed agent is another build
 for the password again, which also refreshes automatic login.
 
 `machbox vm import`, `machbox vm setup` and `machbox vm list` print each baseline's
-agent version and its features: `agent`, `autologin`, the optional items in place
-when the setup window closed, and `sip-disabled`. Plugins can require features (`requires: {features: [rosetta, clt]}`);
-`machbox run` only picks baselines that have them. Baselines recorded by older
-versions list only `sip-disabled`: run `machbox vm setup` once to record the rest.
+agent version and [features](./architecture.md#baselines), recorded when the setup
+window closed. `machbox run` only picks baselines that have the features a plugin
+requires. Baselines recorded by older versions list only `sip-disabled`: run
+`machbox vm setup` once to record the rest.
 
 ## Duplicate a Baseline
 
@@ -134,3 +135,14 @@ The copy is an APFS clone: it is instant and takes no extra space until the two
 diverge. It keeps the source's machine identity, which an installed macOS needs to
 boot, so do not run the source and the copy at the same time. While `machbox vm
 setup` or `machbox vm remove` is using a baseline, it cannot be duplicated or run.
+
+## Manage Baselines
+
+```bash
+machbox vm list                                   # UUID, name, OS, agent, features, instances
+machbox vm rename <uuid-or-name> --name <new-name>
+machbox vm remove <uuid-or-name>                  # asks first (-y: don't ask)
+```
+
+`machbox vm remove` deletes the baseline's [instances](./instances.md) with it, after
+listing them, and refuses while one is running.
