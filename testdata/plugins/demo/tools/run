@@ -15,9 +15,12 @@ event() { printf '{"time":%s,"event":"%s"%s}\n' "$(date +%s)" "$1" "${2:-}" >>"$
 
 [ -e "$file" ] || { echo "run: $file not found" >&2; exit 1; }
 [ -f "$file" ] || { echo "run: $file is not a regular file; only executables are supported" >&2; exit 1; }
-case $file in /*) ;; *) file=./$file ;; esac
 : >"$out"
 
+# The input is on the read-only share: run a writable copy in the workdir.
+mkdir -p sample || exit 1
+cp "$file" sample/ || exit 1
+file=$PWD/sample/$(basename "$file")
 xattr -c "$file" 2>/dev/null
 chmod u+x "$file" || exit 1
 

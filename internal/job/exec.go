@@ -18,8 +18,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Layout of the read-only share. The workdir mirrors inputs/ so tools get
-// writable copies at the same relative paths.
+// Layout of the read-only share. Tools read file inputs in place; one that
+// needs to change an input copies it into the workdir itself.
 const (
 	sharePlugin = "plugin"
 	shareInputs = "inputs"
@@ -31,10 +31,9 @@ const (
 	// MaxOutputSize caps a step output copied back from the guest.
 	MaxOutputSize = 512 << 20
 
-	inputCopyTimeout = 30 * time.Minute
-	mkdirTimeout     = time.Minute
-	pullTimeout      = 10 * time.Minute
-	maxErrorLen      = 4 << 10
+	mkdirTimeout = time.Minute
+	pullTimeout  = 10 * time.Minute
+	maxErrorLen  = 4 << 10
 )
 
 var (
@@ -87,7 +86,7 @@ func (j *Job) execute(ctx context.Context, g Guest, wd agent.WorkDir, echo io.Wr
 	for _, in := range j.workflow.Inputs {
 		val := j.Inputs[in.Name]
 		if in.Type == plugin.InputFile && val != "" {
-			val = inputPath(in.Name, val)
+			val = path.Join(wd.SharePath, inputPath(in.Name, val))
 		}
 		vars.Inputs[in.Name] = val
 	}
@@ -124,23 +123,8 @@ func (j *Job) execute(ctx context.Context, g Guest, wd agent.WorkDir, echo io.Wr
 	return firstErr
 }
 
-// prepare copies file inputs from the share into the workdir, writable,
-// and creates the directories outputs are written to.
+// prepare creates the directories outputs are written to.
 func (j *Job) prepare(ctx context.Context, g Guest, wd agent.WorkDir) error {
-	for _, in := range j.workflow.Inputs {
-		if in.Type == plugin.InputFile && j.Inputs[in.Name] != "" {
-			if err := runTask(ctx, g, &agent.Task{
-				Command: "/bin/sh",
-				Args:    []string{"-c", `/bin/cp -R "$0" . && /bin/chmod -R u+w ` + shareInputs, path.Join(wd.SharePath, shareInputs)},
-				WorkDir: wd.WorkPath,
-				Timeout: int(inputCopyTimeout / time.Second),
-			}); err != nil {
-				return fmt.Errorf("copy inputs into the workdir: %w", err)
-			}
-			break
-		}
-	}
-
 	var dirs []string
 	for _, st := range j.workflow.Steps {
 		if d := path.Dir(st.Output); st.Output != "" && d != "." {

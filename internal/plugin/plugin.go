@@ -67,8 +67,8 @@ type InputType string
 const (
 	// InputString is passed to tools as is.
 	InputString InputType = "string"
-	// InputFile is a host path; the file or directory is copied into the
-	// guest workdir and tools receive its path relative to it.
+	// InputFile is a host path; the file or directory is shared read-only
+	// with the guest and tools receive its absolute guest path.
 	InputFile InputType = "file"
 	// InputBoolean is "true" or "false" (default); a bare --name sets it.
 	InputBoolean InputType = "boolean"
