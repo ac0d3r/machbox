@@ -313,3 +313,14 @@ func TestWorkflowNetwork(t *testing.T) {
 		t.Error("unknown network accepted")
 	}
 }
+
+func TestWorkflowKeep(t *testing.T) {
+	p, err := Parse([]byte("manifest_version: 1\nname: p\nworkflows:\n  w:\n    keep: true\n" +
+		"    steps: [{id: a, run: [x]}]\n  v:\n    steps: [{id: a, run: [x]}]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Workflows["w"].Keep || p.Workflows["v"].Keep {
+		t.Errorf("keep = %v, %v; want true, false", p.Workflows["w"].Keep, p.Workflows["v"].Keep)
+	}
+}

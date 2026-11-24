@@ -154,11 +154,23 @@ func create(dir string, p *plugin.Plugin, wf *plugin.Workflow, inputs map[string
 	return j, nil
 }
 
-// finish records how the job ended; steps that never started are skipped.
+// finish records how the job ended and releases its lock.
 func (j *Job) finish(err error) {
-	now := time.Now()
-	j.FinishedAt = &now
+	j.settle(err)
+	if j.lock != nil {
+		_ = j.lock.Close()
+	}
+}
+
+// settle records how the workflow ended; steps that never started are
+// skipped. A kept run settles before its session, and again at the end.
+func (j *Job) settle(err error) {
+	if j.FinishedAt == nil {
+		now := time.Now()
+		j.FinishedAt = &now
+	}
 	j.Status = StatusSucceeded
+	j.Error = ""
 	if err != nil {
 		j.Status = StatusFailed
 		j.Error = sanitize(err.Error())
@@ -170,9 +182,6 @@ func (j *Job) finish(err error) {
 	}
 	if err := j.save(); err != nil {
 		logrus.Warnf("save job record: %v", err)
-	}
-	if j.lock != nil {
-		_ = j.lock.Close()
 	}
 }
 

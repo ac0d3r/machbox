@@ -6,11 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -529,20 +527,6 @@ func shutdownGuest(inst *boxvm.VMInstance, c *agent.Client, force <-chan struct{
 	case <-inst.AlreadyShutdown():
 	case <-time.After(30 * time.Second):
 		logrus.Warn("timed out waiting for the VM to stop")
-	}
-}
-
-// keepAwake keeps the host from idle-sleeping, which would pause the
-// guest, until the returned func is called or machbox exits.
-func keepAwake() func() {
-	cmd := exec.Command("/usr/bin/caffeinate", "-i", "-w", strconv.Itoa(os.Getpid())) // #nosec G204 -- fixed command, our pid
-	if err := cmd.Start(); err != nil {
-		logrus.Warnf("keep the host awake: %v", err)
-		return func() {}
-	}
-	return func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
 	}
 }
 

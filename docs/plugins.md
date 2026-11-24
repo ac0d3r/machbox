@@ -37,6 +37,7 @@ Flags go before the plugin:
 | `--network <mode>` | `none`, `nat`, `gateway` or `gateway-public` ([what each reaches](./architecture.md#network)); default: the workflow's `network`, else `none` |
 | `--pcap` | with a gateway network: save guest traffic to `network.pcap` in the job directory |
 | `--gui` | show the VM window |
+| `--keep` | keep the VM up after the steps, until Ctrl-C or the window is closed; default: the workflow's `keep` |
 | `--show-output` | also print step output |
 
 An installed plugin is a plain directory: edit its `plugin.yml` (`~/.machbox/plugins/<owner>/<repo>/`) to change, say, a workflow's `network`. `plugin update` replaces the edits.

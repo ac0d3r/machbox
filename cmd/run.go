@@ -30,7 +30,9 @@ func newRunCommand() *cobra.Command {
 			"installed plugin, in a fresh snapshot of a baseline. Flags go before <plugin>; everything " +
 			"after <workflow> sets the workflow's inputs (--<input> <value> or positional). " +
 			"Without <workflow>, lists the plugin's workflows; with --help after it, its inputs.\n\n" +
-			"Step logs, outputs and job.json are kept in ~/.machbox/jobs/<id>/, printed when the job ends.",
+			"Step logs, outputs and job.json are kept in ~/.machbox/jobs/<id>/, printed when the job ends.\n\n" +
+			"With --keep (or the workflow's keep), the VM stays up after the steps, for interactive " +
+			"work, until Ctrl-C or, with --gui, the window is closed; it is then discarded.",
 		Example: "  machbox run --vm sonoma example analyze ./sample.zip\n" +
 			"  machbox run testdata/plugins/demo info ./sample",
 		Args:         cobra.MinimumNArgs(1),
@@ -70,11 +72,15 @@ func newRunCommand() *cobra.Command {
 			if opts.Boot.Network, err = config.ParseNetwork(network); err != nil {
 				return err
 			}
+			if !cmd.Flags().Changed("keep") {
+				opts.Boot.Keep = wf.Keep
+			}
 			if echo {
 				opts.Echo = cmd.ErrOrStderr()
 			}
 
-			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			// SIGHUP too: closing the terminal ends a kept run cleanly.
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 			defer stop()
 			j, err := job.Run(ctx, p, wf, inputs, opts)
 			if j != nil {
@@ -92,6 +98,8 @@ func newRunCommand() *cobra.Command {
 		fmt.Sprintf("save guest traffic to network.pcap in the job directory (needs --network %s or %s)",
 			config.NetworkGateway, config.NetworkGatewayPublic))
 	cmd.Flags().BoolVar(&opts.Boot.GUI, "gui", false, "show the VM window")
+	cmd.Flags().BoolVar(&opts.Boot.Keep, "keep", false,
+		"keep the VM up after the steps until Ctrl-C or the window is closed (default: the workflow's keep)")
 	cmd.Flags().BoolVar(&echo, "show-output", false, "also print step output (always kept in the job's logs)")
 	return cmd
 }
