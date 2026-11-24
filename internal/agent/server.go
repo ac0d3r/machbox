@@ -31,6 +31,9 @@ type Server struct {
 	Info       func() (GuestInfo, error)
 	Check      func() (CheckReport, error)
 	MountShare func(sharePath string) error
+	// SSHAddr is where POST /v1/ssh connects; empty means the guest's
+	// sshd on 127.0.0.1:22.
+	SSHAddr string
 }
 
 // Serve handles requests until ctx is cancelled or the listener fails.
@@ -61,6 +64,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+pathExec, s.handleExec)
 	mux.HandleFunc("POST "+pathExecStream, s.handleExecStream)
 	mux.HandleFunc("GET "+pathFiles, s.handleFile)
+	mux.HandleFunc("POST "+pathSSH, s.handleSSH)
 	return mux
 }
 

@@ -15,6 +15,7 @@ const (
 	pathExec       = "/v1/exec"
 	pathExecStream = "/v1/exec/stream"
 	pathFiles      = "/v1/files"
+	pathSSH        = "/v1/ssh"
 
 	// Trailers sent after the stdout body of a streaming task.
 	trailerTaskError    = "X-Task-Error"

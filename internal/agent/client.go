@@ -21,7 +21,7 @@ import (
 // same constant without a circular dependency. Bump when the API changes
 // incompatibly; unchanged values do not require `machbox vm setup` or
 // re-importing the baseline.
-const AgentVersion = "8"
+const AgentVersion = "9"
 
 // baseURL is the authority used for requests; the transport ignores it and
 // always dials the guest over vsock.
@@ -202,15 +202,21 @@ func (c *Client) do(ctx context.Context, method, path string, in any) (*http.Res
 		return resp, nil
 	}
 	defer resp.Body.Close()
+	return nil, responseError(resp)
+}
+
+// responseError turns a failed response into an error, with the agent's
+// message when the body has one.
+func responseError(resp *http.Response) error {
 	msg := resp.Status
 	var ae apiError
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxRequestBody)).Decode(&ae); err == nil && ae.Error != "" {
 		msg = ae.Error
 	}
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("guest agent: %s: %w", msg, ErrNotFound)
+		return fmt.Errorf("guest agent: %s: %w", msg, ErrNotFound)
 	}
-	return nil, fmt.Errorf("guest agent: %s", msg)
+	return fmt.Errorf("guest agent: %s", msg)
 }
 
 // LogGuest logs a guest that is ready, with its features in the words of vm

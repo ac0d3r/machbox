@@ -83,6 +83,7 @@ A run (`internal/vm.Run`) owns one directory, `~/.machbox/runs/run-*/`:
 | `POST /v1/exec` | run a task to completion; JSON result |
 | `POST /v1/exec/stream` | stream stdout as a chunked body; exit status in `X-Task-Error` / `X-Task-Timed-Out` trailers |
 | `GET /v1/files?root=&path=` | read a regular file at `path` inside `root`, opened through `os.Root` (no `..` or symlink escape) |
+| `POST /v1/ssh` | with `Upgrade: machbox-ssh`: after the `101`, the connection carries a TCP stream to the guest's sshd (`127.0.0.1:22`), for `machbox run --attach` without a guest network |
 
 Cancelling a request kills the task in the guest. A stream that hits its timeout ends normally with the output collected so far. Host and guest share `AgentVersion`; a mismatch requires `machbox vm setup`.
 
