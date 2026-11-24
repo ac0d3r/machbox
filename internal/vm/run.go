@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ac0d3r/machbox/internal/agent"
@@ -100,28 +101,6 @@ func (r *Run) Dir() string { return r.dir }
 
 // ShareDir returns the host directory shared with the guest.
 func (r *Run) ShareDir() string { return filepath.Join(r.dir, runShareDir) }
-
-// ShareFile writes src into the share at name (a relative path) with mode.
-func (r *Run) ShareFile(name string, src io.Reader, mode os.FileMode) error {
-	dst, err := r.sharePath(name)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-		return err
-	}
-	return writeFile(dst, src, mode)
-}
-
-// SharePath copies a host file or directory into the share root under its
-// base name and returns that name.
-func (r *Run) SharePath(hostPath string) (string, error) {
-	name := filepath.Base(hostPath)
-	if err := r.ShareCopy(hostPath, name); err != nil {
-		return "", err
-	}
-	return name, nil
-}
 
 // ShareCopy copies a host file or directory into the share at name (a
 // relative path).
@@ -236,30 +215,22 @@ func copyPath(src, dst string) error {
 	if info.IsDir() {
 		return copyDir(src, dst)
 	}
-	return copyFile(src, dst, info.Mode())
+	return copyFile(src, dst, info.Mode().Perm())
 }
 
-func copyFile(src, dst string, mode os.FileMode) error {
+func copyFile(src, dst string, perm os.FileMode) error {
 	// #nosec G304 -- src is a caller-provided host path intentionally copied into the share.
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	return writeFile(dst, in, mode)
-}
-
-func writeFile(dst string, src io.Reader, mode os.FileMode) error {
-	// #nosec G304 -- dst is inside the run's share directory.
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	dstRoot, err := os.OpenRoot(filepath.Dir(dst))
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, src); err != nil {
-		_ = out.Close()
-		return err
-	}
-	return out.Close()
+	defer dstRoot.Close()
+	return copyRegular(in, dstRoot, filepath.Base(dst), perm)
 }
 
 // copyDir copies the tree at src to dst (which must not exist). Both sides
@@ -313,19 +284,102 @@ func copyDir(src, dst string) error {
 				return err
 			}
 			defer in.Close()
-			out, err := dstRoot.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
-			if err != nil {
-				return err
-			}
-			if _, err := io.Copy(out, in); err != nil {
-				_ = out.Close()
-				return err
-			}
-			return out.Close()
+			return copyRegular(in, dstRoot, path, info.Mode().Perm())
 
 		default:
 			logrus.Debugf("share: skipping special file %s", filepath.Join(src, path))
 			return nil
 		}
 	})
+}
+
+// copyRegular creates name (which must not exist) in dst with in's content
+// and mode perm. It clones in when the volume allows, which takes no time
+// or space however large the file, and copies otherwise (another volume,
+// not APFS).
+func copyRegular(in *os.File, dst *os.Root, name string, perm os.FileMode) error {
+	err := cloneRegular(in, dst, name, perm)
+	if err == nil {
+		return nil
+	}
+	logrus.Debugf("share: clone %s: %v; copying", name, err)
+
+	out, err := dst.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
+}
+
+// cloneFile clones the open file src to name in the directory dir; a
+// variable so tests can make it fail.
+var cloneFile = func(src, dir *os.File, name string) error {
+	return unix.Fclonefileat(int(src.Fd()), int(dir.Fd()), name, unix.CLONE_NOOWNERCOPY)
+}
+
+// lockFlags make a file unremovable; a clone would keep them and the run
+// directory could not be removed.
+const lockFlags = unix.UF_IMMUTABLE | unix.UF_APPEND | unix.SF_IMMUTABLE | unix.SF_APPEND
+
+// cloneRegular clones in to name in dst, then strips what a copy would not
+// carry: extended attributes (quarantine among them) and mode bits beyond
+// perm. On error nothing is left at name.
+func cloneRegular(in *os.File, dst *os.Root, name string, perm os.FileMode) (err error) {
+	var st unix.Stat_t
+	if err := unix.Fstat(int(in.Fd()), &st); err != nil {
+		return err
+	}
+	if st.Flags&lockFlags != 0 {
+		return errors.New("source has immutable or append-only flags")
+	}
+
+	dir, err := dst.Open(filepath.Dir(name))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	if err := cloneFile(in, dir, filepath.Base(name)); err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = dst.Remove(name)
+		}
+	}()
+
+	out, err := dst.Open(name)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	fd := int(out.Fd())
+	// The clone has the source's mode; xattrs need it writable.
+	if err := unix.Fchmod(fd, 0o600); err != nil {
+		return err
+	}
+	if err := stripXattrs(fd); err != nil {
+		return err
+	}
+	return unix.Fchmod(fd, uint32(perm))
+}
+
+func stripXattrs(fd int) error {
+	size, err := unix.Flistxattr(fd, nil)
+	if err != nil || size == 0 {
+		return err
+	}
+	buf := make([]byte, size)
+	if size, err = unix.Flistxattr(fd, buf); err != nil {
+		return err
+	}
+	for name := range strings.SplitSeq(strings.TrimRight(string(buf[:size]), "\x00"), "\x00") {
+		if err := unix.Fremovexattr(fd, name); err != nil {
+			return fmt.Errorf("remove xattr %s: %w", name, err)
+		}
+	}
+	return nil
 }
