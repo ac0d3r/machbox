@@ -35,7 +35,7 @@ func newRunCommand() *cobra.Command {
 			"  machbox run testdata/plugins/demo info ./sample",
 		Args:         cobra.MinimumNArgs(1),
 		SilenceUsage: true,
-		RunE: withVMDB(func(cmd *cobra.Command, args []string) error {
+		RunE: withBaselines(func(cmd *cobra.Command, args []string) error {
 			p, err := loadPlugin(args[0])
 			if err != nil {
 				return err

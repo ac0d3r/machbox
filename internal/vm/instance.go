@@ -36,8 +36,9 @@ import (
 //	  instance.json    InstanceMeta
 //	  .lock            held while the instance runs
 //
-// machbox run only picks baselines from the database, so an instance, and
-// whatever was signed in to in it, never runs a plugin's samples.
+// machbox run only picks recorded baselines (vms/<uuid>/baseline.json), so
+// an instance, and whatever was signed in to in it, never runs a plugin's
+// samples.
 const (
 	instancesDirName = "instances"
 	instanceMetaName = "instance.json"

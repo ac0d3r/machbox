@@ -43,7 +43,7 @@ machbox plugin install https://github.com/ac0d3r/machbox-malware
 machbox run ac0d3r/machbox-malware            # list its workflows
 ```
 
-Every command takes `--log-level` (`debug`, `info`, `warn`, `error`), `--log-output <file>` (logs go to stderr, and also to this file, rotated) and `--log-json`.
+Every command takes `--log-level` (`debug`, `info`, `warn`, `error`) and `--log-json`. Logs go to stderr: `2>machbox.log` keeps them.
 
 ## Usage
 

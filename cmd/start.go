@@ -42,7 +42,7 @@ func newStartCommand() *cobra.Command {
 			"  machbox start cc --gui                                                     # start again, same network and shares, with the window",
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
-		RunE: withVMDB(func(cmd *cobra.Command, args []string) error {
+		RunE: withBaselines(func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			// Flags are checked before anything is created.
 			var err error

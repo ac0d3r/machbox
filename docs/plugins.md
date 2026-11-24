@@ -54,6 +54,6 @@ machbox plugin remove user/machbox-plugin
 
 ## Writing a plugin
 
-See [Plugins and jobs](./architecture.md#plugins-and-jobs) for the manifest and how steps run, and `testdata/plugins/demo` for a working example. To be installable, a release needs one `.tar.gz` asset holding `plugin.yml` and the built tools, at its root or in a single top-level directory; publish `<archive>.sha256` alongside it to have downloads verified.
+See [Plugins and jobs](./architecture.md#plugins-and-jobs) for the manifest and how steps run, and `testdata/plugins/demo` for a working example. To be installable, a release needs one `.tar.gz` asset holding `plugin.yml` and the built tools, at its root or in a single top-level directory. Downloads are checked against the SHA-256 digest GitHub reports for the asset.
 
 [`plugin.schema.json`](./plugin.schema.json) describes the manifest for editors. Map it to `**/plugin.yml` (VS Code: `"yaml.schemas"` in settings) or start the file with `# yaml-language-server: $schema=<path to it>`; otherwise editors may apply SchemaStore's Bukkit `plugin.yml` schema and report a missing `main`.

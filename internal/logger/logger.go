@@ -1,53 +1,33 @@
 package logger
 
 import (
-	"io"
 	"os"
 
 	nested "github.com/antonfisher/nested-logrus-formatter"
 	"github.com/sirupsen/logrus"
-	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-const (
-	TimeFormat = "2006-01-02T15:04:05.000Z0700"
-
-	DefaultMaxSize   = 100 // MB
-	DefaultMaxAge    = 30  // Day
-	DefaultMaxBackup = 10
-)
+const TimeFormat = "2006-01-02T15:04:05.000Z0700"
 
 type Config struct {
-	Level     string `yaml:"level" json:"level,omitempty"`
-	Output    string `yaml:"output" json:"output,omitempty"`
-	MaxSize   int    `yaml:"max_size" json:"max_size,omitempty"`
-	MaxAge    int    `yaml:"max_age" json:"max_age,omitempty"`
-	MaxBackup int    `yaml:"max_backup" json:"max_backup,omitempty"`
-	Format    bool   `yaml:"format" json:"format,omitempty"`
+	Level string
+	JSON  bool
 }
 
+// Init sets up logging to stderr, which keeps stdout for command output.
 func Init(cfg *Config) error {
-	if cfg.MaxSize <= 0 {
-		cfg.MaxSize = DefaultMaxSize
-	}
-	if cfg.MaxAge <= 0 {
-		cfg.MaxAge = DefaultMaxAge
-	}
-	if cfg.MaxBackup <= 0 {
-		cfg.MaxBackup = DefaultMaxBackup
-	}
 	if cfg.Level == "" {
 		cfg.Level = "info"
 	}
 
-	if cfg.Format {
+	if cfg.JSON {
 		logrus.SetFormatter(&logrus.JSONFormatter{TimestampFormat: TimeFormat})
 	} else {
 		logrus.SetFormatter(&nested.Formatter{
 			TimestampFormat: TimeFormat,
 			HideKeys:        false,
-			// Escape codes are for a terminal: a pipe or the log file gets plain text.
-			NoColors: cfg.Output != "" || !isTerminal(os.Stderr),
+			// Escape codes are for a terminal: a pipe or a file gets plain text.
+			NoColors: !isTerminal(os.Stderr),
 		})
 	}
 
@@ -56,21 +36,7 @@ func Init(cfg *Config) error {
 		return err
 	}
 	logrus.SetLevel(level)
-
-	var writers []io.Writer
-	writers = append(writers, os.Stderr)
-	if cfg.Output != "" {
-		fileWriter := &lumberjack.Logger{
-			Filename:   cfg.Output,
-			MaxSize:    cfg.MaxSize,
-			MaxAge:     cfg.MaxAge,
-			MaxBackups: cfg.MaxBackup,
-			Compress:   true,
-		}
-		writers = append(writers, fileWriter)
-	}
-
-	logrus.SetOutput(io.MultiWriter(writers...))
+	logrus.SetOutput(os.Stderr)
 	return nil
 }
 
