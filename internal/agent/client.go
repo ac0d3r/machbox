@@ -38,13 +38,13 @@ var (
 type DialFunc func(ctx context.Context) (net.Conn, error)
 
 // CompatibleAgent reports whether a guest agent is usable with this host.
+// Callers add how to fix it, which depends on what they were doing.
 func CompatibleAgent(version string) error {
 	if version == "" {
-		return fmt.Errorf("guest agent did not report agent_version; run `machbox vm setup`")
+		return errors.New("guest agent did not report agent_version")
 	}
 	if version != AgentVersion {
-		return fmt.Errorf("guest agent version %q incompatible with host agent %q; run `machbox vm setup`",
-			version, AgentVersion)
+		return fmt.Errorf("guest agent version %q incompatible with host agent %q", version, AgentVersion)
 	}
 	return nil
 }
