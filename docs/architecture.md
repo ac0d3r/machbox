@@ -24,7 +24,7 @@ flowchart LR
     subgraph Guest["Guest VM (macOS, auto-login)"]
         Agent["machbox-guest<br>HTTP over vsock :12345"]
         Proc["task processes"]
-        Mount["/tmp/machbox_s*<br>virtiofs mount"]
+        Mount["/tmp/machbox-share<br>virtiofs mount"]
     end
 
     CLI --> Baseline

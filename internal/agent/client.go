@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -97,13 +96,17 @@ func (c *Client) Info(ctx context.Context) (GuestInfo, error) {
 	return info, nil
 }
 
+// Guest paths of the workdir and the share. Every run boots a fresh
+// snapshot and runs one job, so they are fixed. Both sit directly in /tmp:
+// a parent only root can enter would lock out the user a step drops to.
+var (
+	workPath  = "/tmp/machbox-work"
+	sharePath = "/tmp/machbox-share"
+)
+
 // SetWorkdir tells the guest where to store files and mount the share.
 func (c *Client) SetWorkdir(ctx context.Context) (WorkDir, error) {
-	tmpID := strconv.FormatInt(time.Now().UnixNano(), 36)
-	wd := WorkDir{
-		WorkPath:  fmt.Sprintf("/tmp/machbox_w%s", tmpID),
-		SharePath: fmt.Sprintf("/tmp/machbox_s%s", tmpID),
-	}
+	wd := WorkDir{WorkPath: workPath, SharePath: sharePath}
 	if err := c.doJSON(ctx, http.MethodPost, pathWorkDir, wd, nil); err != nil {
 		return WorkDir{}, fmt.Errorf("set workdir: %w", err)
 	}

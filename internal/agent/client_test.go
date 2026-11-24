@@ -96,12 +96,16 @@ func TestWaitReadyTimesOut(t *testing.T) {
 }
 
 func TestSetWorkdir(t *testing.T) {
+	dir := t.TempDir()
+	oldWork, oldShare := workPath, sharePath
+	workPath, sharePath = filepath.Join(dir, "work"), filepath.Join(dir, "share")
+	t.Cleanup(func() { workPath, sharePath = oldWork, oldShare })
+
 	ta := startAgent(t)
 	wd, err := ta.client.SetWorkdir(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(wd.WorkPath) })
 
 	if got := <-ta.mounted; got != wd.SharePath {
 		t.Errorf("mounted %q, want %q", got, wd.SharePath)
