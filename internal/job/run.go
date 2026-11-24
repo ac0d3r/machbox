@@ -126,7 +126,7 @@ func (j *Job) run(ctx context.Context, baseline *db.VM, opts Options) error {
 			command:  opts.Attach.Command,
 			baseline: baseline.Name,
 			gui:      opts.Boot.GUI,
-		}); serr != nil {
+		}); serr != nil && ctx.Err() == nil {
 			logrus.Errorf("%v", serr)
 		}
 		return err

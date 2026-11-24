@@ -59,7 +59,7 @@ func TestSSHArgsIsolateTheSession(t *testing.T) {
 	for _, want := range []string{
 		"-F\n/dev/null", "IdentityAgent=none", "ForwardAgent=no", "ClearAllForwardings=yes",
 		"PermitLocalCommand=no", "StrictHostKeyChecking=yes", "UserKnownHostsFile=/k/known_hosts",
-		"GlobalKnownHostsFile=/dev/null", "PasswordAuthentication=no",
+		"GlobalKnownHostsFile=/dev/null", "PasswordAuthentication=no", "SendEnv=LANG LC_*",
 		"ProxyCommand=" + ncPath + " -U '/run dir/100%%/sock'",
 	} {
 		if !strings.Contains(joined, want) {
@@ -317,5 +317,37 @@ func TestBanner(t *testing.T) {
 	if s := b.String(); !strings.Contains(s, "· /usr/local/bin/claude · job failed") ||
 		!strings.Contains(s, "quit claude or close the VM window: end the session") {
 		t.Errorf("banner:\n%s", s)
+	}
+}
+
+// stuckGuest models an agent a sample stopped: a dial answers only when
+// its ctx ends.
+type stuckGuest struct{ Guest }
+
+func (stuckGuest) DialSSH(ctx context.Context) (io.ReadWriteCloser, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// Once ssh gives up (~.), close must not wait on a dial the guest never
+// answers.
+func TestBridgeCloseEndsPendingDials(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "sock")
+	b, err := bridge(context.Background(), sock, stuckGuest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond) // the dial is pending
+	_ = c.Close()
+	closed := make(chan struct{})
+	go func() { b.close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("bridge close waited on a dial to a stuck agent")
 	}
 }

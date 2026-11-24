@@ -131,7 +131,7 @@ func (j *Job) attach(ctx context.Context, s *session) error {
 	case err != nil:
 		return err
 	case ctx.Err() != nil:
-		logrus.Info("session ended: VM stopped")
+		logrus.Info("session ended: the run is stopping")
 	case code == 255 && b.lastErr() != nil:
 		return fmt.Errorf("session: %w", b.lastErr())
 	case code == 255:
@@ -203,11 +203,12 @@ func prepareGuest(ctx context.Context, g Guest, user, workDir, pubKey string) (s
 // sessionBridge accepts ssh's connections (through nc) on a unix socket
 // and connects each to the guest's sshd.
 type sessionBridge struct {
-	ln    net.Listener
-	wg    sync.WaitGroup
-	mu    sync.Mutex
-	conns map[net.Conn]struct{}
-	err   error // the last failure to reach the guest's sshd
+	ln     net.Listener
+	cancel context.CancelFunc // ends pending dials: the agent may never answer
+	wg     sync.WaitGroup
+	mu     sync.Mutex
+	conns  map[net.Conn]struct{}
+	err    error // the last failure to reach the guest's sshd
 }
 
 func bridge(ctx context.Context, sock string, g attachGuest) (*sessionBridge, error) {
@@ -219,7 +220,8 @@ func bridge(ctx context.Context, sock string, g attachGuest) (*sessionBridge, er
 		_ = ln.Close()
 		return nil, err
 	}
-	b := &sessionBridge{ln: ln, conns: map[net.Conn]struct{}{}}
+	ctx, cancel := context.WithCancel(ctx)
+	b := &sessionBridge{ln: ln, cancel: cancel, conns: map[net.Conn]struct{}{}}
 	b.wg.Go(func() {
 		for {
 			c, err := ln.Accept()
@@ -261,9 +263,11 @@ func (b *sessionBridge) lastErr() error {
 	return b.err
 }
 
-// close stops accepting, ends open connections and waits for them.
+// close stops accepting, ends open connections and pending dials, and
+// waits for them.
 func (b *sessionBridge) close() {
 	_ = b.ln.Close()
+	b.cancel()
 	b.mu.Lock()
 	for c := range b.conns {
 		_ = c.Close()
@@ -274,7 +278,8 @@ func (b *sessionBridge) close() {
 
 // sshArgs keeps ssh to the session: no user config, agent or forwarding
 // reaches a guest a sample may control, and the guest is known only by the
-// host key read from it.
+// host key read from it. -F /dev/null also skips /etc/ssh/ssh_config, so
+// the locale is sent here, as that file does.
 func sshArgs(key, knownHosts, sock, user, remote string) []string {
 	return []string{
 		"-tt", "-F", "/dev/null",
@@ -288,6 +293,7 @@ func sshArgs(key, knownHosts, sock, user, remote string) []string {
 		"-o", "ForwardX11=no",
 		"-o", "ClearAllForwardings=yes",
 		"-o", "PermitLocalCommand=no",
+		"-o", "SendEnv=LANG LC_*",
 		"-o", "UserKnownHostsFile=" + knownHosts,
 		"-o", "GlobalKnownHostsFile=/dev/null",
 		"-o", "StrictHostKeyChecking=yes",
