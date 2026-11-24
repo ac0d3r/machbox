@@ -8,9 +8,8 @@ import (
 )
 
 type logOptions struct {
-	level  string
-	output string
-	JSON   bool
+	level string
+	JSON  bool
 }
 
 type rootOptions struct {
@@ -31,9 +30,8 @@ func NewRootCommand(version string) *cobra.Command {
 
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			if err := logger.Init(&logger.Config{
-				Level:  opts.log.level,
-				Output: opts.log.output,
-				Format: opts.log.JSON}); err != nil {
+				Level: opts.log.level,
+				JSON:  opts.log.JSON}); err != nil {
 				return err
 			}
 			return assets.Init()
@@ -44,10 +42,8 @@ func NewRootCommand(version string) *cobra.Command {
 
 	cmd.PersistentFlags().StringVar(&opts.log.level, "log-level",
 		"info", "log level: debug, info, warn, error")
-	cmd.PersistentFlags().StringVar(&opts.log.output, "log-output",
-		"", "also write logs to this file (rotated); they always go to stderr")
 	cmd.PersistentFlags().BoolVar(&opts.log.JSON, "log-json",
-		false, "enable JSON log output")
+		false, "log as JSON (logs go to stderr)")
 
 	cmd.AddCommand(
 		newVMCommand(),
