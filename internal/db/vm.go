@@ -1,6 +1,7 @@
 // Package db keeps baseline records: one baseline.json in each baseline
-// directory (~/.machbox/vms/<uuid>/), like jobs and plugins keep theirs. A directory without one is not a baseline: an import in progress,
-// or one that was interrupted.
+// directory (~/.machbox/vms/<uuid>/), like jobs and plugins keep theirs.
+// A directory without one is not a baseline: an import in progress, or one
+// that was interrupted.
 package db
 
 import (
