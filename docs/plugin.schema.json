@@ -65,6 +65,14 @@
           "enum": ["none", "nat", "gateway", "gateway-public"],
           "default": "none"
         },
+        "attach": {
+          "description": "Terminal session machbox run attaches to the guest after the steps, unless it has --attach=false: true for the console user's login shell, or a command run as is (no templates), in the workdir. The VM is discarded when the session ends.",
+          "oneOf": [
+            { "type": "boolean" },
+            { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 }
+          ],
+          "default": false
+        },
         "env": { "$ref": "#/definitions/env" },
         "steps": {
           "type": "array",
