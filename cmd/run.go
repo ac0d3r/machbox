@@ -15,6 +15,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"golang.org/x/sys/unix"
 )
 
 func newRunCommand() *cobra.Command {
@@ -22,6 +23,7 @@ func newRunCommand() *cobra.Command {
 		opts    job.Options
 		network string
 		echo    bool
+		attach  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "run [flags] <plugin> [<workflow> [inputs...]]",
@@ -30,8 +32,12 @@ func newRunCommand() *cobra.Command {
 			"installed plugin, in a fresh snapshot of a baseline. Flags go before <plugin>; everything " +
 			"after <workflow> sets the workflow's inputs (--<input> <value> or positional). " +
 			"Without <workflow>, lists the plugin's workflows; with --help after it, its inputs.\n\n" +
-			"Step logs, outputs and job.json are kept in ~/.machbox/jobs/<id>/, printed when the job ends.",
+			"Step logs, outputs and job.json are kept in ~/.machbox/jobs/<id>/, printed when the job ends.\n\n" +
+			"With --attach (or the workflow's attach), this terminal is then logged in to the guest as its " +
+			"console user, in the workdir, over ssh through the guest agent (no guest network needed); " +
+			"the VM is discarded when the session ends.",
 		Example: "  machbox run --vm sonoma example analyze ./sample.zip\n" +
+			"  machbox run --gui --attach testdata/plugins/demo info ./sample\n" +
 			"  machbox run testdata/plugins/demo info ./sample",
 		Args:         cobra.MinimumNArgs(1),
 		SilenceUsage: true,
@@ -70,6 +76,17 @@ func newRunCommand() *cobra.Command {
 			if opts.Boot.Network, err = config.ParseNetwork(network); err != nil {
 				return err
 			}
+			opts.Attach = wf.Attach
+			if cmd.Flags().Changed("attach") {
+				opts.Attach = plugin.Attach{Enabled: attach, Command: wf.Attach.Command}
+			}
+			if opts.Attach.Enabled && (!isTerminal(os.Stdin) || !isTerminal(os.Stdout)) {
+				if cmd.Flags().Changed("attach") {
+					return errors.New("--attach needs a terminal: stdin and stdout are not one")
+				}
+				return fmt.Errorf("workflow %s attaches a terminal session, but stdin and stdout are not a terminal; "+
+					"pass --attach=false to run it without one", wf.Name)
+			}
 			if echo {
 				opts.Echo = cmd.ErrOrStderr()
 			}
@@ -93,6 +110,8 @@ func newRunCommand() *cobra.Command {
 		fmt.Sprintf("save guest traffic to network.pcap in the job directory (needs --network %s or %s)",
 			config.NetworkGateway, config.NetworkGatewayPublic))
 	cmd.Flags().BoolVar(&opts.Boot.GUI, "gui", false, "show the VM window")
+	cmd.Flags().BoolVar(&attach, "attach", false,
+		"after the steps, log this terminal in to the guest until the session ends (default: the workflow's attach)")
 	cmd.Flags().BoolVar(&echo, "show-output", false, "also print step output (always kept in the job's logs)")
 	return cmd
 }
@@ -107,4 +126,10 @@ func printWorkflows(cmd *cobra.Command, p *plugin.Plugin) {
 	for _, name := range names {
 		fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", name)
 	}
+}
+
+// isTerminal reports whether f is a terminal.
+func isTerminal(f *os.File) bool {
+	_, err := unix.IoctlGetTermios(int(f.Fd()), unix.TIOCGETA)
+	return err == nil
 }

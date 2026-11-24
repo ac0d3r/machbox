@@ -35,6 +35,10 @@ type Options struct {
 	// Capture writes guest traffic to network.pcap in the job directory;
 	// only the gateway networks support it.
 	Capture bool
+	// Attach, when enabled, attaches a terminal session to the guest after
+	// the steps; the VM stops when it ends. The caller checks that stdin and
+	// stdout are a terminal.
+	Attach plugin.Attach
 }
 
 // Run executes workflow wf with inputs in a fresh run of a baseline. The
@@ -49,6 +53,15 @@ func Run(ctx context.Context, p *plugin.Plugin, wf *plugin.Workflow, inputs map[
 	}
 	if err := checkShareAccess(baseline); err != nil {
 		return nil, err
+	}
+	if opts.Attach.Enabled {
+		if !slices.Contains(baseline.Features, agent.FeatureSSH) {
+			return nil, fmt.Errorf("attach needs Remote Login (ssh) on baseline %s; turn it on in Machbox Setup (machbox vm setup %s)",
+				baseline.Name, baseline.Name)
+		}
+		if err := CheckAttach(); err != nil {
+			return nil, err
+		}
 	}
 	j, err := New(p, wf, inputs, baseline)
 	if err != nil {
@@ -97,7 +110,26 @@ func (j *Job) run(ctx context.Context, baseline *db.VM, opts Options) error {
 			return err
 		}
 		logrus.Debugf("guest workdir %s, share %s", wd.WorkPath, wd.SharePath)
-		return j.execute(ctx, c, wd, opts.Echo)
+		err = j.execute(ctx, c, wd, opts.Echo)
+		if !opts.Attach.Enabled || ctx.Err() != nil {
+			return err
+		}
+		// The session follows: record the result now. A session that cannot
+		// start does not change it.
+		j.settle(err)
+		logrus.Infof("job %s %s: %s", j.ID, j.Status, j.Dir)
+		if serr := j.attach(ctx, &session{
+			guest:    c,
+			runDir:   r.Dir(),
+			user:     user,
+			workDir:  wd.WorkPath,
+			command:  opts.Attach.Command,
+			baseline: baseline.Name,
+			gui:      opts.Boot.GUI,
+		}); serr != nil {
+			logrus.Errorf("%v", serr)
+		}
+		return err
 	})
 }
 
