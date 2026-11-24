@@ -31,11 +31,21 @@ pid=$!
 event start ",\"pid\":$pid"
 echo "run: started pid $pid for up to ${duration}s"
 
-(sleep "$duration" && kill -9 "$pid") >/dev/null 2>&1 &
+# Stopped early, the watchdog kills its sleep and exits normally: a sleep
+# left behind would outlive the step, and a watchdog killed outright makes
+# the shell print "Terminated".
+(
+	trap 'kill "$timer" 2>/dev/null; exit 0' TERM
+	sleep "$duration" &
+	timer=$!
+	wait "$timer" && kill -9 "$pid"
+) >/dev/null 2>&1 &
 watchdog=$!
-wait "$pid"
+# The shell reports a killed sample ("Killed: 9") on wait's stderr.
+wait "$pid" 2>/dev/null
 status=$?
 kill "$watchdog" 2>/dev/null
+wait "$watchdog" 2>/dev/null
 
 if [ "$status" -eq 137 ]; then
 	event killed ",\"after\":$duration"
