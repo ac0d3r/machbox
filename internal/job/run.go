@@ -40,11 +40,14 @@ type Options struct {
 // Run executes workflow wf with inputs in a fresh run of a baseline. The
 // job is returned once its directory exists, also when it then fails.
 func Run(ctx context.Context, p *plugin.Plugin, wf *plugin.Workflow, inputs map[string]string, opts Options) (*Job, error) {
+	if opts.Capture && !opts.Boot.Network.Gateway() {
+		return nil, fmt.Errorf("--pcap needs --network %s or %s", config.NetworkGateway, config.NetworkGatewayPublic)
+	}
 	baseline, err := pickBaseline(opts.Baseline, wf.Requires)
 	if err != nil {
 		return nil, err
 	}
-	if err := checkShareAccess(baseline, wf, inputs); err != nil {
+	if err := checkShareAccess(baseline); err != nil {
 		return nil, err
 	}
 	j, err := New(p, wf, inputs, baseline)
@@ -72,9 +75,6 @@ func (j *Job) run(ctx context.Context, baseline *db.VM, opts Options) error {
 		return err
 	}
 	if opts.Capture {
-		if !opts.Boot.Network.Gateway() {
-			return fmt.Errorf("pcap needs --network %s or %s", config.NetworkGateway, config.NetworkGatewayPublic)
-		}
 		opts.Boot.Capture = filepath.Join(j.Dir, captureName)
 	}
 
@@ -129,19 +129,14 @@ func waitSession(ctx context.Context, g interface {
 }
 
 // checkShareAccess fails before boot when the guest could not read the
-// inputs: with SIP on, TCC keeps the share from an agent without Full Disk
-// Access.
-func checkShareAccess(b *db.VM, wf *plugin.Workflow, inputs map[string]string) error {
+// share, which every job uses for the plugin's files: with SIP on, TCC keeps
+// it from an agent without Full Disk Access.
+func checkShareAccess(b *db.VM) error {
 	if slices.Contains(b.Features, agent.FeatureSIPDisabled) || slices.Contains(b.Features, agent.FeatureFullDiskAccess) {
 		return nil
 	}
-	for _, in := range wf.Inputs {
-		if in.Type == plugin.InputFile && inputs[in.Name] != "" {
-			return fmt.Errorf("baseline %s has SIP on and its agent lacks Full Disk Access, so the guest cannot read inputs; "+
-				"grant it in Machbox Setup (machbox vm setup %s, see docs/environment-setup.md)", b.Name, b.Name)
-		}
-	}
-	return nil
+	return fmt.Errorf("baseline %s has SIP on and its agent lacks Full Disk Access, so the guest cannot read the plugin or inputs; "+
+		"grant it in Machbox Setup (machbox vm setup %s, see docs/environment-setup.md)", b.Name, b.Name)
 }
 
 func pickBaseline(identifier string, req plugin.Requires) (*db.VM, error) {

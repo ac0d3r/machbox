@@ -70,9 +70,6 @@ func newRunCommand() *cobra.Command {
 			if opts.Boot.Network, err = config.ParseNetwork(network); err != nil {
 				return err
 			}
-			if opts.Capture && !opts.Boot.Network.Gateway() {
-				return fmt.Errorf("--pcap needs --network %s or %s", config.NetworkGateway, config.NetworkGatewayPublic)
-			}
 			if echo {
 				opts.Echo = cmd.ErrOrStderr()
 			}

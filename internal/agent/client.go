@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -97,13 +96,17 @@ func (c *Client) Info(ctx context.Context) (GuestInfo, error) {
 	return info, nil
 }
 
+// Guest paths of the workdir and the share. Every run boots a fresh
+// snapshot and runs one job, so they are fixed. Both sit directly in /tmp:
+// a parent only root can enter would lock out the user a step drops to.
+var (
+	workPath  = "/tmp/machbox-work"
+	sharePath = "/tmp/machbox-share"
+)
+
 // SetWorkdir tells the guest where to store files and mount the share.
 func (c *Client) SetWorkdir(ctx context.Context) (WorkDir, error) {
-	tmpID := strconv.FormatInt(time.Now().UnixNano(), 36)
-	wd := WorkDir{
-		WorkPath:  fmt.Sprintf("/tmp/machbox_w%s", tmpID),
-		SharePath: fmt.Sprintf("/tmp/machbox_s%s", tmpID),
-	}
+	wd := WorkDir{WorkPath: workPath, SharePath: sharePath}
 	if err := c.doJSON(ctx, http.MethodPost, pathWorkDir, wd, nil); err != nil {
 		return WorkDir{}, fmt.Errorf("set workdir: %w", err)
 	}
@@ -123,21 +126,9 @@ func (c *Client) RunTask(ctx context.Context, task *Task) (string, error) {
 	return strings.TrimSpace(res.Output), nil
 }
 
-// RunStreamTask starts a task and returns its stdout as it is produced.
-// Reaching the task timeout is a normal end (the reader returns io.EOF with
-// everything collected); any other failure is returned by Read at the end.
-// Closing the reader or cancelling ctx kills the task in the guest.
-func (c *Client) RunStreamTask(ctx context.Context, task *Task) (io.ReadCloser, error) {
-	resp, err := c.do(ctx, http.MethodPost, pathExecStream, task) //nolint:bodyclose // owned by streamReader; the caller closes it
-	if err != nil {
-		return nil, fmt.Errorf("start stream task: %w", err)
-	}
-	return &streamReader{resp: resp}, nil
-}
-
 // CopyTask runs a task to completion, copying its stdout to w as it is
-// produced. Unlike RunStreamTask, reaching the timeout is an error
-// (ErrTaskTimedOut); output written before it is kept. Cancelling ctx kills
+// produced. Reaching the timeout is ErrTaskTimedOut; output written
+// before it is kept. Cancelling ctx kills
 // the task in the guest.
 func (c *Client) CopyTask(ctx context.Context, task *Task, w io.Writer) error {
 	resp, err := c.do(ctx, http.MethodPost, pathExecStream, task)
@@ -168,24 +159,6 @@ func (c *Client) OpenFile(ctx context.Context, root, name string) (io.ReadCloser
 	}
 	return resp.Body, nil
 }
-
-type streamReader struct {
-	resp *http.Response
-}
-
-func (r *streamReader) Read(p []byte) (int, error) {
-	n, err := r.resp.Body.Read(p)
-	if errors.Is(err, io.EOF) {
-		// Trailers are only populated once the body is fully read.
-		t := r.resp.Trailer
-		if msg := t.Get(trailerTaskError); msg != "" && t.Get(trailerTaskTimedOut) != "true" {
-			return n, fmt.Errorf("stream task failed: %s", msg)
-		}
-	}
-	return n, err
-}
-
-func (r *streamReader) Close() error { return r.resp.Body.Close() }
 
 func (c *Client) doJSON(ctx context.Context, method, path string, in, out any) error {
 	resp, err := c.do(ctx, method, path, in)

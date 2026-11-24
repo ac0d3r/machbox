@@ -24,7 +24,7 @@ flowchart LR
     subgraph Guest["Guest VM (macOS, auto-login)"]
         Agent["machbox-guest<br>HTTP over vsock :12345"]
         Proc["task processes"]
-        Mount["/tmp/machbox_s*<br>virtiofs mount"]
+        Mount["/tmp/machbox-share<br>virtiofs mount"]
     end
 
     CLI --> Baseline
@@ -122,7 +122,7 @@ requires:                   # checked against the baseline record before boot, a
 workflows:
   analyze:
     inputs:                 # declaration order = positional argument order (booleans excluded)
-      sample:   { type: file, required: true }   # file: copied into the guest workdir
+      sample:   { type: file, required: true }   # file: read-only in the guest
       duration: { default: "10" }                # string (default type)
       mode:     { values: [fast, slow], default: fast }  # values: the only ones accepted
       verbose:  { type: boolean }                # "true" or "false" (default); a bare --verbose sets it
@@ -150,7 +150,7 @@ Before the first step, a job waits up to 5 minutes for the baseline's automatic 
 
 Once a sample runs, it controls the guest, agent included, so the host trusts nothing the guest sends to be small or timely: it enforces every timeout itself (plus a 30 s grace), caps step logs at 64 MiB and outputs at 512 MiB, and strips control characters from guest error text before storing or printing it.
 
-In the guest, the plugin directory and file inputs are on the read-only share (`plugin/`, `inputs/<input>/<file name>`). Every step runs with the same writable workdir as cwd; file inputs are copied there first, so `${{ inputs.sample }}` is `inputs/sample/<file name>` relative to it. The guest never writes to the host: after each step the host pulls its declared output through `GET /v1/files` (capped at `job.MaxOutputSize`).
+In the guest, the plugin directory and file inputs are on the read-only share (`plugin/`, `inputs/<input>/<file name>`). `${{ inputs.sample }}` is the absolute path of that file on the share; a tool that needs to change it (clear its attributes, make it executable, unpack it in place) copies it into the workdir first. Every step runs with the same writable workdir as cwd. The guest never writes to the host: after each step the host pulls its declared output through `GET /v1/files` (capped at `job.MaxOutputSize`).
 
 On the host, a job keeps only `~/.machbox/jobs/<id>/`:
 

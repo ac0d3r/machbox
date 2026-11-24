@@ -15,7 +15,7 @@ var exprRe = regexp.MustCompile(`\$\{\{\s*([^{}]*?)\s*\}\}`)
 // Vars are the values templates expand to when a step runs. Paths are
 // guest paths; relative ones are relative to the workdir (the step's cwd).
 //
-//	${{ inputs.<name> }}       input value (file inputs: relative path)
+//	${{ inputs.<name> }}       input value (file inputs: absolute path on the read-only share)
 //	${{ output }}              this step's output
 //	${{ steps.<id>.output }}   an earlier step's output
 //	${{ steps.<id>.status }}   an earlier step's status (job.Status)

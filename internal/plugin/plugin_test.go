@@ -58,14 +58,14 @@ func TestParseManifest(t *testing.T) {
 	}
 
 	args, err := wf.Steps[1].Args(Vars{
-		Inputs:    map[string]string{"sample": "inputs/sample/x.app", "timeout": "5m"},
+		Inputs:    map[string]string{"sample": "/tmp/s/inputs/sample/x.app", "timeout": "5m"},
 		PluginDir: "/tmp/s/plugin",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"tools/dynamictool", "run", "-ds", "/tmp/s/plugin/DTrace/network.d", "--duration=5m",
-		"-o", "dynamic.jsonl", "inputs/sample/x.app"}
+		"-o", "dynamic.jsonl", "/tmp/s/inputs/sample/x.app"}
 	if !reflect.DeepEqual(args, want) {
 		t.Errorf("args = %q", args)
 	}

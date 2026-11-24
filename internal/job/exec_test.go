@@ -53,10 +53,10 @@ workflows:
 `
 
 var testTools = map[string]string{
-	// The sample copy in the workdir must be writable.
+	// Inputs are read-only, as on the guest's share.
 	"static": `#!/bin/sh
 echo "static on $2 ($3)"
-echo tampered >> "$2" || exit 1
+if (echo tampered >> "$2") 2>/dev/null; then echo "input is writable" >&2; exit 1; fi
 printf '{"name":"%s"}\n' "$(basename "$2")" > "$1"
 `,
 	"dynamic": `#!/bin/sh
@@ -103,7 +103,10 @@ func TestExecuteWorkflow(t *testing.T) {
 	assertFile(t, filepath.Join(j.Dir, "outputs", "dynamic.jsonl"), `{"partial":true}`+"\n")
 	assertFile(t, filepath.Join(j.Dir, "outputs", "out", "report.json"),
 		`{"name":"Sample.bin"}`+"\n"+`{"partial":true}`+"\n")
-	assertFile(t, filepath.Join(j.Dir, "logs", "static.log"), "static on inputs/sample/Sample.bin (none)\n")
+	assertFile(t, filepath.Join(j.Dir, "logs", "static.log"), "static on "+filepath.Join(wd.SharePath, "inputs", "sample", "Sample.bin")+" (none)\n")
+	if _, err := os.Stat(filepath.Join(wd.WorkPath, "inputs")); !os.IsNotExist(err) {
+		t.Errorf("inputs copied into the workdir: %v", err)
+	}
 	assertFile(t, filepath.Join(j.Dir, "logs", "slow.log"), "slow\n")
 	assertFile(t, filepath.Join(j.Dir, "logs", "cleanup.log"), "cleanup in "+wd.WorkPath+" after failed skipped\n")
 	if _, err := os.Stat(filepath.Join(j.Dir, "logs", "after.log")); !os.IsNotExist(err) {
@@ -183,6 +186,11 @@ func runLocal(t *testing.T, pluginDir, workflow string, args []string) (*Job, ag
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// The guest mounts the share read-only.
+	if err := exec.Command("chmod", "-R", "a-w", wd.SharePath).Run(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = exec.Command("chmod", "-R", "u+w", wd.SharePath).Run() })
 
 	err = j.execute(context.Background(), startAgent(t), wd, nil)
 	j.finish(err)

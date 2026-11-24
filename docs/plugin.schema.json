@@ -78,7 +78,7 @@
       "additionalProperties": false,
       "properties": {
         "type": {
-          "description": "file: a host path copied into the guest workdir; tools get its relative path. boolean: true or false (default false, cannot be required); --name alone sets it.",
+          "description": "file: a host path shared read-only with the guest; tools get its absolute guest path and copy it into the workdir to change it. boolean: true or false (default false, cannot be required); --name alone sets it.",
           "enum": ["string", "file", "boolean"],
           "default": "string"
         },
