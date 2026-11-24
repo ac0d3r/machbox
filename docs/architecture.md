@@ -3,7 +3,7 @@
 machbox runs macOS guests on Apple's `Virtualization.framework`. The core does four things:
 
 - **Baseline management**: import a VirtualBuddy VM once, keep it in machbox's own bundle format.
-- **Disposable runs**: every boot works on an APFS copy-on-write snapshot plus a read-only share, discarded afterwards.
+- **Disposable runs**: every boot works on an APFS copy-on-write snapshot plus a read-only share, discarded afterwards; with `--attach`, after a terminal session in the guest.
 - **Guest agent**: an HTTP API inside the guest, reached over virtio-vsock, that runs host-issued tasks.
 - **Guest network**: none by default (a workflow may set its own); `--network gateway` goes through a host gateway (`gateway-public`: public addresses only), which with `--pcap` saves every frame.
 
@@ -126,6 +126,14 @@ workflows:
         when: always                    # success (default) | failure | always
         run: [tools/report, -o, "${{ output }}", "${{ steps.info.output }}", "${{ steps.run.output }}"]
         output: report/report.json
+  explore:
+    inputs:
+      sample: { type: file, required: true }
+    attach: [claude]        # after the steps, a session running claude (true: the login shell); --attach=false skips it
+    steps:
+      - id: info
+        run: [tools/info, -o, "${{ output }}", "${{ inputs.sample }}"]
+        output: info.json
 ```
 
 Templates only substitute: `${{ inputs.<name> }}`, `${{ output }}`, `${{ steps.<id>.output }}` and `${{ steps.<id>.status }}` (an earlier step; `succeeded`, `failed`, `timed_out` or `skipped`), `${{ plugin_dir }}`. A command with a slash (`tools/x`) is resolved in the plugin directory; a bare name in the guest `PATH` (the agent's includes Homebrew and `/usr/local/bin`; an `env` PATH replaces it). Only the command is resolved this way: a relative path in an argument is relative to the workdir, so pass plugin files as `${{ plugin_dir }}/<path>`, e.g. `run: [bash, "${{ plugin_dir }}/scripts/x.sh"]`.
@@ -136,7 +144,9 @@ Once a sample runs, it controls the guest, agent included, so the host trusts no
 
 In the guest, the plugin directory and file inputs are on the read-only share (`plugin/`, `inputs/<input>/<file name>`). `${{ inputs.sample }}` is the absolute path of that file on the share; a tool that needs to change it (clear its attributes, make it executable, unpack it in place) copies it into the workdir first. Every step runs with the same writable workdir as cwd. The guest never writes to the host: after each step the host pulls its declared output through `GET /v1/files` (capped at `job.MaxOutputSize`).
 
-A job's VM stops once its steps are done, also with `--gui`. `caffeinate` keeps the host awake while a run's VM is up.
+A job's VM stops once its steps are done, also with `--gui`, unless the run attaches a session (`--attach` or the workflow's `attach`). Then `job.json` gets the workflow's result and the job directory is logged, and the terminal is logged in to the guest: the console user, in the workdir (given to them first), running the workflow's command in a login shell, or the login shell itself. The VM is discarded when the session ends: the command exits, `~.` disconnects, the window is closed, the guest shuts down, or machbox gets SIGHUP or SIGTERM. A failed job still gets its session; the exit status is the job's. `caffeinate` keeps the host awake while a run's VM is up.
+
+The session is the host's `/usr/bin/ssh`, so OpenSSH handles the terminal (raw mode, resizing, Ctrl-C to the guest). Its `ProxyCommand` (`nc -U`) reaches a unix socket in the run directory that machbox connects to the agent's `POST /v1/ssh`, which carries the stream to the guest's sshd over vsock: the guest needs no network, but the baseline needs Remote Login (`ssh`). Each run makes an ed25519 key, appended to the console user's `authorized_keys` in the snapshot only, and pins the host key it reads from the guest. ssh runs with `-F /dev/null` and forwards nothing (no agent, X11 or ports) into a guest a sample may control; the console user name the guest reports is checked before it becomes an ssh argument. machbox refuses to attach before boot without a terminal on stdin and stdout, and logs to the job's `machbox.log` while ssh owns the terminal.
 
 On the host, a job keeps only `~/.machbox/jobs/<id>/`:
 
@@ -146,6 +156,7 @@ On the host, a job keeps only `~/.machbox/jobs/<id>/`:
 | `logs/<step>.log` | step stdout and stderr |
 | `outputs/<output>` | each step's output, including partial output of a failed step |
 | `network.pcap` | with `--pcap`: every guest frame, refused ones included, captured on the host |
+| `machbox.log` | with `--attach`: machbox's log during the session |
 
 Installed plugins ([usage](./plugins.md)) live in `~/.machbox/plugins/<owner>/<repo>/`: the repository, not the manifest `name`, identifies a plugin, so two plugins sharing a name never replace each other. `plugin install` takes a GitHub release's `.tar.gz` (`<repo>.tar.gz` if there are several) with `plugin.yml` at its root or in its only directory. It checks GitHub's SHA-256 digest of the asset when GitHub reports one, accepts only regular files and directories, and records the tag in `.machbox-source.json`; `plugin update` reinstalls when the latest tag differs, swapping the directory in one rename. `GITHUB_TOKEN`, if set, authenticates the API requests.
 

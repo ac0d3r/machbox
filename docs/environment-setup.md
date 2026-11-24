@@ -100,8 +100,10 @@ and records what was in place when the window closed.
 Computer name renames "<user>'s Virtual Machine" to "<user>'s MacBook Pro" (the Mac
 with the guest's chip). It is only the name: the guest's tools still report a VM.
 
-Remote Login needs a network, which only setup always has: runs have
-none unless `--network` or the workflow provides it.
+`machbox run --attach` needs Remote Login: the session is ssh to the guest's
+sshd through the guest agent, so it works without a guest network. Reaching
+it otherwise needs one, which only setup always has: runs have none unless
+`--network` or the workflow provides it.
 
 ## Update the Agent or Change the Tools of a Baseline
 
