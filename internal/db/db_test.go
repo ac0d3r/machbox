@@ -2,137 +2,254 @@ package db
 
 import (
 	"errors"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
-
-	sqlite "gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
-// vmV1 is the baselines table before SIP state was recorded.
-type vmV1 struct {
-	UUID string `gorm:"primaryKey;type:text"`
-	Name string
-}
-
-func (vmV1) TableName() string { return "vms" }
-
-// vmV2 is the baselines table with SIP state in its own column.
-type vmV2 struct {
-	UUID        string `gorm:"primaryKey;type:text"`
-	Name        string
-	SIPDisabled bool `gorm:"column:sip_disabled"`
-}
-
-func (vmV2) TableName() string { return "vms" }
-
-func openTestDB(t *testing.T, model any, rows ...any) *gorm.DB {
+// useDir points the store at a temporary vms directory holding dirs.
+func useDir(t *testing.T, dirs ...string) string {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "old.sqlite")), &gorm.Config{TranslateError: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.AutoMigrate(model); err != nil {
-		t.Fatal(err)
-	}
-	for _, r := range rows {
-		if err := db.Create(r).Error; err != nil {
+	d := t.TempDir()
+	old := root
+	root = func() string { return d }
+	t.Cleanup(func() { root = old })
+	for _, name := range dirs {
+		if err := os.MkdirAll(filepath.Join(d, name), 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
-	return db
+	return d
 }
 
-func features(t *testing.T, db *gorm.DB, uuid string) []string {
+func TestRecords(t *testing.T) {
+	dir := useDir(t, "a", "b", "importing")
+	if err := CreateVM(&VM{UUID: "a", Name: "one", Features: []string{"agent"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateVM(&VM{UUID: "b", Name: "two"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateVM(&VM{UUID: "a", Name: "three"}); err == nil {
+		t.Error("recording a baseline twice succeeded")
+	}
+	if err := CreateVM(&VM{UUID: "missing", Name: "x"}); err == nil {
+		t.Error("recording a baseline without a directory succeeded")
+	}
+
+	list, err := ListVMs()
+	if err != nil || len(list) != 2 || list[0].UUID != "a" || list[1].UUID != "b" {
+		t.Fatalf("list = %+v, %v; want a, b (a directory without a record is no baseline)", list, err)
+	}
+	vm, err := GetVMByUUID("a")
+	if err != nil || vm.Name != "one" || !vm.HasFeature("agent") || vm.CreatedAt.IsZero() {
+		t.Fatalf("get = %+v, %v", vm, err)
+	}
+	if _, err := GetVMByUUID("importing"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("get without record: %v", err)
+	}
+	if found, err := FindVMsByName("two"); err != nil || len(found) != 1 || found[0].UUID != "b" {
+		t.Errorf("find = %+v, %v", found, err)
+	}
+
+	if vm, err := UpdateVM("a", func(vm *VM) { vm.Name = "uno" }); err != nil || vm.Name != "uno" {
+		t.Fatalf("update = %+v, %v", vm, err)
+	}
+	if _, err := UpdateVM("missing", func(*VM) {}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("update without record: %v", err)
+	}
+
+	if err := DeleteVM("b"); err != nil {
+		t.Fatal(err)
+	}
+	if err := DeleteVM("b"); err != nil {
+		t.Errorf("second delete: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "b")); err != nil {
+		t.Errorf("delete removed the directory: %v", err)
+	}
+	if list, _ := ListVMs(); len(list) != 1 {
+		t.Errorf("list after delete: %+v", list)
+	}
+}
+
+func TestNamesStayUnique(t *testing.T) {
+	useDir(t, "a", "b")
+	if err := CreateVM(&VM{UUID: "a", Name: "same"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateVM(&VM{UUID: "b", Name: "same"}); !errors.Is(err, ErrNameTaken) {
+		t.Errorf("duplicate create: %v, want ErrNameTaken", err)
+	}
+	if err := CreateVM(&VM{UUID: "b", Name: "other"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateVM("b", func(vm *VM) { vm.Name = "same" }); !errors.Is(err, ErrNameTaken) {
+		t.Errorf("duplicate rename: %v, want ErrNameTaken", err)
+	}
+	if vm, _ := GetVMByUUID("b"); vm.Name != "other" {
+		t.Errorf("refused rename saved %q", vm.Name)
+	}
+}
+
+// Concurrent renames to one name: the lock lets exactly one through.
+func TestConcurrentRenames(t *testing.T) {
+	ids := []string{"a", "b", "c", "d"}
+	useDir(t, ids...)
+	for _, id := range ids {
+		if err := CreateVM(&VM{UUID: id, Name: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, len(ids))
+	for _, id := range ids {
+		wg.Go(func() {
+			_, err := UpdateVM(id, func(vm *VM) { vm.Name = "same" })
+			errs <- err
+		})
+	}
+	wg.Wait()
+	close(errs)
+	ok := 0
+	for err := range errs {
+		if err == nil {
+			ok++
+		} else if !errors.Is(err, ErrNameTaken) {
+			t.Error(err)
+		}
+	}
+	if ok != 1 {
+		t.Errorf("%d renames succeeded, want 1", ok)
+	}
+}
+
+// legacy creates a legacy database with the given SQL and points Init at it.
+func legacy(t *testing.T, sql string) string {
 	t.Helper()
-	var vm VM
-	if err := db.First(&vm, "uuid = ?", uuid).Error; err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(sqlite3); err != nil {
+		t.Skip("no sqlite3")
 	}
-	return vm.Features
+	path := filepath.Join(t.TempDir(), "machbox.sqlite")
+	if out, err := exec.Command(sqlite3, path, sql).CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	old := legacyDB
+	legacyDB = func() string { return path }
+	t.Cleanup(func() { legacyDB = old })
+	return path
 }
 
-func TestMigrateV1MarksBaselinesSIPDisabled(t *testing.T) {
-	db := openTestDB(t, &vmV1{}, &vmV1{UUID: "old", Name: "old"})
-	if err := migrate(db); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&VM{UUID: "new", Name: "new"}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := migrate(db); err != nil { // already migrated: leaves records alone
-		t.Fatal(err)
-	}
-	if got := features(t, db, "old"); !reflect.DeepEqual(got, []string{"sip-disabled"}) {
-		t.Errorf("old features = %v", got)
-	}
-	if got := features(t, db, "new"); len(got) != 0 {
-		t.Errorf("new features = %v", got)
-	}
-}
+func TestInitMigratesLegacyDatabase(t *testing.T) {
+	useDir(t, "cur", "off", "on")
+	path := legacy(t, `
+CREATE TABLE vms (uuid text PRIMARY KEY, name text, os_name text, os_version text, os_build text,
+  agent_version text, features text, error text, created_at datetime, updated_at datetime);
+CREATE UNIQUE INDEX idx_vms_name ON vms(name);
+INSERT INTO vms VALUES ('cur', 'current', 'macOS', '15.1', '24B83', '8', '["agent","clt"]', '',
+  '2026-11-05 10:00:00.123456+08:00', '2026-11-06 10:00:00+08:00');
+INSERT INTO vms (uuid, name) VALUES ('gone', 'gone');`)
 
-func TestMigrateV2MovesSIPColumnIntoFeatures(t *testing.T) {
-	db := openTestDB(t, &vmV2{},
-		&vmV2{UUID: "off", Name: "off", SIPDisabled: true},
-		&vmV2{UUID: "on", Name: "on"})
-	if err := migrate(db); err != nil {
+	if err := Init(); err != nil {
 		t.Fatal(err)
 	}
-	if got := features(t, db, "off"); !reflect.DeepEqual(got, []string{"sip-disabled"}) {
-		t.Errorf("off features = %v", got)
-	}
-	if got := features(t, db, "on"); len(got) != 0 {
-		t.Errorf("on features = %v", got)
-	}
-	if db.Migrator().HasColumn(&VM{}, "sip_disabled") {
-		t.Error("sip_disabled column kept")
-	}
-}
-
-// vmV3 is the baselines table with a non-unique index on name.
-type vmV3 struct {
-	UUID     string   `gorm:"primaryKey;type:text"`
-	Name     string   `gorm:"index;type:text"`
-	Features []string `gorm:"serializer:json"`
-}
-
-func (vmV3) TableName() string { return "vms" }
-
-func TestMigrateMakesNamesUnique(t *testing.T) {
-	db := openTestDB(t, &vmV3{}, &vmV3{UUID: "a", Name: "a"})
-	if err := migrate(db); err != nil {
+	vm, err := GetVMByUUID("cur")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := migrate(db); err != nil { // already unique: nothing to do
+	if vm.Name != "current" || vm.OSVersion != "15.1" || vm.AgentVersion != "8" ||
+		!reflect.DeepEqual(vm.Features, []string{"agent", "clt"}) || vm.CreatedAt.Year() != 2026 {
+		t.Errorf("migrated %+v", vm)
+	}
+	if list, _ := ListVMs(); len(list) != 1 {
+		t.Errorf("list = %+v; a record without its directory is dropped", list)
+	}
+	if _, err := os.Stat(path); err == nil {
+		t.Error("legacy database still in place")
+	}
+	if _, err := os.Stat(path + ".migrated"); err != nil {
+		t.Error(err)
+	}
+	if err := Init(); err != nil { // nothing left to migrate
 		t.Fatal(err)
-	}
-	_db = db
-	t.Cleanup(func() { _db = nil })
-	if err := CreateVM(&VM{UUID: "b", Name: "a"}); !errors.Is(err, ErrNameTaken) {
-		t.Errorf("duplicate create: err = %v, want ErrNameTaken", err)
-	}
-	b := &VM{UUID: "b", Name: "b"}
-	if err := CreateVM(b); err != nil {
-		t.Fatal(err)
-	}
-	b.Name = "a"
-	if err := SaveVM(b); !errors.Is(err, ErrNameTaken) {
-		t.Errorf("duplicate rename: err = %v, want ErrNameTaken", err)
 	}
 }
 
-func TestMigrateRefusesDuplicateNames(t *testing.T) {
-	db := openTestDB(t, &vmV2{},
-		&vmV2{UUID: "a", Name: "same", SIPDisabled: true},
-		&vmV2{UUID: "b", Name: "same"})
-	err := migrate(db)
+func TestInitMigratesOldSchemas(t *testing.T) {
+	useDir(t, "v1", "off", "on")
+	legacy(t, `
+CREATE TABLE vms (uuid text PRIMARY KEY, name text, sip_disabled numeric);
+INSERT INTO vms VALUES ('off', 'off', 1), ('on', 'on', 0);`)
+	if err := Init(); err != nil {
+		t.Fatal(err)
+	}
+	if vm, _ := GetVMByUUID("off"); vm == nil || !reflect.DeepEqual(vm.Features, []string{"sip-disabled"}) {
+		t.Errorf("off: %+v", vm)
+	}
+	if vm, _ := GetVMByUUID("on"); vm == nil || len(vm.Features) != 0 {
+		t.Errorf("on: %+v", vm)
+	}
+
+	// Before the SIP column, imports required SIP disabled.
+	legacy(t, `CREATE TABLE vms (uuid text PRIMARY KEY, name text); INSERT INTO vms VALUES ('v1', 'v1');`)
+	if err := Init(); err != nil {
+		t.Fatal(err)
+	}
+	if vm, _ := GetVMByUUID("v1"); vm == nil || !reflect.DeepEqual(vm.Features, []string{"sip-disabled"}) {
+		t.Errorf("v1: %+v", vm)
+	}
+}
+
+func TestInitRefusesDuplicateNames(t *testing.T) {
+	useDir(t, "a", "b")
+	path := legacy(t, `
+CREATE TABLE vms (uuid text PRIMARY KEY, name text, features text);
+INSERT INTO vms VALUES ('a', 'same', '[]'), ('b', 'same', '[]');`)
+	err := Init()
 	if err == nil || !strings.Contains(err.Error(), "same") {
 		t.Fatalf("err = %v, want one naming the duplicate", err)
 	}
-	// All or nothing: the old schema is still there to migrate again.
-	if !db.Migrator().HasColumn(&VM{}, "sip_disabled") || db.Migrator().HasColumn(&VM{}, "features") {
-		t.Error("failed migration left a partial schema")
+	if list, _ := ListVMs(); len(list) != 0 {
+		t.Errorf("failed migration recorded %+v", list)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Error("legacy database moved after a failed migration")
+	}
+}
+
+func TestInitWithoutLegacyDatabase(t *testing.T) {
+	useDir(t)
+	old := legacyDB
+	legacyDB = func() string { return filepath.Join(t.TempDir(), "none.sqlite") }
+	t.Cleanup(func() { legacyDB = old })
+	if err := Init(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Commands starting together: the first migrates, the others find
+// nothing left to do.
+func TestConcurrentInit(t *testing.T) {
+	useDir(t, "a")
+	legacy(t, `CREATE TABLE vms (uuid text PRIMARY KEY, name text, features text);
+INSERT INTO vms VALUES ('a', 'a', '[]');`)
+	var wg sync.WaitGroup
+	errs := make(chan error, 4)
+	for range 4 {
+		wg.Go(func() { errs <- Init() })
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Error(err)
+		}
+	}
+	if list, _ := ListVMs(); len(list) != 1 {
+		t.Errorf("list = %+v", list)
 	}
 }

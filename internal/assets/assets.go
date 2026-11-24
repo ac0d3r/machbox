@@ -21,7 +21,7 @@ var dataFS embed.FS
 const (
 	appDirName = ".machbox"
 
-	dbName = "machbox.sqlite"
+	legacyDBName = "machbox.sqlite"
 
 	vmsDirName     = "vms"
 	runsDirName    = "runs"
@@ -172,8 +172,9 @@ func removeOldExtractions(dir, stem, ext, keep string) {
 // Dir returns the root application directory (~/.machbox).
 func AppDir() string { return appDir }
 
-// DBPath returns the SQLite database path (~/.machbox/machbox.db).
-func DBPath() string { return filepath.Join(appDir, dbName) }
+// LegacyDBPath returns the SQLite database earlier versions kept baseline
+// records in (~/.machbox/machbox.sqlite), now only read to migrate them.
+func LegacyDBPath() string { return filepath.Join(appDir, legacyDBName) }
 
 // VMsDir returns the directory that holds imported VM baselines
 // (~/.machbox/vms). Each baseline lives in its own UUID-named subdirectory.

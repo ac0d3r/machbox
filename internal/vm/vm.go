@@ -17,7 +17,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
-	"gorm.io/gorm"
 )
 
 // ImportOptions configures a baseline import.
@@ -28,7 +27,7 @@ type ImportOptions struct {
 
 // Import APFS-clones a VBVM into the managed baseline directory, runs setup
 // (GUI + guest agent handshake), and records the baseline. On failure the
-// clone is removed and the database is left unchanged.
+// clone is removed and nothing is recorded.
 func Import(ctx context.Context, opts ImportOptions) (vm *db.VM, err error) {
 	name := strings.TrimSpace(opts.Name)
 	if name == "" {
@@ -115,8 +114,8 @@ func Import(ctx context.Context, opts ImportOptions) (vm *db.VM, err error) {
 }
 
 // Reconfigure boots an imported baseline with the current guest.dmg attached
-// so the user can run Machbox Setup, then refreshes guest metadata in the
-// database. The on-disk baseline is kept on failure.
+// so the user can run Machbox Setup, then refreshes guest metadata in its
+// record. The on-disk baseline is kept on failure.
 func Reconfigure(ctx context.Context, identifier string) (*db.VM, error) {
 	vm, err := Resolve(identifier)
 	if err != nil {
@@ -127,8 +126,7 @@ func Reconfigure(ctx context.Context, identifier string) (*db.VM, error) {
 	if _, err := os.Stat(dir); err != nil {
 		return nil, fmt.Errorf("baseline files %s: %w", dir, err)
 	}
-	// Held until the record is saved: released any earlier, a vm remove could
-	// delete the baseline and the save would bring its record back.
+	// Held while setup writes to the baseline, and until its record is saved.
 	lock, err := lockBaseline(dir)
 	if err != nil {
 		return nil, err
@@ -144,13 +142,14 @@ func Reconfigure(ctx context.Context, identifier string) (*db.VM, error) {
 		return nil, fmt.Errorf("setup of %s failed: no guest info (aborted?)", vm.UUID)
 	}
 
-	vm.OSName = res.Info.OSName
-	vm.OSVersion = res.Info.OSVersion
-	vm.OSBuild = res.Info.BuildVersion
-	vm.AgentVersion = res.Info.AgentVersion
-	vm.Features = res.Features
-	vm.Error = ""
-	if err := db.SaveVM(vm); err != nil {
+	vm, err = db.UpdateVM(vm.UUID, func(vm *db.VM) {
+		vm.OSName = res.Info.OSName
+		vm.OSVersion = res.Info.OSVersion
+		vm.OSBuild = res.Info.BuildVersion
+		vm.AgentVersion = res.Info.AgentVersion
+		vm.Features = res.Features
+	})
+	if err != nil {
 		return nil, fmt.Errorf("save baseline after setup: %w", err)
 	}
 
@@ -292,8 +291,8 @@ func Rename(identifier, newName string) (*db.VM, error) {
 		return nil, err
 	}
 
-	vm.Name = newName
-	if err := db.SaveVM(vm); err != nil {
+	vm, err = db.UpdateVM(vm.UUID, func(vm *db.VM) { vm.Name = newName })
+	if err != nil {
 		return nil, fmt.Errorf("rename baseline: %w", err)
 	}
 	return vm, nil
@@ -332,11 +331,13 @@ func Remove(identifier string) (*db.VM, error) {
 		}
 		locks = append(locks, l)
 	}
-	if err := os.RemoveAll(dir); err != nil {
-		return nil, fmt.Errorf("remove baseline files %s: %w", dir, err)
-	}
+	// The record goes first: a removal that fails halfway leaves files
+	// that no command lists, rather than a baseline missing some.
 	if err := db.DeleteVM(vm.UUID); err != nil {
 		return nil, fmt.Errorf("remove baseline record: %w", err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return nil, fmt.Errorf("remove baseline files %s: %w", dir, err)
 	}
 
 	logrus.Infof("removed baseline %s (%s)", vm.Name, vm.UUID)
@@ -367,7 +368,7 @@ func Resolve(identifier string) (*db.VM, error) {
 		if err == nil {
 			return vm, nil
 		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
+		if !errors.Is(err, db.ErrNotFound) {
 			return nil, err
 		}
 	}

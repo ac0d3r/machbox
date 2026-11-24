@@ -29,7 +29,7 @@ func newInstanceListCommand() *cobra.Command {
 		Short:        "List instances",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
-		RunE: withVMDB(func(cmd *cobra.Command, args []string) error {
+		RunE: withBaselines(func(cmd *cobra.Command, args []string) error {
 			ins, err := vm.ListInstances()
 			if err != nil {
 				return err
@@ -47,7 +47,7 @@ func newInstanceRemoveCommand() *cobra.Command {
 		Short:        "Remove a stopped instance and its disk",
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
-		RunE: withVMDB(func(cmd *cobra.Command, args []string) error {
+		RunE: withBaselines(func(cmd *cobra.Command, args []string) error {
 			in, err := vm.FindInstance(args[0])
 			if err != nil {
 				return err

@@ -29,12 +29,11 @@ func newVMCommand() *cobra.Command {
 	return cmd
 }
 
-func withVMDB(run func(*cobra.Command, []string) error) func(*cobra.Command, []string) error {
+func withBaselines(run func(*cobra.Command, []string) error) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
-		if err := db.InitDB(); err != nil {
+		if err := db.Init(); err != nil {
 			return err
 		}
-		defer func() { _ = db.CloseDB() }()
 		return run(cmd, args)
 	}
 }
@@ -45,7 +44,7 @@ func newVMImportCommand() *cobra.Command {
 		Short:        "Import a VirtualBuddy VM as a ready baseline",
 		Args:         cobra.ExactArgs(2),
 		SilenceUsage: true,
-		RunE: withVMDB(func(cmd *cobra.Command, args []string) error {
+		RunE: withBaselines(func(cmd *cobra.Command, args []string) error {
 			rec, err := vm.Import(cmd.Context(), vm.ImportOptions{
 				VbvmPath: args[0],
 				Name:     args[1],
@@ -64,7 +63,7 @@ func newVMListCommand() *cobra.Command {
 		Short:        "List imported baselines",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
-		RunE: withVMDB(func(cmd *cobra.Command, args []string) error {
+		RunE: withBaselines(func(cmd *cobra.Command, args []string) error {
 			vms, err := vm.List()
 			if err != nil {
 				return err
@@ -81,7 +80,7 @@ func newVMRenameCommand() *cobra.Command {
 		Short:        "Rename a baseline",
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
-		RunE: withVMDB(func(cmd *cobra.Command, args []string) error {
+		RunE: withBaselines(func(cmd *cobra.Command, args []string) error {
 			rec, err := vm.Rename(args[0], name)
 			if err != nil {
 				return err
@@ -101,7 +100,7 @@ func newVMDuplicateCommand() *cobra.Command {
 		Short:        "Copy a baseline, to configure the copy independently",
 		Args:         cobra.ExactArgs(2),
 		SilenceUsage: true,
-		RunE: withVMDB(func(cmd *cobra.Command, args []string) error {
+		RunE: withBaselines(func(cmd *cobra.Command, args []string) error {
 			rec, err := vm.Duplicate(args[0], args[1])
 			if err != nil {
 				return err
@@ -121,7 +120,7 @@ func newVMSetupCommand() *cobra.Command {
 			"then close the window when checks pass.",
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
-		RunE: withVMDB(func(cmd *cobra.Command, args []string) error {
+		RunE: withBaselines(func(cmd *cobra.Command, args []string) error {
 			rec, err := vm.Reconfigure(cmd.Context(), args[0])
 			if err != nil {
 				return err
@@ -139,7 +138,7 @@ func newVMRemoveCommand() *cobra.Command {
 		Aliases:      []string{"rm"},
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
-		RunE: withVMDB(func(cmd *cobra.Command, args []string) error {
+		RunE: withBaselines(func(cmd *cobra.Command, args []string) error {
 			rec, err := vm.Resolve(args[0])
 			if err != nil {
 				return err

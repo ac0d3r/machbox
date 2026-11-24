@@ -12,9 +12,8 @@ machbox runs macOS guests on Apple's `Virtualization.framework`. The core does f
 flowchart LR
     subgraph Host["Host (~/.machbox)"]
         CLI["machbox CLI"]
-        DB[("machbox.sqlite<br>baseline records")]
         GuestDMG["data/guest-SHA.dmg<br>(extracted on demand)"]
-        Baseline["vms/UUID/<br>baseline bundle"]
+        Baseline["vms/UUID/<br>baseline bundle + baseline.json"]
         subgraph Run["runs/run-*/ (disposable)"]
             Snap["vm/<br>APFS snapshot"]
             Share["share/<br>read-only share"]
@@ -28,7 +27,7 @@ flowchart LR
         Mount["/tmp/machbox_s*<br>virtiofs mount"]
     end
 
-    CLI --> DB
+    CLI --> Baseline
     CLI -->|import / vm setup| GuestDMG
     GuestDMG -.->|read-only disk| Guest
     Baseline -->|clonefile| Snap
@@ -48,6 +47,8 @@ flowchart LR
 AuxiliaryStorage  HardwareModel  MachineIdentifier
 Disk.img          config.json    # {"version":1,"cpu_count":…,"memory_size":…}
 ```
+
+Once setup succeeds, `baseline.json` next to them records the baseline: name, guest OS, agent version and features. A directory without one, an import in progress or an interrupted one, is not a baseline. Record writes take a lock (`vms/.records.lock`) so names stay unique. Versions before this one kept records in `~/.machbox/machbox.sqlite`; the first command that reads baselines moves them into `baseline.json` files with macOS's `sqlite3` and renames the database to `machbox.sqlite.migrated`.
 
 `vm duplicate` clones a baseline the same way, keeping its machine identity.
 
@@ -73,7 +74,7 @@ A run (`internal/vm.Run`) owns one directory, `~/.machbox/runs/run-*/`:
 
 ## Instances
 
-An instance (`internal/vm.Instance`) is a persistent clone of a baseline for interactive work, such as a signed-in tool. It is kept in the baseline's directory and the directory is its whole record; the database is not involved:
+An instance (`internal/vm.Instance`) is a persistent clone of a baseline for interactive work, such as a signed-in tool. It is kept in the baseline's directory and the directory is its whole record:
 
 | Path (`~/.machbox/vms/<uuid>/instances/<name>/`) | Purpose |
 |------|---------|
@@ -85,7 +86,7 @@ An instance (`internal/vm.Instance`) is a persistent clone of a baseline for int
 
 Shares are host directories at `/Volumes/My Shared Files/<name>` in the guest: one virtiofs device with the macOS automount tag and a multiple-directory share, read-write unless `--share-ro`. An instance does not need its agent. It runs until the guest shuts down, its window is closed or the process gets SIGINT, SIGTERM or SIGHUP; the guest is then shut down through the agent (`shutdown -h now`), or the power button without one, and forced off after two minutes or on a second signal. `caffeinate -i -w <pid>` keeps the host from idle-sleeping meanwhile. The instance keeps the baseline's machine identity, as runs do.
 
-`machbox run` picks baselines from the database only, so an instance and whatever is signed in to in it never run a plugin's samples. `vm remove` lists a baseline's instances and asks before removing them with it; it refuses while one is running.
+`machbox run` picks only recorded baselines (`vms/<uuid>/baseline.json`), so an instance and whatever is signed in to in it never run a plugin's samples. `vm remove` lists a baseline's instances and asks before removing them with it; it refuses while one is running.
 
 ## Guest agent
 
@@ -160,7 +161,7 @@ On the host, a job keeps only `~/.machbox/jobs/<id>/`:
 | `outputs/<output>` | each step's output, including partial output of a failed step |
 | `network.pcap` | with `--pcap`: every guest frame, refused ones included, captured on the host |
 
-Installed plugins ([usage](./plugins.md)) live in `~/.machbox/plugins/<owner>/<repo>/`: the repository, not the manifest `name`, identifies a plugin, so two plugins sharing a name never replace each other. `plugin install` takes a GitHub release's `.tar.gz` (`<repo>.tar.gz` if there are several) with `plugin.yml` at its root or in its only directory. It checks `<archive>.sha256` or GitHub's asset digest when present, accepts only regular files and directories, and records the tag in `.machbox-source.json`; `plugin update` reinstalls when the latest tag differs, swapping the directory in one rename. `GITHUB_TOKEN`, if set, authenticates the API requests.
+Installed plugins ([usage](./plugins.md)) live in `~/.machbox/plugins/<owner>/<repo>/`: the repository, not the manifest `name`, identifies a plugin, so two plugins sharing a name never replace each other. `plugin install` takes a GitHub release's `.tar.gz` (`<repo>.tar.gz` if there are several) with `plugin.yml` at its root or in its only directory. It checks GitHub's SHA-256 digest of the asset when GitHub reports one, accepts only regular files and directories, and records the tag in `.machbox-source.json`; `plugin update` reinstalls when the latest tag differs, swapping the directory in one rename. `GITHUB_TOKEN`, if set, authenticates the API requests.
 
 `internal/job` tests run the demo plugin's workflows against a loopback agent.
 
@@ -198,8 +199,8 @@ With `--pcap`, every frame, refused ones included, goes to `network.pcap` in the
 | `internal/plugin/store` | installed plugins: GitHub release download, verification, extraction |
 | `internal/job` | job directory and record, step execution in the guest, output collection |
 | `internal/assets` | `~/.machbox` layout, embedded guest DMG |
-| `internal/db` | SQLite baseline records |
-| `internal/logger` | logrus setup for `--log-level`, `--log-output`, `--log-json` |
+| `internal/db` | baseline records (`baseline.json`), migration from the old SQLite database |
+| `internal/logger` | logrus setup for `--log-level`, `--log-json` |
 | `pkg/vm` | VM instance: start/stop, state, GUI, vsock connect |
 | `pkg/vm/config` | baseline bundle format, VirtualBuddy import, snapshot, `Virtualization.framework` configuration |
 | `pkg/vm/gateway` | `--network gateway`, `gateway-public`: gvisor-tap-vsock stack, egress policy, pcap capture |
