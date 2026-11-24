@@ -73,11 +73,11 @@ type fakeGitHub struct {
 	srv      *httptest.Server
 	tags     []string
 	archives map[string][]byte
-	sums     map[string]string // overrides the published .sha256
+	digests  map[string]string // overrides the digest GitHub reports
 }
 
 func newFakeGitHub(t *testing.T) *fakeGitHub {
-	f := &fakeGitHub{archives: map[string][]byte{}, sums: map[string]string{}}
+	f := &fakeGitHub{archives: map[string][]byte{}, digests: map[string]string{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -102,18 +102,8 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		f.writeRelease(w, tag)
 	case strings.HasPrefix(p, "/download/"):
-		tag, name, _ := strings.Cut(strings.TrimPrefix(p, "/download/"), "/")
-		data := f.archives[tag]
-		if strings.HasSuffix(name, ".sha256") {
-			sum := sha256.Sum256(data)
-			s := hex.EncodeToString(sum[:])
-			if o, ok := f.sums[tag]; ok {
-				s = o
-			}
-			_, _ = w.Write([]byte(s + "  machbox-demo.tar.gz\n"))
-			return
-		}
-		_, _ = w.Write(data)
+		tag, _, _ := strings.Cut(strings.TrimPrefix(p, "/download/"), "/")
+		_, _ = w.Write(f.archives[tag])
 	default:
 		http.NotFound(w, r)
 	}
@@ -121,9 +111,13 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 
 func (f *fakeGitHub) writeRelease(w http.ResponseWriter, tag string) {
 	dl := f.srv.URL + "/download/" + tag + "/"
+	sum := sha256.Sum256(f.archives[tag])
+	digest := hex.EncodeToString(sum[:])
+	if d, ok := f.digests[tag]; ok {
+		digest = d
+	}
 	_ = json.NewEncoder(w).Encode(release{Tag: tag, Assets: []asset{
-		{Name: "machbox-demo.tar.gz", URL: dl + "machbox-demo.tar.gz"},
-		{Name: "machbox-demo.tar.gz.sha256", URL: dl + "machbox-demo.tar.gz.sha256"},
+		{Name: "machbox-demo.tar.gz", URL: dl + "machbox-demo.tar.gz", Digest: "sha256:" + digest},
 	}})
 }
 
@@ -216,7 +210,7 @@ func TestSameNameFromTwoRepos(t *testing.T) {
 func TestInstallRejects(t *testing.T) {
 	gh := newFakeGitHub(t)
 	gh.add("v1", pluginArchive(t, "1.0.0"))
-	gh.sums["v1"] = strings.Repeat("0", 64)
+	gh.digests["v1"] = strings.Repeat("0", 64)
 	gh.add("v2", tarGz(t, entry{name: "../evil", body: "x", mode: 0o644}))
 	gh.add("v3", tarGz(t, entry{name: "plugin.yml", typ: tar.TypeSymlink}))
 	s := &Store{Dir: t.TempDir(), API: gh.srv.URL}

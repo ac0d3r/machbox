@@ -6,8 +6,8 @@
 // name. That name still works as a shorthand while it is unambiguous.
 //
 // A release must carry a .tar.gz asset holding plugin.yml and the built
-// tools, at its root or in one top-level directory. If the release also has
-// <asset>.sha256 (or GitHub reports a digest), the download is verified.
+// tools, at its root or in one top-level directory. The download is checked
+// against the SHA-256 digest GitHub reports for the asset, when it has one.
 package store
 
 import (
@@ -332,8 +332,8 @@ func (s *Store) apiOrDefault() string {
 }
 
 // pickAsset returns the release's plugin archive and its expected SHA-256
-// (empty if the release publishes none).
-func (s *Store) pickAsset(ctx context.Context, repo string, rel *release) (asset, string, error) {
+// (empty if GitHub reports no digest, as for assets uploaded before it did).
+func pickAsset(repo string, rel *release) (asset, string, error) {
 	var archives []asset
 	byName := map[string]asset{}
 	for _, a := range rel.Assets {
@@ -357,25 +357,6 @@ func (s *Store) pickAsset(ctx context.Context, repo string, rel *release) (asset
 		return asset{}, "", fmt.Errorf("release %s of %s has no .tar.gz asset", rel.Tag, repo)
 	}
 
-	if sum, ok := byName[a.Name+".sha256"]; ok {
-		resp, err := s.get(ctx, sum.URL, "")
-		if err != nil {
-			return asset{}, "", err
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return asset{}, "", fmt.Errorf("download %s: %s", sum.Name, resp.Status)
-		}
-		data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
-		if err != nil {
-			return asset{}, "", fmt.Errorf("download %s: %w", sum.Name, err)
-		}
-		fields := strings.Fields(string(data))
-		if len(fields) == 0 {
-			return asset{}, "", fmt.Errorf("%s is empty", sum.Name)
-		}
-		return a, strings.ToLower(fields[0]), nil
-	}
 	if d, ok := strings.CutPrefix(a.Digest, "sha256:"); ok {
 		return a, strings.ToLower(d), nil
 	}
@@ -383,7 +364,7 @@ func (s *Store) pickAsset(ctx context.Context, repo string, rel *release) (asset
 }
 
 func (s *Store) install(ctx context.Context, repo string, rel *release) (*Installed, error) {
-	a, sum, err := s.pickAsset(ctx, repo, rel)
+	a, sum, err := pickAsset(repo, rel)
 	if err != nil {
 		return nil, err
 	}
@@ -456,7 +437,7 @@ func (s *Store) download(ctx context.Context, a asset, sum, dir string) error {
 		return fmt.Errorf("download %s: larger than %d bytes", a.Name, maxArchiveSize)
 	}
 	if got := hex.EncodeToString(h.Sum(nil)); sum != "" && got != sum {
-		return fmt.Errorf("download %s: sha256 %s, release says %s", a.Name, got, sum)
+		return fmt.Errorf("download %s: sha256 %s, GitHub says %s", a.Name, got, sum)
 	}
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return err
