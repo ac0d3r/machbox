@@ -313,3 +313,34 @@ func TestWorkflowNetwork(t *testing.T) {
 		t.Error("unknown network accepted")
 	}
 }
+
+func TestWorkflowAttach(t *testing.T) {
+	manifest := func(attach string) string {
+		m := "manifest_version: 1\nname: p\nworkflows:\n  w:\n"
+		if attach != "" {
+			m += "    attach: " + attach + "\n"
+		}
+		return m + "    steps: [{id: a, run: [x]}]\n"
+	}
+	for in, want := range map[string]Attach{
+		"":                    {},
+		"false":               {},
+		"true":                {Enabled: true},
+		"[claude]":            {Enabled: true, Command: []string{"claude"}},
+		"[claude, --verbose]": {Enabled: true, Command: []string{"claude", "--verbose"}},
+		`["/bin/zsh", "-l"]`:  {Enabled: true, Command: []string{"/bin/zsh", "-l"}},
+	} {
+		p, err := Parse([]byte(manifest(in)))
+		if err != nil {
+			t.Fatalf("attach %s: %v", in, err)
+		}
+		if got := p.Workflows["w"].Attach; !reflect.DeepEqual(got, want) {
+			t.Errorf("attach %s = %+v, want %+v", in, got, want)
+		}
+	}
+	for _, in := range []string{"claude", "yes", `"true"`, "[]", `[""]`, "{cmd: x}", "[[x]]"} {
+		if _, err := Parse([]byte(manifest(in))); err == nil {
+			t.Errorf("attach %s accepted", in)
+		}
+	}
+}

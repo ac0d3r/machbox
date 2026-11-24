@@ -56,6 +56,9 @@ type Workflow struct {
 	// Network is the guest network when machbox run has no --network:
 	// none (default) or a config.NetworkModes value, canonicalized by Parse.
 	Network string `yaml:"network"`
+	// Attach is the terminal session machbox run attaches to the guest
+	// after the steps, unless it has --attach=false.
+	Attach Attach `yaml:"attach"`
 	// Env is set for every step; a step's own env overrides it.
 	Env   map[string]string `yaml:"env"`
 	Steps []*Step           `yaml:"steps"`
@@ -126,6 +129,39 @@ func decodeStrict(node *yaml.Node, v any) error {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	return dec.Decode(v)
+}
+
+// Attach is a workflow's attach: true (the console user's login shell), a
+// command, or false (the default: no session).
+type Attach struct {
+	Enabled bool
+	// Command runs in the session, as is (no templates); empty means the
+	// login shell.
+	Command []string
+}
+
+// UnmarshalYAML decodes true, false or a command (a list of strings).
+func (a *Attach) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		var on bool
+		if node.Tag != "!!bool" || node.Decode(&on) != nil {
+			return fmt.Errorf("line %d: attach must be true, false or a command such as [%s]", node.Line, node.Value)
+		}
+		*a = Attach{Enabled: on}
+	case yaml.SequenceNode:
+		var cmd []string
+		if err := node.Decode(&cmd); err != nil {
+			return fmt.Errorf("line %d: attach: %w", node.Line, err)
+		}
+		if len(cmd) == 0 || cmd[0] == "" {
+			return fmt.Errorf("line %d: attach: the command is empty", node.Line)
+		}
+		*a = Attach{Enabled: true, Command: cmd}
+	default:
+		return fmt.Errorf("line %d: attach must be true, false or a command", node.Line)
+	}
+	return nil
 }
 
 // Lookup returns the input called name, or nil.

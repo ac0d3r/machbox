@@ -100,8 +100,10 @@ and records what was in place when the window closed.
 Computer name renames "<user>'s Virtual Machine" to "<user>'s MacBook Pro" (the Mac
 with the guest's chip). It is only the name: the guest's tools still report a VM.
 
-Remote Login needs a network, which only setup always has: runs have
-none unless `--network` or the workflow provides it.
+`machbox run --attach` needs Remote Login: the session is ssh to the guest's
+sshd through the guest agent, so it works without a guest network. Reaching
+it otherwise needs one, which only setup always has: runs have none unless
+`--network` or the workflow provides it.
 
 ## Update the Agent or Change the Tools of a Baseline
 
@@ -139,10 +141,7 @@ setup` or `machbox vm remove` is using a baseline, it cannot be duplicated or ru
 ## Manage Baselines
 
 ```bash
-machbox vm list                                   # UUID, name, OS, agent, features, instances
+machbox vm list                                   # UUID, name, OS, agent, features
 machbox vm rename <uuid-or-name> --name <new-name>
 machbox vm remove <uuid-or-name>                  # asks first (-y: don't ask)
 ```
-
-`machbox vm remove` deletes the baseline's [instances](./instances.md) with it, after
-listing them, and refuses while one is running.

@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"os/exec"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -30,7 +33,8 @@ type BootOptions struct {
 type GuestFunc func(ctx context.Context, c *agent.Client, info agent.GuestInfo) error
 
 // Boot starts the run's snapshot, waits for a compatible guest agent and
-// calls fn. The VM is stopped once fn returns or ctx is cancelled.
+// calls fn. The VM is stopped once fn returns or ctx is cancelled. The host
+// does not idle-sleep meanwhile.
 func (r *Run) Boot(ctx context.Context, opts BootOptions, fn GuestFunc) error {
 	// Main thread is pinned in main(); do not UnlockOSThread.
 	ctx, cancel := context.WithCancel(ctx)
@@ -59,43 +63,34 @@ func (r *Run) Boot(ctx context.Context, opts BootOptions, fn GuestFunc) error {
 		return fmt.Errorf("start vm: %w", err)
 	}
 	logrus.Info("VM started")
+	defer keepAwake()()
 
-	// Stop the VM on cancellation, and cancel fn if the VM stops first.
+	// Cancel fn if the VM stops first.
 	var stoppedEarly atomic.Bool
 	go func() {
 		select {
 		case <-ctx.Done():
-			_ = inst.Shutdown()
 		case <-inst.AlreadyShutdown():
 			stoppedEarly.Store(true)
 			cancel()
 		}
 	}()
 
-	errCh := make(chan error, 1)
+	var runErr error
+	done := make(chan struct{})
 	go func() {
-		errCh <- r.withGuest(ctx, inst, fn)
-		if !opts.GUI {
-			cancel()
-			return
-		}
-		// Keep the guest up for inspection; closing the window stops it.
-		logrus.Info("finished — close the VM window to exit")
+		defer close(done)
+		defer stopVM(inst)
+		runErr = r.withGuest(ctx, inst, fn)
 	}()
 
 	var graphicErr error
 	if opts.GUI {
+		// Returns when the window is closed or the VM stops.
 		graphicErr = inst.ShowGraphic(config.DefaultDisplayWidth, config.DefaultDisplayHeight)
 		cancel()
 	}
-
-	runErr := <-errCh
-	_ = inst.Shutdown()
-	select {
-	case <-inst.AlreadyShutdown():
-	case <-time.After(30 * time.Second):
-		logrus.Warn("timed out waiting for the VM to stop")
-	}
+	<-done
 	logrus.Info("VM stopped")
 
 	if graphicErr != nil && (runErr == nil || errors.Is(runErr, context.Canceled)) {
@@ -105,6 +100,31 @@ func (r *Run) Boot(ctx context.Context, opts BootOptions, fn GuestFunc) error {
 		return fmt.Errorf("VM stopped unexpectedly: %w", runErr)
 	}
 	return runErr
+}
+
+// stopVM stops the VM at once and waits for it: a run's snapshot is
+// discarded, so the guest need not shut down cleanly.
+func stopVM(inst *boxvm.VMInstance) {
+	_ = inst.Shutdown()
+	select {
+	case <-inst.AlreadyShutdown():
+	case <-time.After(30 * time.Second):
+		logrus.Warn("timed out waiting for the VM to stop")
+	}
+}
+
+// keepAwake keeps the host from idle-sleeping, which would pause the
+// guest, until the returned func is called or machbox exits.
+func keepAwake() func() {
+	cmd := exec.Command("/usr/bin/caffeinate", "-i", "-w", strconv.Itoa(os.Getpid())) // #nosec G204 -- fixed command, our pid
+	if err := cmd.Start(); err != nil {
+		logrus.Warnf("keep the host awake: %v", err)
+		return func() {}
+	}
+	return func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}
 }
 
 // startNetwork starts the host gateway when n needs one and returns the
@@ -154,7 +174,7 @@ func (r *Run) withGuest(ctx context.Context, inst *boxvm.VMInstance, fn GuestFun
 	}
 
 	if err := agent.CompatibleAgent(info.AgentVersion); err != nil {
-		return fmt.Errorf("%w; run: machbox vm setup %s", err, r.Baseline.UUID)
+		return fmt.Errorf("%w; update it: machbox vm setup %s", err, r.Baseline.Name)
 	}
 	// Only SIP is read live; the rest is the baseline's record.
 	agent.LogGuest(info, agent.WithSIP(r.Baseline.Features, info.SIPDisabled))

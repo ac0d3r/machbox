@@ -1,10 +1,9 @@
 # Architecture
 
-machbox runs macOS guests on Apple's `Virtualization.framework`. The core does five things:
+machbox runs macOS guests on Apple's `Virtualization.framework`. The core does four things:
 
 - **Baseline management**: import a VirtualBuddy VM once, keep it in machbox's own bundle format.
-- **Disposable runs**: every boot works on an APFS copy-on-write snapshot plus a read-only share, discarded afterwards.
-- **Persistent instances**: `machbox start` boots a clone of a baseline that keeps its disk across shutdowns; `machbox run` never uses one.
+- **Disposable runs**: every boot works on an APFS copy-on-write snapshot plus a read-only share, discarded afterwards; with `--attach`, after a terminal session in the guest.
 - **Guest agent**: an HTTP API inside the guest, reached over virtio-vsock, that runs host-issued tasks.
 - **Guest network**: none by default (a workflow may set its own); `--network gateway` goes through a host gateway (`gateway-public`: public addresses only), which with `--pcap` saves every frame.
 
@@ -52,7 +51,7 @@ Once setup succeeds, `baseline.json` next to them records the baseline: name, gu
 
 `vm duplicate` clones a baseline the same way, keeping its machine identity.
 
-Commands coordinate through a `flock` on the baseline directory. `vm import` and `vm setup` hold it exclusively until the record is saved, and `vm remove` while it deletes; copying it (a run's snapshot, `vm duplicate`, a new instance) holds it shared, only while copying. So copies go on together, but never of a baseline mid-write or mid-removal. Nothing waits: a command that finds a conflicting lock fails at once, since setup can take an hour.
+Commands coordinate through a `flock` on the baseline directory. `vm import` and `vm setup` hold it exclusively until the record is saved, and `vm remove` while it deletes; copying it (a run's snapshot, `vm duplicate`) holds it shared, only while copying. So copies go on together, but never of a baseline mid-write or mid-removal. Nothing waits: a command that finds a conflicting lock fails at once, since setup can take an hour.
 
 Booting never reads VirtualBuddy metadata again. Baselines imported by old versions (a whole `.vbvm` copy, without `config.json`) are refused: remove them and import again.
 
@@ -72,22 +71,6 @@ A run (`internal/vm.Run`) owns one directory, `~/.machbox/runs/run-*/`:
 
 `Close` removes the directory. Runs whose owner died (lock acquirable) are swept by the next `NewRun`.
 
-## Instances
-
-An instance (`internal/vm.Instance`) is a persistent clone of a baseline for interactive work, such as a signed-in tool. It is kept in the baseline's directory and the directory is its whole record:
-
-| Path (`~/.machbox/vms/<uuid>/instances/<name>/`) | Purpose |
-|------|---------|
-| `Disk.img`, `config.json`, … | the bundle, APFS-cloned from the baseline when created, then booted in place |
-| `instance.json` | network mode and shares of the last start (the next start's defaults), creation and last start time |
-| `.lock` | exclusive `flock` held while the instance runs or is removed |
-
-`machbox start <name> --vm <baseline>` clones under a hidden `.new-*` name, holding the baseline's lock, and renames it into place; `machbox start <name>` boots an existing one. Names are unique across baselines. Clones copy only the bundle files, so neither `vm duplicate` nor a new instance picks up another baseline's instances, and `vm setup` changes only the baseline.
-
-Shares are host directories at `/Volumes/My Shared Files/<name>` in the guest: one virtiofs device with the macOS automount tag and a multiple-directory share, read-write unless `--share-ro`. An instance does not need its agent. It runs until the guest shuts down, its window is closed or the process gets SIGINT, SIGTERM or SIGHUP; the guest is then shut down through the agent (`shutdown -h now`), or the power button without one, and forced off after two minutes or on a second signal. `caffeinate -i -w <pid>` keeps the host from idle-sleeping meanwhile. The instance keeps the baseline's machine identity, as runs do.
-
-`machbox run` picks only recorded baselines (`vms/<uuid>/baseline.json`), so an instance and whatever is signed in to in it never run a plugin's samples. `vm remove` lists a baseline's instances and asks before removing them with it; it refuses while one is running.
-
 ## Guest agent
 
 `machbox-guest` is a LaunchDaemon in the guest, listening on vsock port `12345`. The host dials through `VZVirtioSocketDevice`; requests are plain HTTP/1.1:
@@ -100,6 +83,7 @@ Shares are host directories at `/Volumes/My Shared Files/<name>` in the guest: o
 | `POST /v1/exec` | run a task to completion; JSON result |
 | `POST /v1/exec/stream` | stream stdout as a chunked body; exit status in `X-Task-Error` / `X-Task-Timed-Out` trailers |
 | `GET /v1/files?root=&path=` | read a regular file at `path` inside `root`, opened through `os.Root` (no `..` or symlink escape) |
+| `POST /v1/ssh` | with `Upgrade: machbox-ssh`: after the `101`, the connection carries a TCP stream to the guest's sshd (`127.0.0.1:22`), for `machbox run --attach` without a guest network |
 
 Cancelling a request kills the task in the guest. A stream that hits its timeout ends normally with the output collected so far. Host and guest share `AgentVersion`; a mismatch requires `machbox vm setup`.
 
@@ -142,6 +126,14 @@ workflows:
         when: always                    # success (default) | failure | always
         run: [tools/report, -o, "${{ output }}", "${{ steps.info.output }}", "${{ steps.run.output }}"]
         output: report/report.json
+  explore:
+    inputs:
+      sample: { type: file, required: true }
+    attach: [claude]        # after the steps, a session running claude (true: the login shell); --attach=false skips it
+    steps:
+      - id: info
+        run: [tools/info, -o, "${{ output }}", "${{ inputs.sample }}"]
+        output: info.json
 ```
 
 Templates only substitute: `${{ inputs.<name> }}`, `${{ output }}`, `${{ steps.<id>.output }}` and `${{ steps.<id>.status }}` (an earlier step; `succeeded`, `failed`, `timed_out` or `skipped`), `${{ plugin_dir }}`. A command with a slash (`tools/x`) is resolved in the plugin directory; a bare name in the guest `PATH` (the agent's includes Homebrew and `/usr/local/bin`; an `env` PATH replaces it). Only the command is resolved this way: a relative path in an argument is relative to the workdir, so pass plugin files as `${{ plugin_dir }}/<path>`, e.g. `run: [bash, "${{ plugin_dir }}/scripts/x.sh"]`.
@@ -152,6 +144,10 @@ Once a sample runs, it controls the guest, agent included, so the host trusts no
 
 In the guest, the plugin directory and file inputs are on the read-only share (`plugin/`, `inputs/<input>/<file name>`). `${{ inputs.sample }}` is the absolute path of that file on the share; a tool that needs to change it (clear its attributes, make it executable, unpack it in place) copies it into the workdir first. Every step runs with the same writable workdir as cwd. The guest never writes to the host: after each step the host pulls its declared output through `GET /v1/files` (capped at `job.MaxOutputSize`).
 
+A job's VM stops once its steps are done, also with `--gui`, unless the run attaches a session (`--attach` or the workflow's `attach`). Then `job.json` gets the workflow's result and the job directory is logged, and the terminal is logged in to the guest: the console user, in the workdir (given to them first), running the workflow's command in a login shell, or the login shell itself. The VM is discarded when the session ends: the command exits, `~.` disconnects, the window is closed, the guest shuts down, or machbox gets SIGHUP or SIGTERM. A failed job still gets its session; the exit status is the job's. `caffeinate` keeps the host awake while a run's VM is up.
+
+The session is the host's `/usr/bin/ssh`, so OpenSSH handles the terminal (raw mode, resizing, Ctrl-C to the guest). Its `ProxyCommand` (`nc -U`) reaches a unix socket in the run directory that machbox connects to the agent's `POST /v1/ssh`, which carries the stream to the guest's sshd over vsock: the guest needs no network, but the baseline needs Remote Login (`ssh`). Each run makes an ed25519 key, appended to the console user's `authorized_keys` in the snapshot only, and pins the host key it reads from the guest. ssh runs with `-F /dev/null`, sends only the locale (`LANG`, `LC_*`) and forwards nothing (no agent, X11 or ports) into a guest a sample may control; the console user name the guest reports is checked before it becomes an ssh argument. machbox refuses to attach before boot without a terminal on stdin and stdout, and logs to the job's `machbox.log` while ssh owns the terminal.
+
 On the host, a job keeps only `~/.machbox/jobs/<id>/`:
 
 | Path | Purpose |
@@ -160,6 +156,7 @@ On the host, a job keeps only `~/.machbox/jobs/<id>/`:
 | `logs/<step>.log` | step stdout and stderr |
 | `outputs/<output>` | each step's output, including partial output of a failed step |
 | `network.pcap` | with `--pcap`: every guest frame, refused ones included, captured on the host |
+| `machbox.log` | with `--attach`: machbox's log during the session |
 
 Installed plugins ([usage](./plugins.md)) live in `~/.machbox/plugins/<owner>/<repo>/`: the repository, not the manifest `name`, identifies a plugin, so two plugins sharing a name never replace each other. `plugin install` takes a GitHub release's `.tar.gz` (`<repo>.tar.gz` if there are several) with `plugin.yml` at its root or in its only directory. It checks GitHub's SHA-256 digest of the asset when GitHub reports one, accepts only regular files and directories, and records the tag in `.machbox-source.json`; `plugin update` reinstalls when the latest tag differs, swapping the directory in one rename. `GITHUB_TOKEN`, if set, authenticates the API requests.
 
@@ -192,8 +189,8 @@ With `--pcap`, every frame, refused ones included, goes to `network.pcap` in the
 
 | Package | Role |
 |---------|------|
-| `cmd` | CLI: `vm import/list/rename/duplicate/setup/remove`, `plugin install/list/update/remove`, `run`, `job prune`, `start`, `instance list/remove` |
-| `internal/vm` | baseline lifecycle (import, setup, duplicate, resolve), disposable runs and persistent instances |
+| `cmd` | CLI: `vm import/list/rename/duplicate/setup/remove`, `plugin install/list/update/remove`, `run`, `job prune` |
+| `internal/vm` | baseline lifecycle (import, setup, duplicate, resolve), disposable runs |
 | `internal/agent` | guest agent HTTP API: server (guest) and client (host) |
 | `internal/plugin` | `plugin.yml` loading, validation, templates, requirements, workflow arguments |
 | `internal/plugin/store` | installed plugins: GitHub release download, verification, extraction |
