@@ -163,7 +163,7 @@ func (j *Job) finish(err error) {
 }
 
 // settle records how the workflow ended; steps that never started are
-// skipped. A kept run settles before its session, and again at the end.
+// skipped.
 func (j *Job) settle(err error) {
 	if j.FinishedAt == nil {
 		now := time.Now()

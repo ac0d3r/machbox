@@ -27,18 +27,14 @@ type BootOptions struct {
 	Capture string
 	// GUI shows the VM window. Boot must then be called on the main thread.
 	GUI bool
-	// Keep leaves the VM running once the GuestFunc returns, until ctx is
-	// cancelled, the window is closed or the guest shuts down. Without a
-	// guest agent to call the GuestFunc, the VM is stopped as usual.
-	Keep bool
 }
 
 // GuestFunc works with a booted guest. ctx is cancelled when the VM stops.
 type GuestFunc func(ctx context.Context, c *agent.Client, info agent.GuestInfo) error
 
 // Boot starts the run's snapshot, waits for a compatible guest agent and
-// calls fn. The VM is stopped once fn returns (with Keep, once the session
-// ends) or ctx is cancelled. The host does not idle-sleep meanwhile.
+// calls fn. The VM is stopped once fn returns or ctx is cancelled. The host
+// does not idle-sleep meanwhile.
 func (r *Run) Boot(ctx context.Context, opts BootOptions, fn GuestFunc) error {
 	// Main thread is pinned in main(); do not UnlockOSThread.
 	ctx, cancel := context.WithCancel(ctx)
@@ -69,7 +65,7 @@ func (r *Run) Boot(ctx context.Context, opts BootOptions, fn GuestFunc) error {
 	logrus.Info("VM started")
 	defer keepAwake()()
 
-	// Cancel fn, or end a kept run, if the VM stops first.
+	// Cancel fn if the VM stops first.
 	var stoppedEarly atomic.Bool
 	go func() {
 		select {
@@ -85,19 +81,7 @@ func (r *Run) Boot(ctx context.Context, opts BootOptions, fn GuestFunc) error {
 	go func() {
 		defer close(done)
 		defer stopVM(inst)
-		var client *agent.Client
-		runErr = r.withGuest(ctx, inst, func(ctx context.Context, c *agent.Client, info agent.GuestInfo) error {
-			client = c
-			return fn(ctx, c, info)
-		})
-		if opts.Keep && client != nil && ctx.Err() == nil {
-			end := "press Ctrl-C"
-			if opts.GUI {
-				end = "close the VM window or press Ctrl-C"
-			}
-			logrus.Infof("VM kept running; %s to stop it", end)
-			<-ctx.Done()
-		}
+		runErr = r.withGuest(ctx, inst, fn)
 	}()
 
 	var graphicErr error

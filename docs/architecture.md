@@ -3,7 +3,7 @@
 machbox runs macOS guests on Apple's `Virtualization.framework`. The core does four things:
 
 - **Baseline management**: import a VirtualBuddy VM once, keep it in machbox's own bundle format.
-- **Disposable runs**: every boot works on an APFS copy-on-write snapshot plus a read-only share, discarded afterwards; a kept run stays up for interactive work first.
+- **Disposable runs**: every boot works on an APFS copy-on-write snapshot plus a read-only share, discarded afterwards.
 - **Guest agent**: an HTTP API inside the guest, reached over virtio-vsock, that runs host-issued tasks.
 - **Guest network**: none by default (a workflow may set its own); `--network gateway` goes through a host gateway (`gateway-public`: public addresses only), which with `--pcap` saves every frame.
 
@@ -125,14 +125,6 @@ workflows:
         when: always                    # success (default) | failure | always
         run: [tools/report, -o, "${{ output }}", "${{ steps.info.output }}", "${{ steps.run.output }}"]
         output: report/report.json
-  explore:                  # a kept run: the guest stays up after the steps
-    inputs:
-      sample: { type: file, required: true }
-    keep: true                          # unless --keep=false
-    steps:
-      - id: info
-        run: [tools/info, -o, "${{ output }}", "${{ inputs.sample }}"]
-        output: info.json
 ```
 
 Templates only substitute: `${{ inputs.<name> }}`, `${{ output }}`, `${{ steps.<id>.output }}` and `${{ steps.<id>.status }}` (an earlier step; `succeeded`, `failed`, `timed_out` or `skipped`), `${{ plugin_dir }}`. A command with a slash (`tools/x`) is resolved in the plugin directory; a bare name in the guest `PATH` (the agent's includes Homebrew and `/usr/local/bin`; an `env` PATH replaces it). Only the command is resolved this way: a relative path in an argument is relative to the workdir, so pass plugin files as `${{ plugin_dir }}/<path>`, e.g. `run: [bash, "${{ plugin_dir }}/scripts/x.sh"]`.
@@ -143,7 +135,7 @@ Once a sample runs, it controls the guest, agent included, so the host trusts no
 
 In the guest, the plugin directory and file inputs are on the read-only share (`plugin/`, `inputs/<input>/<file name>`). `${{ inputs.sample }}` is the absolute path of that file on the share; a tool that needs to change it (clear its attributes, make it executable, unpack it in place) copies it into the workdir first. Every step runs with the same writable workdir as cwd. The guest never writes to the host: after each step the host pulls its declared output through `GET /v1/files` (capped at `job.MaxOutputSize`).
 
-A job's VM stops once its steps are done, unless the run is kept (`keep` or `--keep`, also with `--gui`). Then `job.json` gets the workflow's result and the job directory is logged, and the guest stays up for interactive work, through the window or the network, until Ctrl-C, the window is closed or the guest shuts down. The guest is still disposable: what is not a step output is gone with it. `caffeinate` keeps the host awake while a run's VM is up.
+A job's VM stops once its steps are done, also with `--gui`. `caffeinate` keeps the host awake while a run's VM is up.
 
 On the host, a job keeps only `~/.machbox/jobs/<id>/`:
 

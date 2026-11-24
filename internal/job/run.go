@@ -78,16 +78,7 @@ func (j *Job) run(ctx context.Context, baseline *db.VM, opts Options) error {
 		opts.Boot.Capture = filepath.Join(j.Dir, captureName)
 	}
 
-	return r.Boot(ctx, opts.Boot, func(ctx context.Context, c *agent.Client, info agent.GuestInfo) (err error) {
-		if opts.Boot.Keep {
-			// The session follows: record the result now.
-			defer func() {
-				if ctx.Err() == nil {
-					j.settle(err)
-					logrus.Infof("job %s %s: %s", j.ID, j.Status, j.Dir)
-				}
-			}()
-		}
+	return r.Boot(ctx, opts.Boot, func(ctx context.Context, c *agent.Client, info agent.GuestInfo) error {
 		j.Guest = &info
 		j.trySave()
 		// Only SIP can be read live; the rest is the baseline's record.

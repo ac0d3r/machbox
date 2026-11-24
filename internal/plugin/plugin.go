@@ -56,9 +56,6 @@ type Workflow struct {
 	// Network is the guest network when machbox run has no --network:
 	// none (default) or a config.NetworkModes value, canonicalized by Parse.
 	Network string `yaml:"network"`
-	// Keep leaves the guest running after the steps when machbox run has
-	// no --keep, for interactive work until the session is ended.
-	Keep bool `yaml:"keep"`
 	// Env is set for every step; a step's own env overrides it.
 	Env   map[string]string `yaml:"env"`
 	Steps []*Step           `yaml:"steps"`

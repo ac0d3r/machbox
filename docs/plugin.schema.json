@@ -65,11 +65,6 @@
           "enum": ["none", "nat", "gateway", "gateway-public"],
           "default": "none"
         },
-        "keep": {
-          "description": "Keep the guest running after the steps, for interactive work, when machbox run has no --keep, until Ctrl-C or, with --gui, the window is closed.",
-          "type": "boolean",
-          "default": false
-        },
         "env": { "$ref": "#/definitions/env" },
         "steps": {
           "type": "array",
