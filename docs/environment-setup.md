@@ -139,10 +139,7 @@ setup` or `machbox vm remove` is using a baseline, it cannot be duplicated or ru
 ## Manage Baselines
 
 ```bash
-machbox vm list                                   # UUID, name, OS, agent, features, instances
+machbox vm list                                   # UUID, name, OS, agent, features
 machbox vm rename <uuid-or-name> --name <new-name>
 machbox vm remove <uuid-or-name>                  # asks first (-y: don't ask)
 ```
-
-`machbox vm remove` deletes the baseline's [instances](./instances.md) with it, after
-listing them, and refuses while one is running.
