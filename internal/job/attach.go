@@ -123,6 +123,10 @@ func (j *Job) attach(ctx context.Context, s *session) error {
 	}
 	code, err := runSSH(ctx, sshArgs(key, knownHosts, sock, s.user, remoteCommand(s.workDir, s.command)))
 	restore()
+	if code == 255 || ctx.Err() != nil {
+		// Cut off, the guest's last line may lack its newline.
+		fmt.Fprintln(os.Stderr)
+	}
 	switch {
 	case err != nil:
 		return err
