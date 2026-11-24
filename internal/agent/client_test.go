@@ -163,68 +163,6 @@ func TestRunTaskCancelKillsProcess(t *testing.T) {
 	waitExited(t, pid)
 }
 
-func TestRunStreamTask(t *testing.T) {
-	ta := startAgent(t)
-	r, err := ta.client.RunStreamTask(context.Background(),
-		&Task{Command: "sh", Args: []string{"-c", "echo a; echo b"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer r.Close()
-	got, err := io.ReadAll(r)
-	if err != nil || string(got) != "a\nb\n" {
-		t.Fatalf("stream = %q, %v", got, err)
-	}
-}
-
-func TestRunStreamTaskFailure(t *testing.T) {
-	ta := startAgent(t)
-	r, err := ta.client.RunStreamTask(context.Background(),
-		&Task{Command: "sh", Args: []string{"-c", "echo partial; echo bad >&2; exit 2"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer r.Close()
-	got, err := io.ReadAll(r)
-	if string(got) != "partial\n" {
-		t.Errorf("stdout = %q", got)
-	}
-	if err == nil || !strings.Contains(err.Error(), "bad") {
-		t.Fatalf("err = %v, want task failure with stderr", err)
-	}
-}
-
-func TestRunStreamTaskStartFailure(t *testing.T) {
-	ta := startAgent(t)
-	if _, err := ta.client.RunStreamTask(context.Background(),
-		&Task{Command: "/nonexistent/machbox-tool"}); err == nil {
-		t.Fatal("expected start error")
-	}
-}
-
-// A timeout is the normal end of a dynamic run: output so far is kept and no
-// error is reported, even when a child process still holds stdout open.
-func TestRunStreamTaskTimeoutIsNormalEnd(t *testing.T) {
-	ta := startAgent(t)
-	start := time.Now()
-	r, err := ta.client.RunStreamTask(context.Background(), &Task{
-		Command: "sh",
-		Args:    []string{"-c", "echo started; (sleep 30) & wait"},
-		Timeout: 1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer r.Close()
-	got, err := io.ReadAll(r)
-	if err != nil || string(got) != "started\n" {
-		t.Fatalf("stream = %q, %v", got, err)
-	}
-	if d := time.Since(start); d > 10*time.Second {
-		t.Errorf("stream ended after %s, want ~1s", d)
-	}
-}
-
 func waitPID(t *testing.T, path string) int {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -264,16 +202,27 @@ func TestCopyTask(t *testing.T) {
 		t.Errorf("output = %q", out.String())
 	}
 
+	// A failure keeps the output so far and reports stderr.
 	out.Reset()
-	err := ta.client.CopyTask(ctx, &Task{Command: "sh", Args: []string{"-c", "echo partial; exit 3"}}, &out)
-	if err == nil || errors.Is(err, ErrTaskTimedOut) || out.String() != "partial\n" {
+	err := ta.client.CopyTask(ctx, &Task{Command: "sh", Args: []string{"-c", "echo partial; echo bad >&2; exit 3"}}, &out)
+	if err == nil || errors.Is(err, ErrTaskTimedOut) || !strings.Contains(err.Error(), "bad") || out.String() != "partial\n" {
 		t.Errorf("failing task: err=%v output=%q", err, out.String())
 	}
 
+	if err := ta.client.CopyTask(ctx, &Task{Command: "/nonexistent/machbox-tool"}, io.Discard); err == nil {
+		t.Error("missing command: no error")
+	}
+
+	// The timeout ends the task on time even when a child still holds
+	// stdout open.
 	out.Reset()
-	err = ta.client.CopyTask(ctx, &Task{Command: "sh", Args: []string{"-c", "echo started; sleep 30"}, Timeout: 1}, &out)
+	start := time.Now()
+	err = ta.client.CopyTask(ctx, &Task{Command: "sh", Args: []string{"-c", "echo started; (sleep 30) & wait"}, Timeout: 1}, &out)
 	if !errors.Is(err, ErrTaskTimedOut) || out.String() != "started\n" {
 		t.Errorf("timed-out task: err=%v output=%q", err, out.String())
+	}
+	if d := time.Since(start); d > 10*time.Second {
+		t.Errorf("timed-out task ended after %s, want ~1s", d)
 	}
 }
 
