@@ -144,7 +144,7 @@ Once a sample runs, it controls the guest, agent included, so the host trusts no
 
 In the guest, the plugin directory and file inputs are on the read-only share (`plugin/`, `inputs/<input>/<file name>`). `${{ inputs.sample }}` is the absolute path of that file on the share; a tool that needs to change it (clear its attributes, make it executable, unpack it in place) copies it into the workdir first. Every step runs with the same writable workdir as cwd. The guest never writes to the host: after each step the host pulls its declared output through `GET /v1/files` (capped at `job.MaxOutputSize`).
 
-A job's VM stops once its steps are done, also with `--gui`, unless the run attaches a session (`--attach` or the workflow's `attach`). Then `job.json` gets the workflow's result and the job directory is logged, and the terminal is logged in to the guest: the console user, in the workdir (given to them first), running the workflow's command in a login shell, or the login shell itself. The VM is discarded when the session ends: the command exits, `~.` disconnects, the window is closed, the guest shuts down, or machbox gets SIGHUP or SIGTERM. A failed job still gets its session; the exit status is the job's. `caffeinate` keeps the host awake while a run's VM is up.
+A job's VM stops once its steps are done, also with `--gui`, unless the run attaches a session (`--attach` or the workflow's `attach`). Then `job.json` gets the workflow's result and the job directory is logged, and the terminal is logged in to the guest: the console user, in the workdir (given to them first), running the workflow's command in a login shell, or the login shell itself. The VM is discarded when the session ends: the command exits, `~.` disconnects, the window is closed, the guest shuts down, or machbox gets SIGHUP or SIGTERM. A failed job still gets its session; the exit status is the job's. A workflow with `attach` may have no steps: the session is then the workflow (file inputs stay on the share), and `--attach=false` cannot run it. `caffeinate` keeps the host awake while a run's VM is up.
 
 The session is the host's `/usr/bin/ssh`, so OpenSSH handles the terminal (raw mode, resizing, Ctrl-C to the guest). Its `ProxyCommand` (`nc -U`) reaches a unix socket in the run directory that machbox connects to the agent's `POST /v1/ssh`, which carries the stream to the guest's sshd over vsock: the guest needs no network, but the baseline needs Remote Login (`ssh`). Each run makes an ed25519 key, appended to the console user's `authorized_keys` in the snapshot only, and pins the host key it reads from the guest. ssh runs with `-F /dev/null`, sends only the locale (`LANG`, `LC_*`) and forwards nothing (no agent, X11 or ports) into a guest a sample may control; the console user name the guest reports is checked before it becomes an ssh argument. machbox refuses to attach before boot without a terminal on stdin and stdout, and logs to the job's `machbox.log` while ssh owns the terminal.
 
@@ -174,7 +174,7 @@ The network carries the guest's traffic; with `gateway`, the egress policy decid
 
 | Egress (`gateway` only) | The guest reaches |
 |--------|-------------------|
-| `none` | only the gateway's DHCP and DNS |
+| `none` | only the gateway's DHCP, DNS and [AI proxy](#ai-proxy), if any |
 | `public` | public addresses |
 | `all` | whatever the host can, its LAN included, but not the host itself |
 
@@ -184,9 +184,33 @@ The gateway (`pkg/vm/gateway`) attaches the guest to a gvisor-tap-vsock stack ov
 - link-local (169.254/16, fe80::/10, cloud metadata included);
 - shared address space (100.64/10): carrier-grade NAT, and the peers of Tailscale and similar overlay VPNs.
 
-On the gateway itself (192.168.127.1) the guest reaches only DHCP and DNS. With `none`, DNS answers no name, so no query reaches the host's resolver (a way out, by DNS tunnelling); otherwise the host's resolver answers, so with `public` internal names resolve but their addresses stay unreachable. IPv6 is not routed. Refused frames are dropped silently, so a refused connection times out in the guest rather than failing fast; each refused unicast destination is logged once (up to 64); multicast and broadcast, routine OS chatter, are dropped without a log.
+On the gateway itself (192.168.127.1) the guest reaches only DHCP, DNS and the AI proxy, if any. DNS answers `machbox.internal` itself when there is a proxy; with `none` it answers no other name, so no query reaches the host's resolver (a way out, by DNS tunnelling); otherwise the host's resolver answers, so with `public` internal names resolve but their addresses stay unreachable. IPv6 is not routed. Refused frames are dropped silently, so a refused connection times out in the guest rather than failing fast; each refused unicast destination is logged once (up to 64); multicast and broadcast, routine OS chatter, are dropped without a log.
 
 With `--pcap`, every frame, refused ones included, goes to `network.pcap` in the job directory, written by the host, never pulled from the guest.
+
+### AI proxy
+
+A workflow with `ai_proxy` lets the guest's AI agents (Claude Code, Codex, Gemini CLI…) use an API key that stays on the host:
+
+```yaml
+workflows:
+  explore:
+    network: gateway        # egress none: the guest reaches only the proxy
+    ai_proxy:
+      upstream: https://api.anthropic.com   # base URL; the request's path is appended
+      key_env: ANTHROPIC_API_KEY            # host environment variable, read when the run starts
+    attach: [claude]
+```
+
+The gateway's DNS then answers `machbox.internal` with the gateway's address, where port 80 serves plain HTTP (`pkg/vm/gateway.Proxy`). Each request goes to `upstream` plus its path and query, from the host (`HTTPS_PROXY` applies), with the guest's credential replaced by the key in the same place, so every client keeps its provider's scheme: `Authorization: Bearer`, `x-api-key` (Anthropic), `x-goog-api-key` or a `key` query parameter (Gemini); a request with none gets `Authorization: Bearer`. The guest holds only a placeholder, so the key is neither in the guest nor in `network.pcap`. Responses are flushed as they arrive, so SSE streams.
+
+- `ai_proxy` needs `network: gateway` (and `--network gateway`, if given), with any egress: the proxy is a gateway service, so with `none` the agents reach their provider and nothing else does.
+- `key_env` names a variable, never holds the key, and must be set when the run starts. With it, `upstream` must be `https` unless on the host's loopback (`localhost`, `127.0.0.1`, `[::1]`). Without it, the guest's credentials pass unchanged.
+- The proxy connects only to `upstream`, wherever it is, regardless of the egress policy: the host's loopback (e.g. a model server at `http://127.0.0.1:11434`) and the LAN included. The guest chooses the path, never the host, and redirects are passed back, not followed.
+- Only API keys work: subscription logins (Claude Pro/Max, ChatGPT, Google sign-in) are OAuth flows tied to the provider's own endpoints.
+- A plugin's `ai_proxy` decides which host variable goes where, and which host service the guest reaches: check it in a plugin you did not write.
+
+machbox does not configure the guest's agents: point them at `http://machbox.internal` in the baseline ([Environment Setup](./environment-setup.md#ai-agents)), or in the plugin (`env` for steps, an `attach` command such as `[env, ANTHROPIC_BASE_URL=http://machbox.internal, ANTHROPIC_API_KEY=machbox, claude]`).
 
 `vm import` and `vm setup` always boot with `nat`.
 
@@ -205,6 +229,6 @@ With `--pcap`, every frame, refused ones included, goes to `network.pcap` in the
 | `internal/logger` | logrus setup for `--log-level`, `--log-json` |
 | `pkg/vm` | VM instance: start/stop, state, GUI, vsock connect |
 | `pkg/vm/config` | baseline bundle format, VirtualBuddy import, snapshot, `Virtualization.framework` configuration |
-| `pkg/vm/gateway` | `--network gateway`: gvisor-tap-vsock stack, egress policy, DNS, pcap capture |
+| `pkg/vm/gateway` | `--network gateway`: gvisor-tap-vsock stack, egress policy, DNS, pcap capture, AI proxy |
 | `pkg/vsock` | guest-side AF_VSOCK listener |
 | `guest-agent` | `machbox-guest` daemon and its `check`, `app/` Machbox Setup and its `install.sh` |

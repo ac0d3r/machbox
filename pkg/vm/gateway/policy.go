@@ -13,7 +13,7 @@ import (
 type Egress string
 
 const (
-	// EgressNone: nothing; DNS answers no name.
+	// EgressNone: nothing; DNS answers only the gateway's own names.
 	EgressNone Egress = "none"
 	// EgressPublic: public addresses.
 	EgressPublic Egress = "public"
@@ -62,6 +62,8 @@ var (
 type policy struct {
 	gateway netip.Addr
 	egress  Egress
+	// proxy opens the gateway's port 80.
+	proxy bool
 	// interfaceAddrs lists the host's addresses; net.InterfaceAddrs if nil.
 	interfaceAddrs func() ([]net.Addr, error)
 
@@ -95,8 +97,8 @@ func (p *policy) allowIPv4(pkt []byte) (bool, netip.Addr) {
 		return p.egress != EgressNone && !p.blocked(dst), dst
 	}
 
-	// Only the gateway's own DHCP and DNS: anything else for these
-	// addresses would be dialed on the host's network.
+	// Only the gateway's own DHCP, DNS and AI proxy: anything else for
+	// these addresses would be dialed on the host's network.
 	ihl := int(pkt[0]&0x0f) * 4
 	firstFragment := binary.BigEndian.Uint16(pkt[6:8])&0x1fff == 0
 	if ihl < 20 || len(pkt) < ihl+4 || !firstFragment {
@@ -107,7 +109,7 @@ func (p *policy) allowIPv4(pkt []byte) (bool, netip.Addr) {
 	case protoUDP:
 		return port == 67 || (port == 53 && dst == p.gateway), dst
 	case protoTCP:
-		return port == 53 && dst == p.gateway, dst
+		return dst == p.gateway && (port == 53 || (p.proxy && port == 80)), dst
 	}
 	return false, dst
 }

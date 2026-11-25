@@ -27,6 +27,8 @@ type BootOptions struct {
 	Capture string
 	// Egress is the gateway's policy; "" is gateway.EgressNone.
 	Egress gateway.Egress
+	// Proxy, if not nil, is served by a gateway network.
+	Proxy *gateway.Proxy
 	// GUI shows the VM window. Boot must then be called on the main thread.
 	GUI bool
 }
@@ -140,6 +142,7 @@ func startNetwork(opts BootOptions) (_ config.Network, stop func(), err error) {
 	gw, err := gateway.Start(gateway.Options{
 		Capture: opts.Capture,
 		Egress:  opts.Egress,
+		Proxy:   opts.Proxy,
 	})
 	if err != nil {
 		return n, nil, fmt.Errorf("start network gateway: %w", err)

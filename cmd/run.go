@@ -95,9 +95,16 @@ func newRunCommand() *cobra.Command {
 			if cmd.Flags().Changed("attach") {
 				opts.Attach = plugin.Attach{Enabled: attach, Command: wf.Attach.Command}
 			}
+			stepless := len(wf.Steps) == 0
+			if stepless && !opts.Attach.Enabled {
+				return fmt.Errorf("workflow %s has no steps, only its terminal session: run it without --attach=false", wf.Name)
+			}
 			if opts.Attach.Enabled && (!isTerminal(os.Stdin) || !isTerminal(os.Stdout)) {
 				if cmd.Flags().Changed("attach") {
 					return errors.New("--attach needs a terminal: stdin and stdout are not one")
+				}
+				if stepless {
+					return fmt.Errorf("workflow %s is a terminal session, but stdin and stdout are not a terminal", wf.Name)
 				}
 				return fmt.Errorf("workflow %s attaches a terminal session, but stdin and stdout are not a terminal; "+
 					"pass --attach=false to run it without one", wf.Name)

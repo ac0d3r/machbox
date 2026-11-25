@@ -134,6 +134,7 @@ func create(dir string, p *plugin.Plugin, wf *plugin.Workflow, inputs map[string
 		plugin:   p,
 		workflow: wf,
 	}
+	j.Steps = make([]*StepRecord, 0, len(wf.Steps)) // [] in job.json, not null
 	for _, st := range wf.Steps {
 		j.Steps = append(j.Steps, &StepRecord{ID: st.ID, Status: StatusPending})
 	}

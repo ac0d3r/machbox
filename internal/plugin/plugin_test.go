@@ -79,6 +79,7 @@ func TestParseManifestErrors(t *testing.T) {
 		"version":             "manifest_version: 2\nname: p\nworkflows: {w: {steps: [{id: a, run: [x]}]}}",
 		"unknown field":       base + "    steps: [{id: a, run: [x], bogus: 1}]",
 		"no steps":            base + "    steps: []",
+		"nothing to run":      base + "    attach: false",
 		"dup id":              base + "    steps: [{id: a, run: [x]}, {id: a, run: [y]}]",
 		"empty run":           base + "    steps: [{id: a, run: []}]",
 		"bad output":          base + "    steps: [{id: a, run: [x], output: ../x}]",
@@ -334,6 +335,51 @@ func TestWorkflowNetwork(t *testing.T) {
 	}
 }
 
+func TestWorkflowAIProxy(t *testing.T) {
+	manifest := func(network, proxy string) string {
+		return "manifest_version: 1\nname: p\nworkflows:\n  w:\n    network: " + network +
+			"\n    ai_proxy: " + proxy + "\n    steps: [{id: a, run: [x]}]\n"
+	}
+	p, err := Parse([]byte(manifest("gateway", "{upstream: 'https://api.anthropic.com', key_env: ANTHROPIC_API_KEY}")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := *p.Workflows["w"].AIProxy, (AIProxy{Upstream: "https://api.anthropic.com", KeyEnv: "ANTHROPIC_API_KEY"}); got != want {
+		t.Errorf("ai_proxy = %+v, want %+v", got, want)
+	}
+	for _, ok := range []string{
+		"{upstream: 'https://openrouter.ai/api'}",
+		"{upstream: 'http://llm.example.com/v1'}", // no key: plain http allowed
+		"{upstream: 'http://127.0.0.1:4000', key_env: K}",
+		"{upstream: 'http://localhost:4000', key_env: K}",
+		"{upstream: 'http://[::1]:4000', key_env: K}",
+	} {
+		if _, err := Parse([]byte(manifest("gateway", ok))); err != nil {
+			t.Errorf("ai_proxy %s: %v", ok, err)
+		}
+	}
+	for name, m := range map[string]string{
+		"no network":    manifest("none", "{upstream: 'https://api.openai.com'}"),
+		"nat":           manifest("nat", "{upstream: 'https://api.openai.com'}"),
+		"no upstream":   manifest("gateway", "{key_env: K}"),
+		"relative":      manifest("gateway", "{upstream: 'api.openai.com'}"),
+		"ftp":           manifest("gateway", "{upstream: 'ftp://api.openai.com'}"),
+		"userinfo":      manifest("gateway", "{upstream: 'https://u:p@api.openai.com'}"),
+		"query":         manifest("gateway", "{upstream: 'https://api.openai.com/?key=x'}"),
+		"http with key": manifest("gateway", "{upstream: 'http://api.openai.com', key_env: K}"),
+		"lan with key":  manifest("gateway", "{upstream: 'http://192.168.1.10:4000', key_env: K}"),
+		"key not env":   manifest("gateway", "{upstream: 'https://api.openai.com', key_env: sk-proj-abc}"),
+		"unknown field": manifest("gateway", "{upstream: 'https://api.openai.com', key: K}"),
+	} {
+		_, err := Parse([]byte(m))
+		if err == nil {
+			t.Errorf("%s: parsed without error", name)
+		} else if strings.Contains(err.Error(), "sk-proj") {
+			t.Errorf("%s: error repeats the key: %v", name, err)
+		}
+	}
+}
+
 func TestWorkflowAttach(t *testing.T) {
 	manifest := func(attach string) string {
 		m := "manifest_version: 1\nname: p\nworkflows:\n  w:\n"
@@ -356,6 +402,16 @@ func TestWorkflowAttach(t *testing.T) {
 		}
 		if got := p.Workflows["w"].Attach; !reflect.DeepEqual(got, want) {
 			t.Errorf("attach %s = %+v, want %+v", in, got, want)
+		}
+	}
+	for _, m := range []string{
+		"manifest_version: 1\nname: p\nworkflows:\n  w:\n    attach: [claude]\n",
+		"manifest_version: 1\nname: p\nworkflows:\n  w:\n    attach: true\n    steps: []\n",
+	} {
+		if p, err := Parse([]byte(m)); err != nil {
+			t.Errorf("attach without steps: %v", err)
+		} else if len(p.Workflows["w"].Steps) != 0 {
+			t.Errorf("steps = %v", p.Workflows["w"].Steps)
 		}
 	}
 	for _, in := range []string{"claude", "yes", `"true"`, "[]", `[""]`, "{cmd: x}", "[[x]]"} {
