@@ -1,6 +1,6 @@
 # Machbox
 
-**Machbox** — automated macOS VM workflows for analysis and research.
+**Machbox** — run plugin workflows in macOS sandboxes for automated analysis and research.
 
 ## System Requirements
 
