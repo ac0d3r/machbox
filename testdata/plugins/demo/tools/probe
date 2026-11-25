@@ -1,0 +1,28 @@
+#!/bin/sh
+# Usage: probe -o <output> [-H <header>]... <url>...
+# Requests each URL with the headers, 5 s at most, and writes one JSON line
+# per URL: the HTTP status (0 without a response) and curl's exit code
+# (6: name not resolved, 7: refused, 28: timed out, as refused egress does).
+set -eu
+usage() { echo "usage: probe -o <output> [-H <header>]... <url>..." >&2; exit 2; }
+[ $# -ge 3 ] && [ "$1" = "-o" ] || usage
+out=$2
+shift 2
+
+headers=$(mktemp)
+trap 'rm -f "$headers"' EXIT
+while [ $# -ge 2 ] && [ "$1" = "-H" ]; do
+	printf '%s\n' "$2" >>"$headers"
+	shift 2
+done
+[ $# -ge 1 ] || usage
+
+json() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+: >"$out"
+for url in "$@"; do
+	rc=0
+	status=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H @"$headers" "$url") || rc=$?
+	printf '{"url":"%s","status":%d,"curl":%d}\n' "$(json "$url")" "${status:-0}" "$rc" >>"$out"
+	echo "probe: $url: HTTP ${status:-000}, curl exit $rc"
+done

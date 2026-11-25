@@ -174,7 +174,7 @@ The network carries the guest's traffic; with `gateway`, the egress policy decid
 
 | Egress (`gateway` only) | The guest reaches |
 |--------|-------------------|
-| `none` | only the gateway's DHCP, DNS and [AI proxy](#ai-proxy), if any |
+| `none` | nothing beyond the gateway itself (below) |
 | `public` | public addresses |
 | `all` | whatever the host can, its LAN included, but not the host itself |
 
@@ -184,9 +184,13 @@ The gateway (`pkg/vm/gateway`) attaches the guest to a gvisor-tap-vsock stack ov
 - link-local (169.254/16, fe80::/10, cloud metadata included);
 - shared address space (100.64/10): carrier-grade NAT, and the peers of Tailscale and similar overlay VPNs.
 
-On the gateway itself (192.168.127.1) the guest reaches only DHCP, DNS and the AI proxy, if any. DNS answers `machbox.internal` itself when there is a proxy; with `none` it answers no other name, so no query reaches the host's resolver (a way out, by DNS tunnelling); otherwise the host's resolver answers, so with `public` internal names resolve but their addresses stay unreachable. IPv6 is not routed. Refused frames are dropped silently, so a refused connection times out in the guest rather than failing fast; each refused unicast destination is logged once (up to 64); multicast and broadcast, routine OS chatter, are dropped without a log.
+With `all`, the LAN is reachable only if the app machbox runs in (Terminal, an IDE…) has macOS's Local Network permission; otherwise the guest's connections to it are refused.
+
+On the gateway itself (192.168.127.1), under every policy, the guest reaches only DHCP, DNS and the [AI proxy](#ai-proxy), if any. DNS answers `machbox.internal` itself when there is a proxy; with `none` it answers no other name, so no query reaches the host's resolver (a way out, by DNS tunnelling); otherwise the host's resolver answers, so with `public` internal names resolve but their addresses stay unreachable. IPv6 is not routed. Refused frames are dropped silently, so a refused connection times out in the guest rather than failing fast; each refused unicast destination is logged once (up to 64); multicast and broadcast, routine OS chatter, are dropped without a log.
 
 With `--pcap`, every frame, refused ones included, goes to `network.pcap` in the job directory, written by the host, never pulled from the guest.
+
+`testdata/plugins/demo`'s `network` and `ai` workflows check a real guest: their `probe` step records what each URL returned (`probe.jsonl`).
 
 ### AI proxy
 
@@ -204,7 +208,7 @@ workflows:
 
 The gateway's DNS then answers `machbox.internal` with the gateway's address, where port 80 serves plain HTTP (`pkg/vm/gateway.Proxy`). Each request goes to `upstream` plus its path and query, from the host (`HTTPS_PROXY` applies), with the guest's credential replaced by the key in the same place, so every client keeps its provider's scheme: `Authorization: Bearer`, `x-api-key` (Anthropic), `x-goog-api-key` or a `key` query parameter (Gemini); a request with none gets `Authorization: Bearer`. The guest holds only a placeholder, so the key is neither in the guest nor in `network.pcap`. Responses are flushed as they arrive, so SSE streams.
 
-- `ai_proxy` needs `network: gateway` (and `--network gateway`, if given), with any egress: the proxy is a gateway service, so with `none` the agents reach their provider and nothing else does.
+- `ai_proxy` needs `network: gateway` (and `--network gateway`, if given), with any egress.
 - `key_env` names a variable, never holds the key, and must be set when the run starts. With it, `upstream` must be `https` unless on the host's loopback (`localhost`, `127.0.0.1`, `[::1]`). Without it, the guest's credentials pass unchanged.
 - The proxy connects only to `upstream`, wherever it is, regardless of the egress policy: the host's loopback (e.g. a model server at `http://127.0.0.1:11434`) and the LAN included. The guest chooses the path, never the host, and redirects are passed back, not followed.
 - Only API keys work: subscription logins (Claude Pro/Max, ChatGPT, Google sign-in) are OAuth flows tied to the provider's own endpoints.

@@ -1,11 +1,18 @@
 package job
 
 import (
+	"bufio"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/ac0d3r/machbox/internal/plugin"
+	"github.com/ac0d3r/machbox/pkg/vm/gateway"
 )
 
 const demoPlugin = "../../testdata/plugins/demo"
@@ -78,6 +85,88 @@ func TestDemoPluginAnalyze(t *testing.T) {
 			t.Errorf("run log = %q", log)
 		}
 	})
+}
+
+// The network workflows' settings; their effect needs a real guest.
+func TestDemoPluginNetworkManifest(t *testing.T) {
+	p, err := plugin.Load(demoPlugin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wf := p.Workflows["network"]; wf.Network != "gateway" || wf.Egress != gateway.EgressPublic || wf.AIProxy != nil {
+		t.Errorf("network: %s egress %s, ai_proxy %v", wf.Network, wf.Egress, wf.AIProxy)
+	}
+	for _, name := range []string{"ai", "ai-shell"} {
+		wf := p.Workflows[name]
+		if wf.Network != "gateway" || wf.Egress != gateway.EgressNone ||
+			wf.AIProxy == nil || wf.AIProxy.KeyEnv != "ANTHROPIC_API_KEY" {
+			t.Errorf("%s: %s egress %s, ai_proxy %+v", name, wf.Network, wf.Egress, wf.AIProxy)
+		}
+	}
+	if wf := p.Workflows["ai-shell"]; len(wf.Steps) != 0 || !wf.Attach.Enabled || len(wf.Attach.Command) == 0 {
+		t.Errorf("ai-shell: steps %d, attach %+v", len(wf.Steps), wf.Attach)
+	}
+}
+
+type probeResult struct {
+	URL    string `json:"url"`
+	Status int    `json:"status"`
+	Curl   int    `json:"curl"`
+}
+
+// probe runs workflow and returns its probe.jsonl. Local servers stand in
+// for the guest's targets.
+func probe(t *testing.T, workflow string, args ...string) []probeResult {
+	t.Helper()
+	j, _, err := runLocal(t, demoPlugin, workflow, args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(filepath.Join(j.Dir, "outputs", "probe.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	var rs []probeResult
+	for sc := bufio.NewScanner(f); sc.Scan(); {
+		var r probeResult
+		if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
+			t.Fatalf("%v: %s", err, sc.Bytes())
+		}
+		rs = append(rs, r)
+	}
+	return rs
+}
+
+func TestDemoPluginProbe(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		header http.Header
+	)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		header = r.Header.Clone()
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer up.Close()
+	down := httptest.NewServer(http.NotFoundHandler())
+	down.Close() // refused
+
+	rs := probe(t, "network", "--public", up.URL+"/", "--private", down.URL+"/")
+	if len(rs) != 2 || rs[0].Status != http.StatusNoContent || rs[0].Curl != 0 || rs[1].Status != 0 || rs[1].Curl != 7 {
+		t.Errorf("network probe = %+v", rs)
+	}
+
+	rs = probe(t, "ai", "--proxy", up.URL+"/v1/models", "--public", "http://no-such-host.invalid/")
+	if len(rs) != 2 || rs[0].Status != http.StatusNoContent || rs[1].Status != 0 || rs[1].Curl != 6 {
+		t.Errorf("ai probe = %+v", rs)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if header.Get("X-Api-Key") != "machbox" || header.Get("Anthropic-Version") == "" {
+		t.Errorf("proxy request headers = %v", header)
+	}
 }
 
 func readJSON(t *testing.T, name string, v any) {

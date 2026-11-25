@@ -4,6 +4,8 @@
 #   machbox run testdata/plugins/demo analyze ./sample --duration 10
 #   machbox run testdata/plugins/demo info ./sample
 #   machbox run --gui testdata/plugins/demo explore ./sample
+#   machbox run --egress none testdata/plugins/demo network
+#   ANTHROPIC_API_KEY=sk-ant-... machbox run testdata/plugins/demo ai
 manifest_version: 1
 name: demo
 version: 0.1.0
@@ -54,3 +56,45 @@ workflows:
         run: [tools/info, -o, "${{ output }}", "${{ inputs.sample }}"]
         output: info.json
         timeout: 1m
+
+  # What the guest reaches: compare runs with --egress none, public, all
+  # (with --pcap to see the traffic). probe.jsonl has a line per URL.
+  network:
+    network: gateway
+    egress: public
+    inputs:
+      public:  { default: "https://example.com/", description: URL on the internet }
+      private: { default: "http://192.168.1.1/", description: URL on a private network }
+    steps:
+      - id: probe
+        run: [tools/probe, -o, "${{ output }}", "${{ inputs.public }}", "${{ inputs.private }}"]
+        output: probe.jsonl
+        timeout: 1m
+
+  # The AI proxy with egress none: machbox.internal answers with the key
+  # added on the host (HTTP 200), while the internet does not resolve
+  # (curl exit 6). The guest sends only a placeholder key.
+  ai:
+    network: gateway
+    ai_proxy:
+      upstream: https://api.anthropic.com
+      key_env: ANTHROPIC_API_KEY
+    inputs:
+      proxy:  { default: "http://machbox.internal/v1/models", description: URL through the proxy }
+      public: { default: "https://example.com/", description: URL on the internet }
+    steps:
+      - id: probe
+        run: [tools/probe, -o, "${{ output }}", -H, "x-api-key: machbox", -H, "anthropic-version: 2023-06-01",
+              "${{ inputs.proxy }}", "${{ inputs.public }}"]
+        output: probe.jsonl
+        timeout: 1m
+
+  # Claude Code in the guest, through the AI proxy; the session is the whole
+  # workflow. The baseline needs claude pointed at http://machbox.internal
+  # (see docs/environment-setup.md).
+  ai-shell:
+    network: gateway
+    ai_proxy:
+      upstream: https://api.anthropic.com
+      key_env: ANTHROPIC_API_KEY
+    attach: [claude]
