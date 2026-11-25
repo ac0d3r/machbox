@@ -12,6 +12,7 @@ import (
 	"github.com/ac0d3r/machbox/internal/job"
 	"github.com/ac0d3r/machbox/internal/plugin"
 	"github.com/ac0d3r/machbox/pkg/vm/config"
+	"github.com/ac0d3r/machbox/pkg/vm/gateway"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -22,6 +23,7 @@ func newRunCommand() *cobra.Command {
 	var (
 		opts    job.Options
 		network string
+		egress  string
 		echo    bool
 		attach  bool
 	)
@@ -67,14 +69,27 @@ func newRunCommand() *cobra.Command {
 				return fmt.Errorf("%w\n\n%s", err, usage.String())
 			}
 
-			if !cmd.Flags().Changed("network") {
+			// The workflow's egress goes with its network: --network alone
+			// takes the default egress.
+			fromWorkflow := !cmd.Flags().Changed("network")
+			if fromWorkflow {
 				network = wf.Network
-				if network != "" {
-					logrus.Infof("workflow %s sets the guest network to %s; --network none turns it off", wf.Name, network)
+				if !cmd.Flags().Changed("egress") {
+					egress = string(wf.Egress)
 				}
 			}
 			if opts.Boot.Network, err = config.ParseNetwork(network); err != nil {
 				return err
+			}
+			if opts.Boot.Egress, err = plugin.ParseEgress(opts.Boot.Network, egress); err != nil {
+				return fmt.Errorf("--egress: %w", err)
+			}
+			if fromWorkflow && opts.Boot.Network.Enable {
+				desc := network
+				if opts.Boot.Egress != "" {
+					desc += ", egress " + string(opts.Boot.Egress)
+				}
+				logrus.Infof("workflow %s sets the guest network to %s; --network none turns it off", wf.Name, desc)
 			}
 			opts.Attach = wf.Attach
 			if cmd.Flags().Changed("attach") {
@@ -106,9 +121,11 @@ func newRunCommand() *cobra.Command {
 		"baseline UUID or unique name (default: the only one meeting the workflow's requirements)")
 	cmd.Flags().StringVar(&network, "network", "",
 		fmt.Sprintf("guest network: none, %s (default: the workflow's network, else none)", strings.Join(config.NetworkModes, ", ")))
+	cmd.Flags().StringVar(&egress, "egress", "",
+		fmt.Sprintf("with --network %s, what the guest reaches: %s (default: the workflow's egress, else none)",
+			config.NetworkGateway, gateway.EgressNames))
 	cmd.Flags().BoolVar(&opts.Capture, "pcap", false,
-		fmt.Sprintf("save guest traffic to network.pcap in the job directory (needs --network %s or %s)",
-			config.NetworkGateway, config.NetworkGatewayPublic))
+		fmt.Sprintf("save guest traffic to network.pcap in the job directory (needs --network %s)", config.NetworkGateway))
 	cmd.Flags().BoolVar(&opts.Boot.GUI, "gui", false, "show the VM window")
 	cmd.Flags().BoolVar(&attach, "attach", false,
 		"after the steps, log this terminal in to the guest until the session ends (default: the workflow's attach)")

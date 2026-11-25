@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ac0d3r/machbox/pkg/vm/gateway"
 )
 
 const malwareManifest = `
@@ -298,19 +300,37 @@ workflows:
 
 func TestWorkflowNetwork(t *testing.T) {
 	manifest := func(network string) string {
-		return "manifest_version: 1\nname: p\nworkflows:\n  w:\n    network: " + network + "\n    steps:\n      - id: a\n        run: [x]\n"
+		return "manifest_version: 1\nname: p\nworkflows:\n  w:\n" + network + "    steps: [{id: a, run: [x]}]\n"
 	}
-	for in, want := range map[string]string{"Gateway-Public": "gateway-public", "gateway": "gateway", "NAT": "nat", "none": "", `""`: ""} {
+	for in, want := range map[string]struct {
+		network string
+		egress  gateway.Egress
+	}{
+		"":                       {"", ""},
+		"    network: none\n":    {"", ""},
+		"    network: NAT\n":     {"nat", ""},
+		"    network: gateway\n": {"gateway", gateway.EgressNone},
+		"    network: gateway\n    egress: Public\n": {"gateway", gateway.EgressPublic},
+		"    network: gateway\n    egress: all\n":    {"gateway", gateway.EgressAll},
+	} {
 		p, err := Parse([]byte(manifest(in)))
 		if err != nil {
-			t.Fatalf("network %s: %v", in, err)
+			t.Fatalf("%q: %v", in, err)
 		}
-		if got := p.Workflows["w"].Network; got != want {
-			t.Errorf("network %s = %q, want %q", in, got, want)
+		if wf := p.Workflows["w"]; wf.Network != want.network || wf.Egress != want.egress {
+			t.Errorf("%q: network %q egress %q, want %q %q", in, wf.Network, wf.Egress, want.network, want.egress)
 		}
 	}
-	if _, err := Parse([]byte(manifest("internet"))); err == nil {
-		t.Error("unknown network accepted")
+	for _, in := range []string{
+		"    network: internet\n",
+		"    network: gateway-public\n",
+		"    network: gateway\n    egress: lan\n",
+		"    network: nat\n    egress: public\n",
+		"    egress: none\n",
+	} {
+		if _, err := Parse([]byte(manifest(in))); err == nil {
+			t.Errorf("%q accepted", in)
+		}
 	}
 }
 
