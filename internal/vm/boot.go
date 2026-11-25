@@ -23,8 +23,10 @@ import (
 // BootOptions configures a run's VM.
 type BootOptions struct {
 	Network config.Network
-	// Capture, if not empty, is where a gateway network writes its pcap.
+	// Capture, if not empty, is where the gateway writes its pcap.
 	Capture string
+	// Egress is the gateway's policy; "" is gateway.EgressNone.
+	Egress gateway.Egress
 	// GUI shows the VM window. Boot must then be called on the main thread.
 	GUI bool
 }
@@ -40,7 +42,7 @@ func (r *Run) Boot(ctx context.Context, opts BootOptions, fn GuestFunc) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	network, stopNetwork, err := startNetwork(opts.Network, opts.Capture)
+	network, stopNetwork, err := startNetwork(opts)
 	if err != nil {
 		return err
 	}
@@ -130,13 +132,14 @@ func keepAwake() func() {
 // startNetwork starts the host gateway when n needs one and returns the
 // network for the VM configuration. stop closes the gateway, flushing the
 // capture; call it once the VM has stopped.
-func startNetwork(n config.Network, capture string) (_ config.Network, stop func(), err error) {
+func startNetwork(opts BootOptions) (_ config.Network, stop func(), err error) {
+	n := opts.Network
 	if !n.Gateway() {
 		return n, func() {}, nil
 	}
 	gw, err := gateway.Start(gateway.Options{
-		Capture:    capture,
-		PublicOnly: n.Mode == config.NetworkGatewayPublic,
+		Capture: opts.Capture,
+		Egress:  opts.Egress,
 	})
 	if err != nil {
 		return n, nil, fmt.Errorf("start network gateway: %w", err)

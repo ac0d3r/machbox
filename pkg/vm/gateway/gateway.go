@@ -1,6 +1,6 @@
 // Package gateway runs a user-mode network (gvisor-tap-vsock) on the host for
 // a VM attached through a file-handle network device. The guest gets DHCP,
-// DNS and outbound connections; see policy for what it cannot reach.
+// DNS, and what its egress policy allows.
 package gateway
 
 import (
@@ -56,9 +56,8 @@ type Options struct {
 	// Capture, if not empty, receives every frame the guest sends or
 	// receives as pcap, refused ones included.
 	Capture string
-	// PublicOnly limits the guest to public addresses: no private,
-	// link-local or shared (CGNAT, overlay VPN) networks. The host's own addresses are refused either way.
-	PublicOnly bool
+	// Egress is what the guest reaches beyond the gateway; "" is EgressNone.
+	Egress Egress
 }
 
 // Start creates the gateway.
@@ -70,12 +69,16 @@ func Start(opts Options) (g *Gateway, err error) {
 		}
 	}()
 
+	if opts.Egress == "" {
+		opts.Egress = EgressNone
+	}
 	if g.vn, err = virtualnetwork.New(&types.Configuration{
 		MTU:               mtu,
 		Subnet:            subnet,
 		GatewayIP:         gatewayIP,
 		GatewayMacAddress: gatewayMAC,
 		Protocol:          types.VfkitProtocol,
+		DNS:               dnsZones(opts),
 	}); err != nil {
 		return nil, fmt.Errorf("create virtual network: %w", err)
 	}
@@ -105,7 +108,7 @@ func Start(opts Options) (g *Gateway, err error) {
 		return nil, err
 	}
 
-	p := &policy{gateway: netip.MustParseAddr(gatewayIP), publicOnly: opts.PublicOnly}
+	p := &policy{gateway: netip.MustParseAddr(gatewayIP), egress: opts.Egress}
 	ctx, cancel := context.WithCancel(context.Background())
 	g.stopSwitch, g.switchDone = cancel, make(chan struct{})
 	go func() {
@@ -125,6 +128,17 @@ func Start(opts Options) (g *Gateway, err error) {
 		g.forward(g.relay, g.guest, nil)
 	}()
 	return g, nil
+}
+
+// dnsZones are the names the gateway answers itself; the host's resolver
+// answers the rest.
+func dnsZones(opts Options) []types.Zone {
+	if opts.Egress == EgressNone {
+		// Matches every name, without records: no query reaches the host's
+		// resolver, a way out (DNS tunnelling).
+		return []types.Zone{{Protected: true}}
+	}
+	return nil
 }
 
 // forward copies frames from src to dst until src is closed. Frames from

@@ -19,13 +19,11 @@ const (
 	// NetworkNAT is vz NAT (vmnet): the system forwards the traffic.
 	NetworkNAT = "nat"
 	// NetworkGateway goes through machbox's user-mode gateway on the host,
-	// which can capture the traffic.
+	// which enforces an egress policy and can capture the traffic.
 	NetworkGateway = "gateway"
-	// NetworkGatewayPublic is NetworkGateway limited to public addresses.
-	NetworkGatewayPublic = "gateway-public"
 )
 
-var NetworkModes = []string{NetworkNAT, NetworkGateway, NetworkGatewayPublic}
+var NetworkModes = []string{NetworkNAT, NetworkGateway}
 
 // ParseNetwork returns the network for mode: "none" (or empty) or one of
 // NetworkModes, case-insensitively.
@@ -44,13 +42,13 @@ func ParseNetwork(mode string) (Network, error) {
 type Network struct {
 	Enable bool
 	Mode   string
-	// File is the VM end of a connected datagram socket (the gateway modes).
+	// File is the VM end of a connected datagram socket (the gateway).
 	File *os.File
 }
 
 // Gateway reports whether n goes through the host gateway.
 func (n Network) Gateway() bool {
-	return n.Enable && (n.Mode == NetworkGateway || n.Mode == NetworkGatewayPublic)
+	return n.Enable && n.Mode == NetworkGateway
 }
 
 type VMOptions struct {
@@ -321,7 +319,7 @@ func configureNetwork(
 		if attachment, err = vz.NewNATNetworkDeviceAttachment(); err != nil {
 			return fmt.Errorf("create NAT network device attachment: %w", err)
 		}
-	case NetworkGateway, NetworkGatewayPublic:
+	case NetworkGateway:
 		if cfg.File == nil {
 			return errors.New("gateway network needs a socket")
 		}

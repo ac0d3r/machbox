@@ -61,8 +61,13 @@
         },
         "requires": { "$ref": "#/definitions/requires" },
         "network": {
-          "description": "Guest network when machbox run has no --network. gateway-public: public addresses only.",
-          "enum": ["none", "nat", "gateway", "gateway-public"],
+          "description": "Guest network when machbox run has no --network.",
+          "enum": ["none", "nat", "gateway"],
+          "default": "none"
+        },
+        "egress": {
+          "description": "With network gateway only: what the guest reaches. none: only the gateway's DHCP and DNS, which answers no name; public: public addresses; all: whatever the host can, but the host itself.",
+          "enum": ["none", "public", "all"],
           "default": "none"
         },
         "attach": {

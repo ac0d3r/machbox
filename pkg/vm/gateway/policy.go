@@ -2,10 +2,41 @@ package gateway
 
 import (
 	"encoding/binary"
+	"fmt"
 	"net"
 	"net/netip"
+	"strings"
 	"time"
 )
+
+// Egress is what the guest reaches beyond the gateway's own services.
+type Egress string
+
+const (
+	// EgressNone: nothing; DNS answers no name.
+	EgressNone Egress = "none"
+	// EgressPublic: public addresses.
+	EgressPublic Egress = "public"
+	// EgressAll: whatever the host reaches, but the host itself.
+	EgressAll Egress = "all"
+)
+
+// EgressNames lists the policies, the default first.
+const EgressNames = "none, public, all"
+
+// ParseEgress returns the policy named s, case-insensitively; "" is
+// EgressNone.
+func ParseEgress(s string) (Egress, error) {
+	if s == "" {
+		return EgressNone, nil
+	}
+	for _, e := range []Egress{EgressNone, EgressPublic, EgressAll} {
+		if strings.EqualFold(s, string(e)) {
+			return e, nil
+		}
+	}
+	return "", fmt.Errorf("unknown egress %q (%s)", s, EgressNames)
+}
 
 const (
 	etherTypeIPv4 = 0x0800
@@ -30,8 +61,7 @@ var (
 // connection never made.
 type policy struct {
 	gateway netip.Addr
-	// publicOnly also refuses private, link-local and shared networks.
-	publicOnly bool
+	egress  Egress
 	// interfaceAddrs lists the host's addresses; net.InterfaceAddrs if nil.
 	interfaceAddrs func() ([]net.Addr, error)
 
@@ -62,7 +92,7 @@ func (p *policy) allowIPv4(pkt []byte) (bool, netip.Addr) {
 	}
 	dst := netip.AddrFrom4([4]byte(pkt[16:20]))
 	if dst != p.gateway && dst != broadcast {
-		return !p.blocked(dst), dst
+		return p.egress != EgressNone && !p.blocked(dst), dst
 	}
 
 	// Only the gateway's own DHCP and DNS: anything else for these
@@ -85,14 +115,14 @@ func (p *policy) allowIPv4(pkt []byte) (bool, netip.Addr) {
 // blocked reports whether the guest must not reach ip. The host itself is
 // never reachable: the gateway dials from the host, so a connection to one
 // of its own addresses goes over loopback, past its firewall. Multicast and
-// broadcast are not forwarded. publicOnly adds private, link-local and
+// broadcast are not forwarded. EgressPublic adds private, link-local and
 // shared (CGNAT, overlay VPN) networks.
 func (p *policy) blocked(ip netip.Addr) bool {
 	ip = ip.Unmap()
 	if ip.IsLoopback() || ip.IsMulticast() || ip.IsUnspecified() || thisNetwork.Contains(ip) || ip == broadcast {
 		return true
 	}
-	if p.publicOnly && (ip.IsPrivate() || ip.IsLinkLocalUnicast() || sharedAddressSpace.Contains(ip)) {
+	if p.egress == EgressPublic && (ip.IsPrivate() || ip.IsLinkLocalUnicast() || sharedAddressSpace.Contains(ip)) {
 		return true
 	}
 	return p.isHostAddr(ip)

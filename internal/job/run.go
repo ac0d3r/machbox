@@ -33,7 +33,7 @@ type Options struct {
 	// characters replaced; logs keep the raw bytes.
 	Echo io.Writer
 	// Capture writes guest traffic to network.pcap in the job directory;
-	// only the gateway networks support it.
+	// only the gateway supports it.
 	Capture bool
 	// Attach, when enabled, attaches a terminal session to the guest after
 	// the steps; the VM stops when it ends. The caller checks that stdin and
@@ -45,7 +45,7 @@ type Options struct {
 // job is returned once its directory exists, also when it then fails.
 func Run(ctx context.Context, p *plugin.Plugin, wf *plugin.Workflow, inputs map[string]string, opts Options) (*Job, error) {
 	if opts.Capture && !opts.Boot.Network.Gateway() {
-		return nil, fmt.Errorf("--pcap needs --network %s or %s", config.NetworkGateway, config.NetworkGatewayPublic)
+		return nil, fmt.Errorf("--pcap needs --network %s", config.NetworkGateway)
 	}
 	baseline, err := pickBaseline(opts.Baseline, wf.Requires)
 	if err != nil {

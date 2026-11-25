@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ac0d3r/machbox/pkg/vm/config"
+	"github.com/ac0d3r/machbox/pkg/vm/gateway"
 
 	"gopkg.in/yaml.v3"
 )
@@ -56,6 +57,9 @@ type Workflow struct {
 	// Network is the guest network when machbox run has no --network:
 	// none (default) or a config.NetworkModes value, canonicalized by Parse.
 	Network string `yaml:"network"`
+	// Egress is the gateway's policy, gateway.EgressNone if omitted; other
+	// networks refuse one.
+	Egress gateway.Egress `yaml:"egress"`
 	// Attach is the terminal session machbox run attaches to the guest
 	// after the steps, unless it has --attach=false.
 	Attach Attach `yaml:"attach"`
@@ -297,6 +301,9 @@ func (wf *Workflow) validate() error {
 		return err
 	}
 	wf.Network = net.Mode
+	if wf.Egress, err = ParseEgress(net, string(wf.Egress)); err != nil {
+		return err
+	}
 	seen := map[string]bool{}
 	for _, in := range wf.Inputs {
 		if !identRe.MatchString(in.Name) {
@@ -409,6 +416,18 @@ func validateEnv(env map[string]string) error {
 		}
 	}
 	return nil
+}
+
+// ParseEgress returns the gateway's policy named s (EgressNone if empty),
+// or "" for other networks, which refuse one.
+func ParseEgress(net config.Network, s string) (gateway.Egress, error) {
+	if !net.Gateway() {
+		if s != "" {
+			return "", fmt.Errorf("egress applies to network %s only", config.NetworkGateway)
+		}
+		return "", nil
+	}
+	return gateway.ParseEgress(s)
 }
 
 // TimeoutOrDefault returns the step timeout, or DefaultStepTimeout.

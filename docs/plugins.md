@@ -34,8 +34,9 @@ Flags go before the plugin:
 | Flag | |
 |------|-|
 | `-m`, `--vm <uuid-or-name>` | baseline to use (default: the only one meeting the workflow's requirements) |
-| `--network <mode>` | `none`, `nat`, `gateway` or `gateway-public` ([what each reaches](./architecture.md#network)); default: the workflow's `network`, else `none` |
-| `--pcap` | with a gateway network: save guest traffic to `network.pcap` in the job directory |
+| `--network <mode>` | `none`, `nat` or `gateway` ([network](./architecture.md#network)); default: the workflow's `network`, else `none` |
+| `--egress <policy>` | with `--network gateway`, what the guest reaches: `none`, `public` or `all` ([network](./architecture.md#network)); default: the workflow's `egress` unless `--network` is given, else `none` |
+| `--pcap` | with `--network gateway`: save guest traffic to `network.pcap` in the job directory |
 | `--gui` | show the VM window |
 | `--attach` | after the steps, log this terminal in to the guest (needs Remote Login on the baseline); the VM is discarded when the session ends. Default: the workflow's `attach` |
 | `--show-output` | also print step output |
