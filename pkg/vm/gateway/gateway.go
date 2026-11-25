@@ -1,6 +1,6 @@
 // Package gateway runs a user-mode network (gvisor-tap-vsock) on the host for
 // a VM attached through a file-handle network device. The guest gets DHCP,
-// DNS, and what its egress policy allows.
+// DNS, an optional AI proxy, and what its egress policy allows.
 package gateway
 
 import (
@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/netip"
 	"os"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -45,6 +47,7 @@ type Gateway struct {
 	relay net.Conn
 	stack net.Conn
 	pcap  *pcapWriter
+	proxy *http.Server
 	wg    sync.WaitGroup
 
 	stopSwitch context.CancelFunc
@@ -58,6 +61,8 @@ type Options struct {
 	Capture string
 	// Egress is what the guest reaches beyond the gateway; "" is EgressNone.
 	Egress Egress
+	// Proxy, if not nil, is served at http://ProxyHost.
+	Proxy *Proxy
 }
 
 // Start creates the gateway.
@@ -108,7 +113,14 @@ func Start(opts Options) (g *Gateway, err error) {
 		return nil, err
 	}
 
-	p := &policy{gateway: netip.MustParseAddr(gatewayIP), egress: opts.Egress}
+	p := &policy{gateway: netip.MustParseAddr(gatewayIP), egress: opts.Egress, proxy: opts.Proxy != nil}
+	if opts.Proxy != nil {
+		l, err := g.vn.Listen("tcp", net.JoinHostPort(gatewayIP, "80"))
+		if err != nil {
+			return nil, fmt.Errorf("listen for the ai proxy: %w", err)
+		}
+		g.proxy = serveProxy(l, opts.Proxy)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	g.stopSwitch, g.switchDone = cancel, make(chan struct{})
 	go func() {
@@ -133,12 +145,22 @@ func Start(opts Options) (g *Gateway, err error) {
 // dnsZones are the names the gateway answers itself; the host's resolver
 // answers the rest.
 func dnsZones(opts Options) []types.Zone {
-	if opts.Egress == EgressNone {
-		// Matches every name, without records: no query reaches the host's
-		// resolver, a way out (DNS tunnelling).
-		return []types.Zone{{Protected: true}}
+	var zones []types.Zone
+	if opts.Proxy != nil {
+		// Other .internal names fail, not reach the host's resolver.
+		name, zone, _ := strings.Cut(ProxyHost, ".")
+		zones = append(zones, types.Zone{
+			Name:      zone + ".",
+			Records:   []types.Record{{Name: name, IP: net.ParseIP(gatewayIP)}},
+			Protected: true,
+		})
 	}
-	return nil
+	if opts.Egress == EgressNone {
+		// Matches every other name, without records: no query reaches the
+		// host's resolver, a way out (DNS tunnelling).
+		zones = append(zones, types.Zone{Protected: true})
+	}
+	return zones
 }
 
 // forward copies frames from src to dst until src is closed. Frames from
@@ -195,6 +217,9 @@ func (g *Gateway) Close() error {
 		if _, err := g.relay.Write(wake); err == nil {
 			<-g.switchDone
 		}
+	}
+	if g.proxy != nil {
+		_ = g.proxy.Close()
 	}
 	for _, c := range []net.Conn{g.guest, g.relay, g.stack} {
 		if c != nil {

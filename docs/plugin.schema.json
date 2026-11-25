@@ -51,7 +51,11 @@
     "workflow": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["steps"],
+      "description": "Needs steps, attach, or both: without steps, the session is the workflow.",
+      "anyOf": [
+        { "required": ["steps"], "properties": { "steps": { "minItems": 1 } } },
+        { "required": ["attach"], "properties": { "attach": { "not": { "const": false } } } }
+      ],
       "properties": {
         "inputs": {
           "description": "Declaration order is the positional argument order.",
@@ -66,7 +70,7 @@
           "default": "none"
         },
         "egress": {
-          "description": "With network gateway only: what the guest reaches. none: only the gateway's DHCP and DNS, which answers no name; public: public addresses; all: whatever the host can, but the host itself.",
+          "description": "With network gateway only: what the guest reaches. none: only the gateway's DHCP, DNS (answering only its own names) and ai_proxy; public: public addresses; all: whatever the host can, but the host itself.",
           "enum": ["none", "public", "all"],
           "default": "none"
         },
@@ -78,10 +82,27 @@
           ],
           "default": false
         },
+        "ai_proxy": {
+          "description": "HTTP proxy served to the guest at http://machbox.internal (needs network gateway, with any egress): the guest's AI agents reach upstream through the host, which adds the API key, so the guest never holds it.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["upstream"],
+          "properties": {
+            "upstream": {
+              "description": "The provider's base URL, e.g. https://api.anthropic.com, or http://127.0.0.1:11434 for a model server on the host; a request's path is appended to its path. https when key_env is set, unless on the host's loopback.",
+              "type": "string",
+              "pattern": "^https?://"
+            },
+            "key_env": {
+              "description": "Name of the host environment variable holding the API key, read when the run starts. Omitted: the guest's own credentials are forwarded.",
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            }
+          }
+        },
         "env": { "$ref": "#/definitions/env" },
         "steps": {
           "type": "array",
-          "minItems": 1,
           "items": { "$ref": "#/definitions/step" }
         }
       }

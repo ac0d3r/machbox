@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -63,6 +65,9 @@ type Workflow struct {
 	// Attach is the terminal session machbox run attaches to the guest
 	// after the steps, unless it has --attach=false.
 	Attach Attach `yaml:"attach"`
+	// AIProxy, if set, is served at http://machbox.internal; it needs the
+	// gateway network, with any egress.
+	AIProxy *AIProxy `yaml:"ai_proxy"`
 	// Env is set for every step; a step's own env overrides it.
 	Env   map[string]string `yaml:"env"`
 	Steps []*Step           `yaml:"steps"`
@@ -166,6 +171,56 @@ func (a *Attach) UnmarshalYAML(node *yaml.Node) error {
 		return fmt.Errorf("line %d: attach must be true, false or a command", node.Line)
 	}
 	return nil
+}
+
+// AIProxy forwards the guest's requests to an AI API, adding the key on
+// the host.
+type AIProxy struct {
+	// Upstream is the base URL; request paths are appended.
+	Upstream string `yaml:"upstream"`
+	// KeyEnv names the host variable holding the key; empty passes the
+	// guest's own credentials.
+	KeyEnv string `yaml:"key_env"`
+}
+
+// URL parses and checks the upstream.
+func (ap *AIProxy) URL() (*url.URL, error) {
+	u, err := url.Parse(ap.Upstream)
+	if err != nil {
+		return nil, err
+	}
+	if (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.Opaque != "" ||
+		u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return nil, errors.New("must be an http or https URL without credentials, query or fragment")
+	}
+	return u, nil
+}
+
+func (ap *AIProxy) validate() error {
+	u, err := ap.URL()
+	if err != nil {
+		return fmt.Errorf("upstream %q: %w", ap.Upstream, err)
+	}
+	if ap.KeyEnv == "" {
+		return nil
+	}
+	// Not echoed: it may be the key.
+	if !envKeyRe.MatchString(ap.KeyEnv) {
+		return fmt.Errorf("key_env must name the host environment variable holding the key (matching %s), not the key", envKeyRe)
+	}
+	if u.Scheme != "https" && !isLoopback(u.Hostname()) {
+		return errors.New("upstream must be https when key_env is set, unless it is on the host's loopback")
+	}
+	return nil
+}
+
+// isLoopback: plain http there stays on the host.
+func isLoopback(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.IsLoopback()
 }
 
 // Lookup returns the input called name, or nil.
@@ -304,6 +359,14 @@ func (wf *Workflow) validate() error {
 	if wf.Egress, err = ParseEgress(net, string(wf.Egress)); err != nil {
 		return err
 	}
+	if wf.AIProxy != nil {
+		if err := wf.AIProxy.validate(); err != nil {
+			return fmt.Errorf("ai_proxy: %w", err)
+		}
+		if !net.Gateway() {
+			return fmt.Errorf("ai_proxy needs network %s", config.NetworkGateway)
+		}
+	}
 	seen := map[string]bool{}
 	for _, in := range wf.Inputs {
 		if !identRe.MatchString(in.Name) {
@@ -341,8 +404,8 @@ func (wf *Workflow) validate() error {
 	if err := validateEnv(wf.Env); err != nil {
 		return err
 	}
-	if len(wf.Steps) == 0 {
-		return errors.New("no steps")
+	if len(wf.Steps) == 0 && !wf.Attach.Enabled {
+		return errors.New("no steps and no attach: nothing to run")
 	}
 	ids := map[string]*Step{}
 	outputs := map[string]string{}

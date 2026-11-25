@@ -74,6 +74,25 @@ func TestPolicyAllow(t *testing.T) {
 		}
 	}
 
+	proxy := newPolicy(EgressNone)
+	proxy.proxy = true
+	for _, tt := range []struct {
+		frame []byte
+		want  bool
+	}{
+		{ipv4Frame(protoTCP, gatewayIP, 80), true},
+		{ipv4Frame(protoTCP, gatewayIP, 443), false},
+		{ipv4Frame(protoUDP, gatewayIP, 80), false},
+		{ipv4Frame(protoTCP, "255.255.255.255", 80), false},
+	} {
+		if got, dst := proxy.allow(tt.frame); got != tt.want {
+			t.Errorf("with proxy: allow %s = %v, want %v", dst, got, tt.want)
+		}
+	}
+	if got, _ := public.allow(ipv4Frame(protoTCP, gatewayIP, 80)); got {
+		t.Error("gateway port 80 allowed without a proxy")
+	}
+
 	for _, ip := range []string{"::1", "fe80::1", "fd00::1", "ff02::1", "::ffff:10.0.0.1"} {
 		if !public.blocked(netip.MustParseAddr(ip)) {
 			t.Errorf("egress public blocked(%s) = false", ip)

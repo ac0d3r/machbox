@@ -105,6 +105,25 @@ sshd through the guest agent, so it works without a guest network. Reaching
 it otherwise needs one, which only setup always has: runs have none unless
 `--network` or the workflow provides it.
 
+### AI Agents
+
+Workflows with `ai_proxy` ([how it works](./architecture.md#ai-proxy)) give the
+guest `http://machbox.internal`, which forwards to the workflow's provider and adds
+the API key on the host. Configure each agent you install as its own documentation
+says for a custom API endpoint: the base URL it would use for the provider, with
+`http://machbox.internal` as the host, and any placeholder API key (not a
+subscription login). For Claude Code, e.g. in `~/.zprofile` (attach sessions run a
+login shell):
+
+```sh
+export ANTHROPIC_BASE_URL=http://machbox.internal
+export ANTHROPIC_API_KEY=machbox
+```
+
+The name resolves only in those runs, not during setup. Run each agent once in the
+baseline to get past its first-run screens. On the host, export the variable
+`key_env` names before `machbox run`.
+
 ## Update the Agent or Change the Tools of a Baseline
 
 To install a new agent after a Machbox release, or set up more later, run:

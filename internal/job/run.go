@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"slices"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/ac0d3r/machbox/internal/plugin"
 	"github.com/ac0d3r/machbox/internal/vm"
 	"github.com/ac0d3r/machbox/pkg/vm/config"
+	"github.com/ac0d3r/machbox/pkg/vm/gateway"
 
 	"github.com/sirupsen/logrus"
 )
@@ -46,6 +48,13 @@ type Options struct {
 func Run(ctx context.Context, p *plugin.Plugin, wf *plugin.Workflow, inputs map[string]string, opts Options) (*Job, error) {
 	if opts.Capture && !opts.Boot.Network.Gateway() {
 		return nil, fmt.Errorf("--pcap needs --network %s", config.NetworkGateway)
+	}
+	if wf.AIProxy != nil {
+		px, err := aiProxy(wf, opts.Boot.Network)
+		if err != nil {
+			return nil, err
+		}
+		opts.Boot.Proxy = px
 	}
 	baseline, err := pickBaseline(opts.Baseline, wf.Requires)
 	if err != nil {
@@ -131,6 +140,27 @@ func (j *Job) run(ctx context.Context, baseline *db.VM, opts Options) error {
 		}
 		return err
 	})
+}
+
+// aiProxy reads the key from the host environment.
+func aiProxy(wf *plugin.Workflow, network config.Network) (*gateway.Proxy, error) {
+	if !network.Gateway() {
+		return nil, fmt.Errorf("workflow %s uses ai_proxy, which needs --network %s", wf.Name, config.NetworkGateway)
+	}
+	upstream, err := wf.AIProxy.URL()
+	if err != nil {
+		return nil, fmt.Errorf("ai_proxy upstream: %w", err)
+	}
+	px := &gateway.Proxy{Upstream: upstream}
+	with := ""
+	if name := wf.AIProxy.KeyEnv; name != "" {
+		if px.Key = os.Getenv(name); px.Key == "" {
+			return nil, fmt.Errorf("workflow %s's ai_proxy reads its API key from $%s, which is not set", wf.Name, name)
+		}
+		with = " with the key in $" + name
+	}
+	logrus.Infof("ai proxy: http://%s forwards to %s%s", gateway.ProxyHost, upstream, with)
+	return px, nil
 }
 
 // waitSession waits until a user is logged in at the guest console with
